@@ -15,6 +15,7 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
 )
+from claude_agent_sdk._errors import MessageParseError
 
 from ai_team.config import AgentConfig
 
@@ -115,7 +116,7 @@ class ChatManager:
         try:
             await session.client.query(user_message)
 
-            async for message in session.client.receive_response():
+            async for message in self._receive_safe(session.client):
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
@@ -137,6 +138,26 @@ class ChatManager:
             return full_text
         finally:
             session.is_responding = False
+
+    @staticmethod
+    async def _receive_safe(client: ClaudeSDKClient):
+        """Iterate receive_response(), skipping unknown message types like rate_limit_event.
+
+        When MessageParseError is raised mid-stream (e.g. for rate_limit_event),
+        the generator is dead. We restart iteration which picks up the next messages
+        from the underlying transport until we get a ResultMessage.
+        """
+        while True:
+            try:
+                async for message in client.receive_response():
+                    yield message
+                    if isinstance(message, ResultMessage):
+                        return
+                # Generator exhausted normally
+                return
+            except MessageParseError:
+                # Unknown message type encountered — restart iteration
+                continue
 
     async def stop_session(self, agent_name: str) -> None:
         """Stop and remove a chat session."""
