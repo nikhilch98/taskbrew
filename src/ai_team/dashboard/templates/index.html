@@ -235,6 +235,147 @@
             font-style: italic;
             padding: 8px 0;
         }
+
+        /* Chat panel */
+        .chat-panel {
+            position: fixed;
+            bottom: 20px;
+            width: 380px;
+            height: 520px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            transition: height 0.2s ease;
+        }
+        .chat-panel.minimized {
+            height: 44px;
+            overflow: hidden;
+        }
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: #1f6feb;
+            border-radius: 12px 12px 0 0;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .chat-header .chat-agent-name {
+            color: #fff;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .chat-header .chat-header-btns {
+            display: flex;
+            gap: 6px;
+        }
+        .chat-header .chat-header-btns button {
+            background: none;
+            border: none;
+            color: rgba(255,255,255,0.8);
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .chat-header .chat-header-btns button:hover {
+            color: #fff;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .chat-msg {
+            max-width: 85%;
+            padding: 8px 12px;
+            border-radius: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+        .chat-msg.user {
+            align-self: flex-end;
+            background: #1f6feb;
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+        .chat-msg.assistant {
+            align-self: flex-start;
+            background: #21262d;
+            color: #c9d1d9;
+            border-bottom-left-radius: 4px;
+        }
+        .chat-msg.system {
+            align-self: center;
+            background: none;
+            color: #8b949e;
+            font-style: italic;
+            font-size: 12px;
+            text-align: center;
+        }
+        .chat-msg.streaming {
+            border: 1px solid #1f6feb;
+        }
+        .chat-input-area {
+            display: flex;
+            gap: 8px;
+            padding: 10px 12px;
+            border-top: 1px solid #30363d;
+            flex-shrink: 0;
+        }
+        .chat-input-area input {
+            flex: 1;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 8px 12px;
+            color: #c9d1d9;
+            font-size: 13px;
+            outline: none;
+        }
+        .chat-input-area input:focus {
+            border-color: #1f6feb;
+        }
+        .chat-input-area input:disabled {
+            opacity: 0.5;
+        }
+        .chat-input-area button {
+            background: #1f6feb;
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            padding: 8px 16px;
+            font-size: 13px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .chat-input-area button:hover {
+            background: #388bfd;
+        }
+        .chat-input-area button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Chat button for agent cards */
+        .btn-chat {
+            border-color: #1f6feb;
+            color: #58a6ff;
+        }
+        .btn-chat:hover {
+            background: #1f6feb;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -395,6 +536,7 @@
                             '<span class="status-badge status-' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' +
                         '</div>' +
                         '<div class="agent-controls">' +
+                            '<button class="btn btn-chat" onclick="openChat(\'' + escapeHtml(name) + '\')">Chat</button>' +
                             '<button class="btn btn-pause" onclick="agentAction(\'' + escapeHtml(name) + '\', \'pause\')">Pause</button>' +
                             '<button class="btn btn-resume" onclick="agentAction(\'' + escapeHtml(name) + '\', \'resume\')">Resume</button>' +
                             '<button class="btn btn-kill" onclick="agentAction(\'' + escapeHtml(name) + '\', \'kill\')">Kill</button>' +
@@ -533,6 +675,185 @@
             refreshAgents();
             refreshTaskBoard();
             refreshRuns();
+        }
+
+        // --- Chat System ---
+        const chatPanels = {};  // agent_name -> { ws, panelEl, messagesEl, inputEl, sendBtn, streamingEl }
+        let chatPanelCount = 0;
+
+        function openChat(agentName) {
+            // If already open, focus it
+            if (chatPanels[agentName]) {
+                chatPanels[agentName].panelEl.classList.remove('minimized');
+                chatPanels[agentName].inputEl.focus();
+                return;
+            }
+
+            // Create panel element
+            const panel = document.createElement('div');
+            panel.className = 'chat-panel';
+            panel.style.right = (20 + chatPanelCount * 400) + 'px';
+            panel.id = 'chat-panel-' + agentName;
+
+            panel.innerHTML =
+                '<div class="chat-header" onclick="minimizeChat(\'' + escapeHtml(agentName) + '\')">' +
+                    '<span class="chat-agent-name">' + escapeHtml(agentName) + '</span>' +
+                    '<div class="chat-header-btns">' +
+                        '<button onclick="event.stopPropagation(); minimizeChat(\'' + escapeHtml(agentName) + '\')" title="Minimize">&minus;</button>' +
+                        '<button onclick="event.stopPropagation(); closeChat(\'' + escapeHtml(agentName) + '\')" title="Close">&times;</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="chat-messages" id="chat-messages-' + agentName + '"></div>' +
+                '<div class="chat-input-area">' +
+                    '<input type="text" id="chat-input-' + agentName + '" placeholder="Type a message..." ' +
+                        'onkeydown="if(event.key===\'Enter\')sendChatMessage(\'' + escapeHtml(agentName) + '\')" disabled />' +
+                    '<button id="chat-send-' + agentName + '" onclick="sendChatMessage(\'' + escapeHtml(agentName) + '\')" disabled>Send</button>' +
+                '</div>';
+
+            document.body.appendChild(panel);
+
+            const messagesEl = document.getElementById('chat-messages-' + agentName);
+            const inputEl = document.getElementById('chat-input-' + agentName);
+            const sendBtn = document.getElementById('chat-send-' + agentName);
+
+            // Connect WebSocket
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const chatWs = new WebSocket(`${protocol}//${location.host}/ws/chat/${encodeURIComponent(agentName)}`);
+
+            chatPanels[agentName] = {
+                ws: chatWs,
+                panelEl: panel,
+                messagesEl: messagesEl,
+                inputEl: inputEl,
+                sendBtn: sendBtn,
+                streamingEl: null
+            };
+
+            chatPanelCount++;
+
+            appendChatBubble(agentName, 'system', 'Connecting...');
+
+            chatWs.onopen = () => {
+                chatWs.send(JSON.stringify({ type: 'start_session' }));
+            };
+
+            chatWs.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                handleChatMessage(agentName, msg);
+            };
+
+            chatWs.onclose = () => {
+                appendChatBubble(agentName, 'system', 'Disconnected.');
+                inputEl.disabled = true;
+                sendBtn.disabled = true;
+            };
+
+            chatWs.onerror = () => {
+                appendChatBubble(agentName, 'system', 'Connection error.');
+            };
+        }
+
+        function handleChatMessage(agentName, msg) {
+            const chat = chatPanels[agentName];
+            if (!chat) return;
+
+            switch (msg.type) {
+                case 'session_started':
+                    appendChatBubble(agentName, 'system', 'Connected to ' + agentName + '.');
+                    chat.inputEl.disabled = false;
+                    chat.sendBtn.disabled = false;
+                    chat.inputEl.focus();
+                    break;
+
+                case 'chat_token':
+                    // Streaming token — append to existing streaming bubble or create one
+                    if (!chat.streamingEl) {
+                        chat.streamingEl = document.createElement('div');
+                        chat.streamingEl.className = 'chat-msg assistant streaming';
+                        chat.streamingEl.textContent = '';
+                        chat.messagesEl.appendChild(chat.streamingEl);
+                    }
+                    chat.streamingEl.textContent += msg.content;
+                    chat.messagesEl.scrollTop = chat.messagesEl.scrollHeight;
+                    break;
+
+                case 'chat_tool_use':
+                    appendChatBubble(agentName, 'system', 'Using tool: ' + (msg.tool || 'unknown'));
+                    break;
+
+                case 'chat_response_complete':
+                    // Finalize streaming bubble
+                    if (chat.streamingEl) {
+                        chat.streamingEl.classList.remove('streaming');
+                        chat.streamingEl = null;
+                    }
+                    chat.inputEl.disabled = false;
+                    chat.sendBtn.disabled = false;
+                    chat.inputEl.focus();
+                    break;
+
+                case 'chat_error':
+                    appendChatBubble(agentName, 'system', 'Error: ' + (msg.error || 'Unknown error'));
+                    chat.inputEl.disabled = false;
+                    chat.sendBtn.disabled = false;
+                    break;
+
+                case 'session_stopped':
+                    appendChatBubble(agentName, 'system', 'Session ended.');
+                    break;
+            }
+        }
+
+        function sendChatMessage(agentName) {
+            const chat = chatPanels[agentName];
+            if (!chat || !chat.ws) return;
+
+            const text = chat.inputEl.value.trim();
+            if (!text) return;
+
+            // Show user message
+            appendChatBubble(agentName, 'user', text);
+            chat.inputEl.value = '';
+
+            // Disable input while waiting
+            chat.inputEl.disabled = true;
+            chat.sendBtn.disabled = true;
+
+            // Send to server
+            chat.ws.send(JSON.stringify({ type: 'chat_message', content: text }));
+        }
+
+        function closeChat(agentName) {
+            const chat = chatPanels[agentName];
+            if (!chat) return;
+
+            // Send stop_session if connected
+            if (chat.ws && chat.ws.readyState === WebSocket.OPEN) {
+                chat.ws.send(JSON.stringify({ type: 'stop_session' }));
+            }
+            chat.ws.close();
+
+            // Remove panel from DOM
+            chat.panelEl.remove();
+            delete chatPanels[agentName];
+            chatPanelCount = Math.max(0, chatPanelCount - 1);
+        }
+
+        function minimizeChat(agentName) {
+            const chat = chatPanels[agentName];
+            if (!chat) return;
+            chat.panelEl.classList.toggle('minimized');
+        }
+
+        function appendChatBubble(agentName, role, text) {
+            const chat = chatPanels[agentName];
+            if (!chat) return;
+
+            const bubble = document.createElement('div');
+            bubble.className = 'chat-msg ' + role;
+            bubble.textContent = text;
+            chat.messagesEl.appendChild(bubble);
+            chat.messagesEl.scrollTop = chat.messagesEl.scrollHeight;
         }
 
         // --- Init ---
