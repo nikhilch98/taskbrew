@@ -1,16 +1,29 @@
 """Manages the lifecycle of agent instances."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from ai_team.agents.base import AgentRunner, AgentStatus
 from ai_team.agents.roles import get_agent_config, AGENT_ROLES
 from ai_team.orchestrator.event_bus import EventBus
+
+if TYPE_CHECKING:
+    from ai_team.tools.worktree_manager import WorktreeManager
 
 
 class TeamManager:
     """Spawns, stops, and monitors agent instances."""
 
-    def __init__(self, event_bus: EventBus, cli_path: str | None = None):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        cli_path: str | None = None,
+        worktree_manager: WorktreeManager | None = None,
+    ):
         self.event_bus = event_bus
         self.cli_path = cli_path
+        self.worktree_manager = worktree_manager
         self.agents: dict[str, AgentRunner] = {}
 
     def spawn_agent(self, role_name: str) -> AgentRunner:
@@ -40,9 +53,15 @@ class TeamManager:
         agent = self.agents.get(agent_name)
         if not agent:
             raise ValueError(f"Agent '{agent_name}' not found")
+        # Use worktree path if available
+        effective_cwd = cwd
+        if self.worktree_manager:
+            worktree_path = self.worktree_manager.get_worktree_path(agent_name)
+            if worktree_path:
+                effective_cwd = worktree_path
         await self.event_bus.emit("agent_started", {"agent": agent_name, "prompt": prompt[:200]})
         try:
-            result = await agent.run(prompt, cwd=cwd)
+            result = await agent.run(prompt, cwd=effective_cwd)
             await self.event_bus.emit(
                 "agent_completed", {"agent": agent_name, "result": result[:500]}
             )
