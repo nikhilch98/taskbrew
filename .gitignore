@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.egg-info/
+.eggs/
+dist/
+build/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+env/
+
+# Data (user-specific)
+data/
+*.db
+artifacts/
+.worktrees/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Node
+node_modules/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# Claude Code
+.claude/
+
+# QA reports (internal)
+qa-reports/
+
+# Test output
+test_output*
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/

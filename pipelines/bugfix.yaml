@@ -1,0 +1,15 @@
+name: bugfix
+description: Bug investigation and fix pipeline
+steps:
+  - agent: researcher
+    action: analyze
+    description: Reproduce the bug and analyze root cause. Read error logs, stack traces, and relevant code.
+  - agent: coder
+    action: fix
+    description: Implement the fix on a bugfix branch. Make minimal, focused changes.
+  - agent: tester
+    action: verify
+    description: Write regression tests and verify the fix resolves the issue.
+  - agent: reviewer
+    action: review
+    description: Review the fix for correctness and potential side effects.

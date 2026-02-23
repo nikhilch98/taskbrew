@@ -1,0 +1,11 @@
+name: claude
+display_name: "Claude Code"
+binary: claude
+detect_models: ["claude-*"]
+models:
+  - id: "claude-opus-4-6"
+    tier: flagship
+  - id: "claude-sonnet-4-6"
+    tier: balanced
+  - id: "claude-haiku-4-5-20251001"
+    tier: fast

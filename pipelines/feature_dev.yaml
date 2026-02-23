@@ -1,0 +1,21 @@
+name: feature_dev
+description: Full feature development lifecycle
+steps:
+  - agent: pm
+    action: decompose
+    description: Break down the goal into concrete tasks with dependencies
+  - agent: researcher
+    action: research
+    description: Gather context - read codebase, search docs, identify patterns
+  - agent: architect
+    action: design
+    description: Design the technical solution and write architecture doc
+  - agent: coder
+    action: implement
+    description: Implement the solution on a feature branch
+  - agent: tester
+    action: test
+    description: Write and run tests to validate the implementation
+  - agent: reviewer
+    action: review
+    description: Review code quality, security, and correctness

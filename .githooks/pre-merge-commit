@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# .githooks/pre-merge-commit
+# -------------------------------------------------------
+# Git pre-merge-commit hook — scope-checks the inbound branch
+# before a merge lands on the current branch.
+#
+# Exit codes from scripts/check-merge-scope.sh:
+#   0 = PASS  — merge proceeds silently
+#   1 = WARN  — warning printed, merge still proceeds
+#   2 = BLOCK — merge is aborted
+#
+# This hook ONLY fires during `git merge` (the pre-merge-commit
+# hook is not invoked for normal commits).
+# -------------------------------------------------------
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCOPE_SCRIPT="${REPO_ROOT}/scripts/check-merge-scope.sh"
+
+# ------------------------------------------------------------------
+# 1. Detect the branch being merged
+# ------------------------------------------------------------------
+# During a merge, MERGE_HEAD contains the tip commit of the branch
+# being merged. We resolve it back to a branch name.
+# ------------------------------------------------------------------
+GIT_DIR="$(git rev-parse --git-dir)"
+MERGE_HEAD_FILE="${GIT_DIR}/MERGE_HEAD"
+
+if [ ! -f "${MERGE_HEAD_FILE}" ]; then
+    # No MERGE_HEAD means this isn't a merge — nothing to check.
+    # (Defensive guard; pre-merge-commit shouldn't fire otherwise.)
+    exit 0
+fi
+
+MERGE_SHA="$(cat "${MERGE_HEAD_FILE}")"
+
+# Try to resolve the SHA to a branch name.
+# `git name-rev` returns e.g. "abc1234 remotes/origin/feature/foo" or "abc1234 feature/foo"
+BRANCH_NAME="$(git name-rev --name-only --refs='refs/heads/*' "${MERGE_SHA}" 2>/dev/null || true)"
+
+# If name-rev couldn't resolve against local branches, try remote tracking branches
+if [ -z "${BRANCH_NAME}" ] || [ "${BRANCH_NAME}" = "undefined" ]; then
+    BRANCH_NAME="$(git name-rev --name-only --refs='refs/remotes/*' "${MERGE_SHA}" 2>/dev/null || true)"
+    # Strip the leading "remotes/origin/" prefix if present
+    BRANCH_NAME="${BRANCH_NAME#remotes/origin/}"
+    BRANCH_NAME="${BRANCH_NAME#remotes/*/}"
+fi
+
+# Fallback: parse GIT_REFLOG_ACTION (set by git during merge)
+# Typically: "merge <branch-name>" or "merge origin/<branch-name>"
+if [ -z "${BRANCH_NAME}" ] || [ "${BRANCH_NAME}" = "undefined" ]; then
+    if [ -n "${GIT_REFLOG_ACTION:-}" ]; then
+        # Extract branch name from "merge <branch>" pattern
+        BRANCH_NAME="$(echo "${GIT_REFLOG_ACTION}" | sed -n 's/^merge \(.*\)/\1/p')"
+    fi
+fi
+
+# Last resort: use the raw SHA (the scope script can still count commits)
+if [ -z "${BRANCH_NAME}" ] || [ "${BRANCH_NAME}" = "undefined" ]; then
+    BRANCH_NAME="${MERGE_SHA}"
+fi
+
+# ------------------------------------------------------------------
+# 2. Verify the scope-check script exists
+# ------------------------------------------------------------------
+if [ ! -x "${SCOPE_SCRIPT}" ]; then
+    echo "pre-merge-commit: WARNING — scope-check script not found or not executable:"
+    echo "  ${SCOPE_SCRIPT}"
+    echo "Skipping pre-merge scope validation. Run 'make setup-hooks' to verify setup."
+    exit 0
+fi
+
+# ------------------------------------------------------------------
+# 3. Run the scope check
+# ------------------------------------------------------------------
+echo "pre-merge-commit: checking merge scope for '${BRANCH_NAME}' ..."
+
+set +e
+"${SCOPE_SCRIPT}" "${BRANCH_NAME}"
+EXIT_CODE=$?
+set -e
+
+case ${EXIT_CODE} in
+    0)
+        # PASS — proceed silently
+        ;;
+    1)
+        # WARN — message already printed by the script; allow merge
+        echo "pre-merge-commit: scope warning detected (see above). Merge will proceed."
+        ;;
+    2)
+        # BLOCK — abort the merge
+        echo ""
+        echo "============================================================"
+        echo "  MERGE BLOCKED by pre-merge scope check"
+        echo "  Branch: ${BRANCH_NAME}"
+        echo "============================================================"
+        echo ""
+        echo "The inbound branch exceeds the allowed commit-count threshold."
+        echo "Please rebase or split the branch before merging."
+        echo ""
+        echo "To bypass this check (use with caution):"
+        echo "  git merge --no-verify <branch>"
+        echo ""
+        exit 1   # non-zero exits abort the merge
+        ;;
+    *)
+        # Unexpected exit code — treat as warning, don't block
+        echo "pre-merge-commit: scope script exited with unexpected code ${EXIT_CODE}."
+        echo "Allowing merge to proceed."
+        ;;
+esac
+
+exit 0

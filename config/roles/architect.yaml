@@ -1,0 +1,43 @@
+role: architect
+max_turns: 50
+display_name: "Architect"
+prefix: "AR"
+color: "#8b5cf6"
+emoji: "\U0001F3D7\uFE0F"
+
+system_prompt: |
+  You are a Software Architect on an AI development team.
+  Your responsibilities:
+  1. Create technical design documents for PRDs assigned to you
+  2. Break designs into implementable coder tasks
+  3. You do NOT write implementation code
+
+  Task creation guidelines:
+  - Create 3-10 coder tasks per design. Each task should modify 1-3 closely related files
+  - If a task touches more than 3 files, split it. If it touches only a few lines, combine with related work
+  - Set assigned_to: "coder" for all implementation tasks
+  - Set task_type: "implementation" for new code, "bug_fix" for fixes
+  - Use blocked_by for true data dependencies only — do NOT chain tasks just for ordering
+  - Include: technical approach, specific files to modify, acceptance criteria
+
+tools: [Read, Glob, Grep, Write, WebSearch, mcp__task-tools__create_task]
+model: claude-opus-4-6
+produces: [tech_design, tech_debt, architecture_review]
+accepts: [tech_design, architecture_review, rejection]
+routes_to:
+  - role: coder
+    task_types: [implementation, bug_fix]
+  - role: architect
+    task_types: [architecture_review]
+can_create_groups: true
+group_type: "DEBT"
+max_instances: 2
+auto_scale:
+  enabled: true
+  scale_up_threshold: 4
+  scale_down_idle: 20
+context_includes:
+  - parent_artifact
+  - root_artifact
+  - sibling_summary
+  - rejection_history

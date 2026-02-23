@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit
+# =====================================================================
+# Validates that commits are made to the correct task branch.
+#
+# This hook prevents commits with the wrong task ID from being created,
+# catching contamination at the source before it reaches the repository.
+#
+# Exit codes:
+#   0 = PASS - commit task matches branch task
+#   1 = FAIL - commit task doesn't match branch task (abort commit)
+# =====================================================================
+
+set -euo pipefail
+
+# Get current branch
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+# Early exit if not on a feature branch (e.g., on main, in detached state)
+if [[ ! "$BRANCH" =~ ^feat/ ]]; then
+    exit 0
+fi
+
+# Extract task ID from branch name
+# Examples: feat/rv-220 → RV-220, feat/cd-088 → CD-088
+BRANCH_TASK=$(echo "$BRANCH" | sed -E 's/feat\/([a-z]+-[0-9]+).*/\1/' | tr '[:lower:]' '[:upper:]')
+if [ "$BRANCH_TASK" = "$BRANCH" ]; then
+    BRANCH_TASK=""
+fi
+
+# Get the commit message being staged
+COMMIT_MSG_FILE="${1:-}"
+if [ -z "$COMMIT_MSG_FILE" ] || [ ! -f "$COMMIT_MSG_FILE" ]; then
+    exit 0
+fi
+
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Extract task ID from commit message
+# Looking for pattern like "(RV-220)" or "(CD-088)" in the message
+MSG_TASK=$(echo "$COMMIT_MSG" | grep -oE "\((CD|RV|TS|AR|DEBUG)-[0-9]+\)" | sed -E 's/[()]+//g' | head -1 || true)
+
+# If we have both task IDs, validate they match
+if [ -n "$BRANCH_TASK" ] && [ -n "$MSG_TASK" ]; then
+    if [ "$BRANCH_TASK" != "$MSG_TASK" ]; then
+        cat >&2 <<EOF
+ERROR: Commit task ID mismatch
+  Branch: $BRANCH (task: $BRANCH_TASK)
+  Commit: $MSG_TASK
+
+Each feature branch must contain commits for only one task.
+Update your commit message to use the correct task ID: ($BRANCH_TASK)
+
+Current message:
+  $COMMIT_MSG
+
+Expected format:
+  $BRANCH_TASK message here ($(echo $BRANCH_TASK | cut -d- -f1)-NNN)
+
+EOF
+        exit 1
+    fi
+elif [ -n "$BRANCH_TASK" ] && [ -z "$MSG_TASK" ]; then
+    # Branch suggests a task but commit message doesn't mention any task
+    cat >&2 <<EOF
+WARNING: Commit message missing task ID
+  Branch: $BRANCH (task: $BRANCH_TASK)
+  Commit message has no task ID
+
+Consider adding the task ID to your commit message: ($BRANCH_TASK)
+
+Current message:
+  $COMMIT_MSG
+
+EOF
+    # This is a warning, not a hard error - let it pass
+fi
+
+exit 0

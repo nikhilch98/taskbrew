@@ -1,0 +1,12 @@
+name: code_review
+description: Standalone code review pipeline
+steps:
+  - agent: reviewer
+    action: review
+    description: Review the specified code or PR for quality, security, and correctness.
+  - agent: coder
+    action: address_feedback
+    description: Address review feedback and make requested changes.
+  - agent: reviewer
+    action: re_review
+    description: Verify that feedback has been addressed satisfactorily.
