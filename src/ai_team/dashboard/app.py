@@ -1,9 +1,11 @@
 """FastAPI dashboard backend with WebSocket support."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
@@ -14,6 +16,9 @@ from ai_team.orchestrator.event_bus import EventBus
 from ai_team.orchestrator.team_manager import TeamManager
 from ai_team.orchestrator.task_queue import TaskQueue
 from ai_team.orchestrator.workflow import WorkflowEngine
+
+if TYPE_CHECKING:
+    from ai_team.dashboard.chat_manager import ChatManager
 
 
 class ConnectionManager:
@@ -41,6 +46,7 @@ def create_app(
     team_manager: TeamManager,
     task_queue: TaskQueue,
     workflow_engine: WorkflowEngine,
+    chat_manager: ChatManager | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AI Team Dashboard")
     ws_manager = ConnectionManager()
@@ -179,6 +185,108 @@ def create_app(
                     await ws.send_text(json.dumps({"type": "pong"}))
         except WebSocketDisconnect:
             ws_manager.disconnect(ws)
+
+    if chat_manager:
+        from ai_team.agents.roles import get_agent_config
+
+        @app.get("/api/chat/sessions")
+        async def get_chat_sessions():
+            return {
+                name: {
+                    "session_id": s.session_id,
+                    "agent_name": s.agent_name,
+                    "is_connected": s.is_connected,
+                    "is_responding": s.is_responding,
+                    "message_count": len(s.history),
+                }
+                for name, s in chat_manager.sessions.items()
+            }
+
+        @app.get("/api/chat/{agent_name}/history")
+        async def get_chat_history(agent_name: str):
+            history = chat_manager.get_history(agent_name)
+            if history is None:
+                raise HTTPException(status_code=404, detail=f"No chat session for '{agent_name}'")
+            return [{"id": m.id, "role": m.role, "content": m.content, "timestamp": m.timestamp} for m in history]
+
+        @app.delete("/api/chat/{agent_name}")
+        async def delete_chat_session(agent_name: str):
+            session = chat_manager.get_session(agent_name)
+            if not session:
+                raise HTTPException(status_code=404, detail=f"No chat session for '{agent_name}'")
+            await chat_manager.stop_session(agent_name)
+            return {"agent": agent_name, "status": "disconnected"}
+
+        @app.websocket("/ws/chat/{agent_name}")
+        async def chat_websocket(ws: WebSocket, agent_name: str):
+            await ws.accept()
+            try:
+                while True:
+                    data = await ws.receive_text()
+                    msg = json.loads(data)
+                    msg_type = msg.get("type")
+
+                    if msg_type == "start_session":
+                        try:
+                            config = get_agent_config(agent_name)
+                            session = await chat_manager.start_session(agent_name, config)
+                            await ws.send_text(json.dumps({
+                                "type": "session_started",
+                                "agent": agent_name,
+                                "session_id": session.session_id,
+                            }))
+                        except Exception as e:
+                            await ws.send_text(json.dumps({
+                                "type": "chat_error",
+                                "agent": agent_name,
+                                "error": str(e),
+                            }))
+
+                    elif msg_type == "chat_message":
+                        content = msg.get("content", "")
+                        try:
+                            async def on_token(text):
+                                await ws.send_text(json.dumps({
+                                    "type": "chat_token",
+                                    "agent": agent_name,
+                                    "content": text,
+                                }))
+
+                            async def on_tool_use(tool, tool_input):
+                                await ws.send_text(json.dumps({
+                                    "type": "chat_tool_use",
+                                    "agent": agent_name,
+                                    "tool": tool,
+                                    "input": tool_input,
+                                }))
+
+                            result = await chat_manager.send_message(
+                                agent_name, content,
+                                on_token=on_token,
+                                on_tool_use=on_tool_use,
+                            )
+                            await ws.send_text(json.dumps({
+                                "type": "chat_response_complete",
+                                "agent": agent_name,
+                                "content": result,
+                            }))
+                        except Exception as e:
+                            await ws.send_text(json.dumps({
+                                "type": "chat_error",
+                                "agent": agent_name,
+                                "error": str(e),
+                            }))
+
+                    elif msg_type == "stop_session":
+                        await chat_manager.stop_session(agent_name)
+                        await ws.send_text(json.dumps({
+                            "type": "session_stopped",
+                            "agent": agent_name,
+                        }))
+                        break
+
+            except WebSocketDisconnect:
+                await chat_manager.stop_session(agent_name)
 
     templates_dir = Path(__file__).parent / "templates"
     templates = Jinja2Templates(directory=str(templates_dir))
