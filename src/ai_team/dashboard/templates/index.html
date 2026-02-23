@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Team Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        h1 { color: #58a6ff; margin-bottom: 24px; font-size: 24px; }
+        h2 { color: #58a6ff; margin-bottom: 12px; font-size: 18px; }
+
+        /* Connection indicator */
+        .ws-status {
+            display: inline-block;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            margin-left: 12px;
+            vertical-align: middle;
+        }
+        .ws-status.connected { background: #238636; }
+        .ws-status.disconnected { background: #da3633; }
+
+        /* Section layout */
+        .section { margin-bottom: 28px; }
+
+        /* Agent cards grid */
+        .agents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 8px;
+        }
+        .agent-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .agent-card h3 {
+            color: #58a6ff;
+            margin-bottom: 8px;
+            font-size: 15px;
+        }
+        .agent-card .agent-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        /* Status badges */
+        .status-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-idle { background: #238636; color: #fff; }
+        .status-working { background: #1f6feb; color: #fff; }
+        .status-blocked { background: #d29922; color: #fff; }
+        .status-stopped { background: #da3633; color: #fff; }
+        .status-error { background: #da3633; color: #fff; }
+
+        /* Agent control buttons */
+        .agent-controls {
+            display: flex;
+            gap: 6px;
+        }
+        .btn {
+            padding: 4px 12px;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            background: #21262d;
+            color: #c9d1d9;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .btn:hover { background: #30363d; }
+        .btn-pause { border-color: #d29922; color: #d29922; }
+        .btn-pause:hover { background: #d29922; color: #fff; }
+        .btn-resume { border-color: #238636; color: #3fb950; }
+        .btn-resume:hover { background: #238636; color: #fff; }
+        .btn-kill { border-color: #da3633; color: #f85149; }
+        .btn-kill:hover { background: #da3633; color: #fff; }
+
+        /* Kanban board */
+        .kanban-board {
+            display: flex;
+            gap: 12px;
+            overflow-x: auto;
+            padding-bottom: 8px;
+        }
+        .kanban-column {
+            min-width: 220px;
+            flex: 1;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .kanban-column h3 {
+            color: #8b949e;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #30363d;
+        }
+        .kanban-column h3 .count {
+            background: #30363d;
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-size: 11px;
+            margin-left: 6px;
+        }
+        .task-card {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .task-card .task-type {
+            color: #58a6ff;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .task-card .task-meta {
+            color: #8b949e;
+            font-size: 11px;
+        }
+
+        /* Pipeline runs */
+        .runs-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 12px;
+        }
+        .run-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .run-card .run-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .run-card .run-id {
+            color: #58a6ff;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .run-card .run-pipeline {
+            color: #c9d1d9;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .run-card .run-step {
+            color: #8b949e;
+            font-size: 12px;
+        }
+        .run-status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .run-status-running { background: #1f6feb; color: #fff; }
+        .run-status-awaiting_approval { background: #d29922; color: #fff; }
+        .run-status-completed { background: #238636; color: #fff; }
+        .run-status-failed { background: #da3633; color: #fff; }
+
+        /* Approve/Reject buttons */
+        .run-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .btn-approve { border-color: #238636; color: #3fb950; }
+        .btn-approve:hover { background: #238636; color: #fff; }
+        .btn-reject { border-color: #da3633; color: #f85149; }
+        .btn-reject:hover { background: #da3633; color: #fff; }
+
+        /* Log stream */
+        .log-panel {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .log-entry {
+            padding: 3px 0;
+            border-bottom: 1px solid #21262d;
+            word-break: break-all;
+        }
+        .log-entry .log-time {
+            color: #8b949e;
+            margin-right: 8px;
+        }
+        .log-entry .log-type {
+            color: #d2a8ff;
+            font-weight: 500;
+            margin-right: 8px;
+        }
+        .log-entry .log-body {
+            color: #c9d1d9;
+        }
+
+        /* Empty state */
+        .empty-state {
+            color: #484f58;
+            font-size: 13px;
+            font-style: italic;
+            padding: 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>
+        AI Team Dashboard
+        <span id="wsIndicator" class="ws-status disconnected" title="WebSocket disconnected"></span>
+    </h1>
+
+    <!-- Agents Section -->
+    <div class="section">
+        <h2>Agents</h2>
+        <div class="agents-grid" id="agentsGrid">
+            <div class="empty-state">No agents spawned yet.</div>
+        </div>
+    </div>
+
+    <!-- Kanban Task Board -->
+    <div class="section">
+        <h2>Task Board</h2>
+        <div class="kanban-board" id="kanbanBoard">
+            <div class="kanban-column" id="col-pending">
+                <h3>Pending <span class="count">0</span></h3>
+                <div class="column-tasks"></div>
+            </div>
+            <div class="kanban-column" id="col-in_progress">
+                <h3>In Progress <span class="count">0</span></h3>
+                <div class="column-tasks"></div>
+            </div>
+            <div class="kanban-column" id="col-review">
+                <h3>Review <span class="count">0</span></h3>
+                <div class="column-tasks"></div>
+            </div>
+            <div class="kanban-column" id="col-completed">
+                <h3>Completed <span class="count">0</span></h3>
+                <div class="column-tasks"></div>
+            </div>
+            <div class="kanban-column" id="col-failed">
+                <h3>Failed <span class="count">0</span></h3>
+                <div class="column-tasks"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pipeline Runs -->
+    <div class="section">
+        <h2>Pipeline Runs</h2>
+        <div class="runs-list" id="runsList">
+            <div class="empty-state">No active pipeline runs.</div>
+        </div>
+    </div>
+
+    <!-- Real-time Log Stream -->
+    <div class="section">
+        <h2>Event Log</h2>
+        <div class="log-panel" id="logPanel">
+            <div class="empty-state">Waiting for events...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- State ---
+        let ws = null;
+        let reconnectTimer = null;
+        const MAX_LOG_ENTRIES = 200;
+
+        // --- WebSocket ---
+        function connectWebSocket() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+            ws.onopen = () => {
+                document.getElementById('wsIndicator').className = 'ws-status connected';
+                document.getElementById('wsIndicator').title = 'WebSocket connected';
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+                // Initial data load
+                refreshAll();
+            };
+
+            ws.onmessage = (e) => {
+                const event = JSON.parse(e.data);
+                appendLog(event);
+                // Refresh relevant sections based on event type
+                if (event.type && (event.type.includes('agent') || event.type.includes('team'))) {
+                    refreshAgents();
+                }
+                if (event.type && (event.type.includes('task') || event.type.includes('pipeline'))) {
+                    refreshTaskBoard();
+                    refreshRuns();
+                }
+                if (event.type && event.type.includes('checkpoint')) {
+                    refreshRuns();
+                }
+            };
+
+            ws.onclose = () => {
+                document.getElementById('wsIndicator').className = 'ws-status disconnected';
+                document.getElementById('wsIndicator').title = 'WebSocket disconnected - reconnecting...';
+                reconnectTimer = setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+
+        // --- Log Stream ---
+        function appendLog(event) {
+            const logPanel = document.getElementById('logPanel');
+            // Remove empty state if present
+            const emptyState = logPanel.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+
+            const time = new Date().toLocaleTimeString();
+            const type = event.type || 'unknown';
+            const body = JSON.stringify(event, null, 0);
+
+            entry.innerHTML =
+                '<span class="log-time">' + escapeHtml(time) + '</span>' +
+                '<span class="log-type">' + escapeHtml(type) + '</span>' +
+                '<span class="log-body">' + escapeHtml(body) + '</span>';
+
+            logPanel.prepend(entry);
+
+            // Trim old entries
+            const entries = logPanel.querySelectorAll('.log-entry');
+            if (entries.length > MAX_LOG_ENTRIES) {
+                for (let i = MAX_LOG_ENTRIES; i < entries.length; i++) {
+                    entries[i].remove();
+                }
+            }
+        }
+
+        // --- Agents ---
+        async function refreshAgents() {
+            try {
+                const resp = await fetch('/api/team');
+                const team = await resp.json();
+                const grid = document.getElementById('agentsGrid');
+
+                if (Object.keys(team).length === 0) {
+                    grid.innerHTML = '<div class="empty-state">No agents spawned yet.</div>';
+                    return;
+                }
+
+                grid.innerHTML = '';
+                for (const [name, status] of Object.entries(team)) {
+                    const card = document.createElement('div');
+                    card.className = 'agent-card';
+                    card.innerHTML =
+                        '<div class="agent-info">' +
+                            '<h3>' + escapeHtml(name) + '</h3>' +
+                            '<span class="status-badge status-' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' +
+                        '</div>' +
+                        '<div class="agent-controls">' +
+                            '<button class="btn btn-pause" onclick="agentAction(\'' + escapeHtml(name) + '\', \'pause\')">Pause</button>' +
+                            '<button class="btn btn-resume" onclick="agentAction(\'' + escapeHtml(name) + '\', \'resume\')">Resume</button>' +
+                            '<button class="btn btn-kill" onclick="agentAction(\'' + escapeHtml(name) + '\', \'kill\')">Kill</button>' +
+                        '</div>';
+                    grid.appendChild(card);
+                }
+            } catch (err) {
+                console.error('Failed to refresh agents:', err);
+            }
+        }
+
+        async function agentAction(name, action) {
+            try {
+                const resp = await fetch('/api/agents/' + encodeURIComponent(name) + '/' + action, { method: 'POST' });
+                if (resp.ok) {
+                    refreshAgents();
+                }
+            } catch (err) {
+                console.error('Agent action failed:', err);
+            }
+        }
+
+        // --- Kanban Task Board ---
+        async function refreshTaskBoard() {
+            try {
+                const resp = await fetch('/api/tasks/board');
+                const board = await resp.json();
+
+                const columns = ['pending', 'in_progress', 'review', 'completed', 'failed'];
+                for (const col of columns) {
+                    const colEl = document.getElementById('col-' + col);
+                    if (!colEl) continue;
+
+                    const tasks = board[col] || [];
+                    const countEl = colEl.querySelector('.count');
+                    if (countEl) countEl.textContent = tasks.length;
+
+                    const tasksContainer = colEl.querySelector('.column-tasks');
+                    tasksContainer.innerHTML = '';
+
+                    for (const task of tasks) {
+                        const card = document.createElement('div');
+                        card.className = 'task-card';
+                        card.innerHTML =
+                            '<div class="task-type">' + escapeHtml(task.task_type || 'task') + '</div>' +
+                            '<div class="task-meta">' +
+                                'ID: ' + escapeHtml(String(task.id || '')) +
+                                (task.assigned_to ? ' | Agent: ' + escapeHtml(task.assigned_to) : '') +
+                                (task.pipeline_id ? ' | Pipeline: ' + escapeHtml(task.pipeline_id) : '') +
+                            '</div>';
+                        tasksContainer.appendChild(card);
+                    }
+
+                    if (tasks.length === 0) {
+                        tasksContainer.innerHTML = '<div class="empty-state">No tasks</div>';
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to refresh task board:', err);
+            }
+        }
+
+        // --- Pipeline Runs ---
+        async function refreshRuns() {
+            try {
+                const resp = await fetch('/api/runs');
+                const runs = await resp.json();
+                const runsList = document.getElementById('runsList');
+
+                if (runs.length === 0) {
+                    runsList.innerHTML = '<div class="empty-state">No active pipeline runs.</div>';
+                    return;
+                }
+
+                runsList.innerHTML = '';
+                for (const run of runs) {
+                    const card = document.createElement('div');
+                    card.className = 'run-card';
+
+                    let statusClass = 'run-status-' + (run.status || 'running');
+                    let actionsHtml = '';
+                    if (run.status === 'awaiting_approval') {
+                        actionsHtml =
+                            '<div class="run-actions">' +
+                                '<button class="btn btn-approve" onclick="approveRun(\'' + escapeHtml(run.run_id) + '\')">Approve</button>' +
+                                '<button class="btn btn-reject" onclick="rejectRun(\'' + escapeHtml(run.run_id) + '\')">Reject</button>' +
+                            '</div>';
+                    }
+
+                    card.innerHTML =
+                        '<div class="run-header">' +
+                            '<span class="run-pipeline">' + escapeHtml(run.pipeline || '') + '</span>' +
+                            '<span class="run-status ' + statusClass + '">' + escapeHtml(run.status || '') + '</span>' +
+                        '</div>' +
+                        '<div class="run-id">Run: ' + escapeHtml(run.run_id || '') + '</div>' +
+                        '<div class="run-step">Step: ' + (run.current_step != null ? run.current_step : '?') + '</div>' +
+                        actionsHtml;
+
+                    runsList.appendChild(card);
+                }
+            } catch (err) {
+                console.error('Failed to refresh runs:', err);
+            }
+        }
+
+        async function approveRun(runId) {
+            try {
+                await fetch('/api/runs/' + encodeURIComponent(runId) + '/approve', { method: 'POST' });
+                refreshRuns();
+            } catch (err) {
+                console.error('Approve failed:', err);
+            }
+        }
+
+        async function rejectRun(runId) {
+            try {
+                await fetch('/api/runs/' + encodeURIComponent(runId) + '/reject', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: 'Rejected from dashboard' })
+                });
+                refreshRuns();
+            } catch (err) {
+                console.error('Reject failed:', err);
+            }
+        }
+
+        // --- Utilities ---
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function refreshAll() {
+            refreshAgents();
+            refreshTaskBoard();
+            refreshRuns();
+        }
+
+        // --- Init ---
+        connectWebSocket();
+    </script>
+</body>
+</html>

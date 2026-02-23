@@ -49,3 +49,34 @@ async def test_pipelines_endpoint(client):
     resp = await client.get("/api/pipelines")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+async def test_task_board_endpoint(client):
+    resp = await client.get("/api/tasks/board")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "pending" in data
+    assert "in_progress" in data
+    assert "completed" in data
+
+
+async def test_agent_control_pause(app_deps, client):
+    _, team_mgr, _, _ = app_deps
+    team_mgr.spawn_agent("coder")
+    resp = await client.post("/api/agents/coder/pause")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "blocked"
+
+
+async def test_agent_control_resume(app_deps, client):
+    _, team_mgr, _, _ = app_deps
+    team_mgr.spawn_agent("coder")
+    resp = await client.post("/api/agents/coder/resume")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "idle"
+
+
+async def test_pipeline_runs_endpoint(client):
+    resp = await client.get("/api/runs")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

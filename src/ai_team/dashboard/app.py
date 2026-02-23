@@ -2,11 +2,14 @@
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from starlette.requests import Request
 
+from ai_team.agents.base import AgentStatus
 from ai_team.orchestrator.event_bus import EventBus
 from ai_team.orchestrator.team_manager import TeamManager
 from ai_team.orchestrator.task_queue import TaskQueue
@@ -105,6 +108,66 @@ def create_app(
         await event_bus.emit("checkpoint_rejected", {"run_id": run_id, "reason": reason})
         return {"status": "rejected", "run_id": run_id}
 
+    @app.get("/api/tasks/board")
+    async def get_task_board():
+        """Return tasks grouped by status for Kanban board."""
+        all_tasks = await task_queue.get_pending_tasks()
+        board = {
+            "pending": [],
+            "assigned": [],
+            "in_progress": [],
+            "review": [],
+            "completed": [],
+            "failed": [],
+        }
+        for task in all_tasks:
+            status = task.get("status", "pending")
+            if status in board:
+                board[status].append(task)
+            else:
+                board["pending"].append(task)
+        return board
+
+    @app.get("/api/runs")
+    async def get_runs():
+        """Return all active pipeline runs."""
+        return [
+            {
+                "run_id": run.run_id,
+                "pipeline": run.pipeline_name,
+                "current_step": run.current_step,
+                "status": run.status,
+            }
+            for run in workflow_engine.active_runs.values()
+        ]
+
+    @app.post("/api/agents/{agent_name}/pause")
+    async def pause_agent(agent_name: str):
+        agent = team_manager.get_agent(agent_name)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+        agent.status = AgentStatus.BLOCKED
+        await event_bus.emit("agent_paused", {"agent": agent_name})
+        return {"agent": agent_name, "status": "blocked"}
+
+    @app.post("/api/agents/{agent_name}/resume")
+    async def resume_agent(agent_name: str):
+        agent = team_manager.get_agent(agent_name)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+        agent.status = AgentStatus.IDLE
+        await event_bus.emit("agent_resumed", {"agent": agent_name})
+        return {"agent": agent_name, "status": "idle"}
+
+    @app.post("/api/agents/{agent_name}/kill")
+    async def kill_agent(agent_name: str):
+        agent = team_manager.get_agent(agent_name)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+        team_manager.stop_agent(agent_name)
+        await event_bus.emit("agent_killed", {"agent": agent_name})
+        return {"agent": agent_name, "status": "stopped"}
+
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
         await ws_manager.connect(ws)
@@ -117,59 +180,11 @@ def create_app(
         except WebSocketDisconnect:
             ws_manager.disconnect(ws)
 
+    templates_dir = Path(__file__).parent / "templates"
+    templates = Jinja2Templates(directory=str(templates_dir))
+
     @app.get("/")
-    async def index():
-        return HTMLResponse(DASHBOARD_HTML)
+    async def index(request: Request):
+        return templates.TemplateResponse("index.html", {"request": request})
 
     return app
-
-
-DASHBOARD_HTML = """<!DOCTYPE html>
-<html>
-<head>
-    <title>AI Team Dashboard</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
-        h1 { color: #58a6ff; margin-bottom: 20px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
-        .card h3 { color: #58a6ff; margin-bottom: 8px; }
-        .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
-        .status.idle { background: #238636; }
-        .status.working { background: #d29922; }
-        .status.error { background: #da3633; }
-        #log { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 13px; }
-        .log-entry { padding: 4px 0; border-bottom: 1px solid #21262d; }
-    </style>
-</head>
-<body>
-    <h1>AI Team Dashboard</h1>
-    <div class="grid" id="agents"></div>
-    <h2 style="color:#58a6ff;margin-bottom:12px">Event Log</h2>
-    <div id="log"></div>
-    <script>
-        const ws = new WebSocket(`ws://${location.host}/ws`);
-        const log = document.getElementById('log');
-        const agents = document.getElementById('agents');
-        ws.onmessage = (e) => {
-            const event = JSON.parse(e.data);
-            const entry = document.createElement('div');
-            entry.className = 'log-entry';
-            entry.textContent = `[${new Date().toLocaleTimeString()}] ${event.type}: ${JSON.stringify(event)}`;
-            log.prepend(entry);
-        };
-        async function refreshTeam() {
-            const resp = await fetch('/api/team');
-            const team = await resp.json();
-            agents.innerHTML = '';
-            for (const [name, status] of Object.entries(team)) {
-                agents.innerHTML += `<div class="card"><h3>${name}</h3><span class="status ${status}">${status}</span></div>`;
-            }
-        }
-        setInterval(refreshTeam, 3000);
-        refreshTeam();
-    </script>
-</body>
-</html>
-"""
