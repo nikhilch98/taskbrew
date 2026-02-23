@@ -7,6 +7,7 @@ from pathlib import Path
 import uvicorn
 
 from ai_team.config import OrchestratorConfig
+from ai_team.dashboard.chat_manager import ChatManager
 from ai_team.orchestrator.artifact_store import ArtifactStore
 from ai_team.orchestrator.event_bus import EventBus
 from ai_team.orchestrator.task_queue import TaskQueue
@@ -18,15 +19,18 @@ from ai_team.dashboard.app import create_app
 class Orchestrator:
     """Top-level orchestrator combining all components."""
 
-    def __init__(self, event_bus, task_queue, team_manager, workflow_engine, config, artifact_store=None):
+    def __init__(self, event_bus, task_queue, team_manager, workflow_engine, config, artifact_store=None, chat_manager=None):
         self.event_bus = event_bus
         self.task_queue = task_queue
         self.team_manager = team_manager
         self.workflow_engine = workflow_engine
         self.config = config
         self.artifact_store = artifact_store
+        self.chat_manager = chat_manager
 
     async def shutdown(self):
+        if self.chat_manager:
+            await self.chat_manager.stop_all()
         await self.task_queue.close()
 
 
@@ -46,11 +50,13 @@ async def build_orchestrator(project_dir=None, cli_path=None):
         workflow_engine.load_pipelines(pipelines_dir)
 
     artifact_store = ArtifactStore(base_dir=str(config.artifacts_dir))
+    chat_manager = ChatManager(cli_path=config.cli_path, project_dir=str(config.project_dir))
 
     return Orchestrator(
         event_bus=event_bus, task_queue=task_queue,
         team_manager=team_manager, workflow_engine=workflow_engine,
         config=config, artifact_store=artifact_store,
+        chat_manager=chat_manager,
     )
 
 
@@ -58,6 +64,7 @@ async def run_server(orch):
     app = create_app(
         event_bus=orch.event_bus, team_manager=orch.team_manager,
         task_queue=orch.task_queue, workflow_engine=orch.workflow_engine,
+        chat_manager=orch.chat_manager,
     )
     config = uvicorn.Config(
         app=app, host=orch.config.dashboard_host,
