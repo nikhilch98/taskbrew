@@ -109,3 +109,51 @@ def test_successful_advance_resets_retry_count():
     assert step.retry_count == 0  # reset
     assert run.current_step == 1
     assert run.status == "running"
+
+
+async def test_save_and_load_run(tmp_path):
+    """Pipeline run state persists to SQLite."""
+    db_path = str(tmp_path / "test.db")
+    engine = WorkflowEngine(db_path=db_path)
+    await engine.initialize_db()
+    engine.register_pipeline(Pipeline(name="persist-test", description="test", steps=[
+        PipelineStep(agent="coder", action="code", description="Code it"),
+        PipelineStep(agent="tester", action="test", description="Test it"),
+    ]))
+    run = engine.start_run("persist-test", run_id="p1")
+    await engine.save_run("p1")
+
+    # Create new engine (simulating restart)
+    engine2 = WorkflowEngine(db_path=db_path)
+    await engine2.initialize_db()
+    engine2.register_pipeline(Pipeline(name="persist-test", description="test", steps=[
+        PipelineStep(agent="coder", action="code", description="Code it"),
+        PipelineStep(agent="tester", action="test", description="Test it"),
+    ]))
+    await engine2.load_runs()
+    assert "p1" in engine2.active_runs
+    assert engine2.active_runs["p1"].current_step == 0
+    assert engine2.active_runs["p1"].status == "running"
+
+
+async def test_advance_persists_state(tmp_path):
+    """Advancing a run persists the new step index."""
+    db_path = str(tmp_path / "test.db")
+    engine = WorkflowEngine(db_path=db_path)
+    await engine.initialize_db()
+    engine.register_pipeline(Pipeline(name="advance-test", description="test", steps=[
+        PipelineStep(agent="coder", action="code", description="Code"),
+        PipelineStep(agent="tester", action="test", description="Test"),
+    ]))
+    engine.start_run("advance-test", run_id="a1")
+    engine.advance_run("a1")
+    await engine.save_run("a1")
+
+    engine2 = WorkflowEngine(db_path=db_path)
+    await engine2.initialize_db()
+    engine2.register_pipeline(Pipeline(name="advance-test", description="test", steps=[
+        PipelineStep(agent="coder", action="code", description="Code"),
+        PipelineStep(agent="tester", action="test", description="Test"),
+    ]))
+    await engine2.load_runs()
+    assert engine2.active_runs["a1"].current_step == 1

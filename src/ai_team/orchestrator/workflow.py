@@ -1,8 +1,11 @@
 """Pipeline-based workflow engine for orchestrating agent tasks."""
 
+import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
+import aiosqlite
 import yaml
 
 
@@ -55,9 +58,75 @@ class PipelineRun:
 
 
 class WorkflowEngine:
-    def __init__(self):
+    def __init__(self, db_path: str | None = None):
         self.pipelines: dict[str, Pipeline] = {}
         self.active_runs: dict[str, PipelineRun] = {}
+        self.db_path = db_path
+
+    async def initialize_db(self) -> None:
+        """Create the pipeline_runs table if it doesn't exist."""
+        if self.db_path is None:
+            return
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """CREATE TABLE IF NOT EXISTS pipeline_runs (
+                    run_id TEXT PRIMARY KEY,
+                    pipeline_name TEXT NOT NULL,
+                    current_step INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    context TEXT,
+                    started_at TEXT,
+                    updated_at TEXT
+                )"""
+            )
+            await db.commit()
+
+    async def save_run(self, run_id: str) -> None:
+        """Persist a run's current state to SQLite."""
+        if self.db_path is None:
+            return
+        run = self.active_runs.get(run_id)
+        if not run:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT OR REPLACE INTO pipeline_runs
+                   (run_id, pipeline_name, current_step, status, context, started_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, COALESCE(
+                       (SELECT started_at FROM pipeline_runs WHERE run_id = ?), ?
+                   ), ?)""",
+                (
+                    run.run_id,
+                    run.pipeline_name,
+                    run.current_step,
+                    run.status,
+                    json.dumps(run.context),
+                    run.run_id,
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+
+    async def load_runs(self) -> None:
+        """Load all non-completed/non-failed runs from SQLite into active_runs."""
+        if self.db_path is None:
+            return
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM pipeline_runs WHERE status NOT IN ('completed', 'failed')"
+            ) as cursor:
+                async for row in cursor:
+                    run = PipelineRun(
+                        pipeline_name=row["pipeline_name"],
+                        run_id=row["run_id"],
+                        current_step=row["current_step"],
+                        status=row["status"],
+                        context=json.loads(row["context"]) if row["context"] else {},
+                    )
+                    self.active_runs[run.run_id] = run
 
     def register_pipeline(self, pipeline: Pipeline) -> None:
         self.pipelines[pipeline.name] = pipeline
