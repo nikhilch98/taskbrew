@@ -53,6 +53,7 @@ class AgentRunner:
             system_prompt=self.config.system_prompt,
             allowed_tools=self.config.allowed_tools,
             permission_mode="bypassPermissions",
+            env={"CLAUDECODE": ""},
         )
         if self.config.max_turns:
             opts.max_turns = self.config.max_turns

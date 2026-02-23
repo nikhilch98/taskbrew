@@ -67,6 +67,7 @@ class ChatManager:
             system_prompt=agent_config.system_prompt,
             allowed_tools=agent_config.allowed_tools,
             permission_mode="bypassPermissions",
+            env={"CLAUDECODE": ""},
         )
         if self.cli_path:
             opts.cli_path = self.cli_path
