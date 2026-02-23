@@ -4,7 +4,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from ai_team.orchestrator.event_bus import EventBus
@@ -81,6 +81,29 @@ def create_app(
                 {"run_id": run_id, "pipeline": pipeline_name, "first_task": task_id},
             )
         return {"run_id": run_id, "status": "started"}
+
+    @app.post("/api/runs/{run_id}/approve")
+    async def approve_run(run_id: str):
+        run = workflow_engine.active_runs.get(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        if run.status != "awaiting_approval":
+            raise HTTPException(status_code=400, detail="Run not awaiting approval")
+        workflow_engine.approve_checkpoint(run_id)
+        await event_bus.emit("checkpoint_approved", {"run_id": run_id})
+        return {"status": "approved", "run_id": run_id}
+
+    @app.post("/api/runs/{run_id}/reject")
+    async def reject_run(run_id: str, body: dict = {}):
+        run = workflow_engine.active_runs.get(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        if run.status != "awaiting_approval":
+            raise HTTPException(status_code=400, detail="Run not awaiting approval")
+        reason = body.get("reason", "")
+        workflow_engine.reject_checkpoint(run_id, reason=reason)
+        await event_bus.emit("checkpoint_rejected", {"run_id": run_id, "reason": reason})
+        return {"status": "rejected", "run_id": run_id}
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):

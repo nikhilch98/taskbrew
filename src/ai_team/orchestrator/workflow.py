@@ -16,6 +16,7 @@ class PipelineStep:
     description: str
     retry_count: int = 0
     max_retries: int = 1
+    requires_approval: bool = False
 
 
 @dataclass
@@ -36,6 +37,7 @@ class Pipeline:
                 action=s["action"],
                 description=s["description"],
                 max_retries=s.get("max_retries", 1),
+                requires_approval=s.get("requires_approval", False),
             )
             for s in data["steps"]
         ]
@@ -169,10 +171,27 @@ class WorkflowEngine:
         next_step = pipeline.get_next_step(run.current_step)
         if next_step:
             run.current_step += 1
+            if next_step.requires_approval:
+                run.status = "awaiting_approval"
             return next_step
         else:
             run.status = "completed"
             return None
+
+    def approve_checkpoint(self, run_id: str) -> None:
+        """Approve a checkpoint, allowing the run to continue."""
+        run = self.active_runs.get(run_id)
+        if not run or run.status != "awaiting_approval":
+            return
+        run.status = "running"
+
+    def reject_checkpoint(self, run_id: str, reason: str = "") -> None:
+        """Reject a checkpoint, marking the run as failed."""
+        run = self.active_runs.get(run_id)
+        if not run or run.status != "awaiting_approval":
+            return
+        run.status = "failed"
+        run.context["rejection_reason"] = reason
 
     def fail_step(self, run_id: str) -> None:
         run = self.active_runs.get(run_id)

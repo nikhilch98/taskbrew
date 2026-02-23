@@ -157,3 +157,43 @@ async def test_advance_persists_state(tmp_path):
     ]))
     await engine2.load_runs()
     assert engine2.active_runs["a1"].current_step == 1
+
+
+def test_checkpoint_step_pauses_run():
+    engine = WorkflowEngine()
+    engine.register_pipeline(Pipeline(name="checkpoint-test", description="test", steps=[
+        PipelineStep(agent="coder", action="code", description="Code it"),
+        PipelineStep(agent="reviewer", action="review", description="Review", requires_approval=True),
+    ]))
+    run = engine.start_run("checkpoint-test", run_id="c1")
+    engine.advance_run("c1")  # Move to review step (which requires approval)
+    assert run.status == "awaiting_approval"
+
+
+def test_approve_checkpoint_resumes_run():
+    engine = WorkflowEngine()
+    engine.register_pipeline(Pipeline(name="approve-test", description="test", steps=[
+        PipelineStep(agent="coder", action="code", description="Code"),
+        PipelineStep(agent="reviewer", action="review", description="Review", requires_approval=True),
+        PipelineStep(agent="tester", action="test", description="Test"),
+    ]))
+    run = engine.start_run("approve-test", run_id="a1")
+    engine.advance_run("a1")  # Pauses at review
+    assert run.status == "awaiting_approval"
+    engine.approve_checkpoint("a1")
+    assert run.status == "running"
+    engine.advance_run("a1")  # Move to test
+    assert run.current_step == 2
+
+
+def test_reject_checkpoint_fails_run():
+    engine = WorkflowEngine()
+    engine.register_pipeline(Pipeline(name="reject-test", description="test", steps=[
+        PipelineStep(agent="coder", action="code", description="Code it"),
+        PipelineStep(agent="reviewer", action="review", description="Review", requires_approval=True),
+    ]))
+    run = engine.start_run("reject-test", run_id="r1")
+    engine.advance_run("r1")  # Pauses at review
+    engine.reject_checkpoint("r1", reason="Code quality issues")
+    assert run.status == "failed"
+    assert run.context.get("rejection_reason") == "Code quality issues"
