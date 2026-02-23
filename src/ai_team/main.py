@@ -7,6 +7,7 @@ from pathlib import Path
 import uvicorn
 
 from ai_team.config import OrchestratorConfig
+from ai_team.orchestrator.artifact_store import ArtifactStore
 from ai_team.orchestrator.event_bus import EventBus
 from ai_team.orchestrator.task_queue import TaskQueue
 from ai_team.orchestrator.team_manager import TeamManager
@@ -17,12 +18,13 @@ from ai_team.dashboard.app import create_app
 class Orchestrator:
     """Top-level orchestrator combining all components."""
 
-    def __init__(self, event_bus, task_queue, team_manager, workflow_engine, config):
+    def __init__(self, event_bus, task_queue, team_manager, workflow_engine, config, artifact_store=None):
         self.event_bus = event_bus
         self.task_queue = task_queue
         self.team_manager = team_manager
         self.workflow_engine = workflow_engine
         self.config = config
+        self.artifact_store = artifact_store
 
     async def shutdown(self):
         await self.task_queue.close()
@@ -43,10 +45,12 @@ async def build_orchestrator(project_dir=None, cli_path=None):
     if pipelines_dir.exists():
         workflow_engine.load_pipelines(pipelines_dir)
 
+    artifact_store = ArtifactStore(base_dir=str(config.artifacts_dir))
+
     return Orchestrator(
         event_bus=event_bus, task_queue=task_queue,
         team_manager=team_manager, workflow_engine=workflow_engine,
-        config=config,
+        config=config, artifact_store=artifact_store,
     )
 
 
@@ -94,18 +98,23 @@ async def async_main(args):
             print(f"\n--- Step: {step.agent} -> {step.action} ---")
             print(f"Description: {step.description}")
 
+            artifact_context = orch.artifact_store.build_context(run_id, run.current_step)
             prompt = (
                 f"You are executing step '{step.action}' of the "
                 f"'{args.pipeline}' pipeline.\n\n"
                 f"Goal: {args.goal or 'No goal specified'}\n\n"
                 f"Your task: {step.description}\n\n"
-                f"Context from previous steps: {run.context}\n\n"
-                f"Work in the project directory. Produce your output and be thorough."
             )
+            if artifact_context:
+                prompt += f"Context from previous steps:\n\n{artifact_context}\n\n"
+            prompt += "Work in the project directory. Produce your output and be thorough."
 
             try:
                 result = await orch.team_manager.run_agent_task(
                     step.agent, prompt, cwd=str(orch.config.project_dir)
+                )
+                orch.artifact_store.save_artifact(
+                    run_id, run.current_step, step.agent, "output.md", result
                 )
                 run.context[f"step_{run.current_step}_{step.agent}"] = result[:2000]
                 print(f"Result: {result[:500]}")
