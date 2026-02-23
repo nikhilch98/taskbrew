@@ -69,3 +69,43 @@ steps:
     engine = WorkflowEngine()
     engine.load_pipelines(tmp_path)
     assert "test_pipe" in engine.pipelines
+
+def test_retry_increments_count_on_failure():
+    """When a step fails, retry_count increments and step stays current."""
+    engine = WorkflowEngine()
+    engine.register_pipeline(Pipeline(name="retry-test", description="test", steps=[
+        PipelineStep(agent="coder", action="implement", description="Code it", max_retries=3)
+    ]))
+    run = engine.start_run("retry-test", run_id="r1")
+    step = engine.get_current_step("r1")
+    engine.fail_step("r1")
+    assert step.retry_count == 1
+    assert run.status == "running"
+    assert run.current_step == 0
+
+def test_retry_exhausted_marks_run_failed():
+    """After max_retries, run status becomes failed."""
+    engine = WorkflowEngine()
+    engine.register_pipeline(Pipeline(name="retry-exhaust", description="test", steps=[
+        PipelineStep(agent="coder", action="implement", description="Code it", max_retries=2)
+    ]))
+    run = engine.start_run("retry-exhaust", run_id="r2")
+    engine.fail_step("r2")  # retry 1
+    engine.fail_step("r2")  # retry 2 — exhausted
+    assert run.status == "failed"
+
+def test_successful_advance_resets_retry_count():
+    """Advancing past a step resets retry_count."""
+    engine = WorkflowEngine()
+    engine.register_pipeline(Pipeline(name="retry-success", description="test", steps=[
+        PipelineStep(agent="coder", action="implement", description="Code it", max_retries=3),
+        PipelineStep(agent="tester", action="test", description="Test it"),
+    ]))
+    run = engine.start_run("retry-success", run_id="r3")
+    engine.fail_step("r3")  # retry 1
+    step = engine.get_current_step("r3")
+    assert step.retry_count == 1
+    engine.advance_run("r3")  # succeeds this time
+    assert step.retry_count == 0  # reset
+    assert run.current_step == 1
+    assert run.status == "running"

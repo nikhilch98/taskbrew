@@ -93,6 +93,10 @@ class WorkflowEngine:
         if not run:
             return None
         pipeline = self.pipelines[run.pipeline_name]
+        # Reset retry_count on the current step before advancing
+        current_step = pipeline.steps[run.current_step] if run.current_step < len(pipeline.steps) else None
+        if current_step:
+            current_step.retry_count = 0
         next_step = pipeline.get_next_step(run.current_step)
         if next_step:
             run.current_step += 1
@@ -100,3 +104,15 @@ class WorkflowEngine:
         else:
             run.status = "completed"
             return None
+
+    def fail_step(self, run_id: str) -> None:
+        run = self.active_runs.get(run_id)
+        if not run:
+            return
+        pipeline = self.pipelines[run.pipeline_name]
+        if run.current_step >= len(pipeline.steps):
+            return
+        step = pipeline.steps[run.current_step]
+        step.retry_count += 1
+        if step.retry_count >= step.max_retries:
+            run.status = "failed"
