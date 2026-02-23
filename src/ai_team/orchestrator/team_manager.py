@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from ai_team.agents.base import AgentRunner, AgentStatus
@@ -20,11 +21,13 @@ class TeamManager:
         event_bus: EventBus,
         cli_path: str | None = None,
         worktree_manager: WorktreeManager | None = None,
+        max_concurrent_agents: int = 3,
     ):
         self.event_bus = event_bus
         self.cli_path = cli_path
         self.worktree_manager = worktree_manager
         self.agents: dict[str, AgentRunner] = {}
+        self._semaphore = asyncio.Semaphore(max_concurrent_agents)
 
     def spawn_agent(self, role_name: str) -> AgentRunner:
         if role_name in self.agents:
@@ -69,3 +72,23 @@ class TeamManager:
         except Exception as e:
             await self.event_bus.emit("agent_error", {"agent": agent_name, "error": str(e)})
             raise
+
+    async def run_agents_concurrent(self, tasks: list[dict]) -> dict[str, str]:
+        """Run multiple agent tasks concurrently, bounded by semaphore.
+
+        Args:
+            tasks: list of {"agent": name, "prompt": str, "cwd": str}
+
+        Returns:
+            dict of agent_name -> result (or exception)
+        """
+
+        async def _run_with_semaphore(task):
+            async with self._semaphore:
+                return await self.run_agent_task(task["agent"], task["prompt"], task.get("cwd"))
+
+        results = await asyncio.gather(
+            *[_run_with_semaphore(t) for t in tasks],
+            return_exceptions=True,
+        )
+        return {t["agent"]: r for t, r in zip(tasks, results)}

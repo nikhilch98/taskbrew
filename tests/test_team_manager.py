@@ -44,3 +44,21 @@ def test_spawn_all_default_agents(team_manager):
     assert len(team_manager.agents) == 6
     expected = {"pm", "researcher", "architect", "coder", "tester", "reviewer"}
     assert set(team_manager.agents.keys()) == expected
+
+
+def test_team_manager_has_semaphore(event_bus):
+    """TeamManager creates semaphore with specified concurrency limit."""
+    tm = TeamManager(event_bus=event_bus, max_concurrent_agents=2)
+    assert tm._semaphore._value == 2
+
+
+def test_team_manager_default_semaphore(event_bus):
+    """Default semaphore allows 3 concurrent agents."""
+    tm = TeamManager(event_bus=event_bus)
+    assert tm._semaphore._value == 3
+
+
+def test_run_agents_concurrent_method_exists(team_manager):
+    """TeamManager has run_agents_concurrent method."""
+    assert hasattr(team_manager, 'run_agents_concurrent')
+    assert callable(team_manager.run_agents_concurrent)
