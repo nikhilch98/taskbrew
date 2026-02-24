@@ -199,3 +199,72 @@ async def test_get_board_filters(app_client):
     assert "pending" in data["statuses"]
     assert "critical" in data["priorities"]
     assert "low" in data["priorities"]
+
+
+@pytest.fixture
+async def client(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    board = TaskBoard(db, group_prefixes={"pm": "FEAT", "architect": "DEBT"})
+    await board.register_prefixes(
+        {"pm": "PM", "architect": "AR", "coder": "CD", "tester": "TS", "reviewer": "RV"}
+    )
+    event_bus = EventBus()
+    instance_mgr = InstanceManager(db)
+
+    from ai_team.dashboard.app import create_app
+
+    app = create_app(
+        event_bus=event_bus,
+        task_board=board,
+        instance_manager=instance_mgr,
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    await db.close()
+
+
+async def test_post_task(client):
+    # First create a group to attach the task to
+    goal_resp = await client.post("/api/goals", json={"title": "Test Goal"})
+    group_id = goal_resp.json()["group_id"]
+
+    resp = await client.post("/api/tasks", json={
+        "group_id": group_id,
+        "title": "Design the architecture",
+        "assigned_to": "architect",
+        "assigned_by": "pm-1",
+        "task_type": "tech_design",
+        "description": "Create a detailed tech design for the flappy bird PRD.",
+        "priority": "high",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["title"] == "Design the architecture"
+    assert data["assigned_to"] == "architect"
+    assert data["created_by"] == "pm-1"
+    assert data["status"] == "pending"
+    assert data["id"].startswith("AR-")
+
+
+async def test_post_task_missing_required_fields(client):
+    resp = await client.post("/api/tasks", json={"title": "No group"})
+    assert resp.status_code == 422
+
+
+async def test_post_task_with_blocked_by(client):
+    goal_resp = await client.post("/api/goals", json={"title": "Dep test"})
+    group_id = goal_resp.json()["group_id"]
+    first_task_id = goal_resp.json()["task_id"]
+
+    resp = await client.post("/api/tasks", json={
+        "group_id": group_id,
+        "title": "Blocked task",
+        "assigned_to": "architect",
+        "assigned_by": "pm-1",
+        "task_type": "tech_design",
+        "blocked_by": [first_task_id],
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "blocked"

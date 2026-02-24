@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from starlette.requests import Request
 
 from ai_team.config_loader import RoleConfig
@@ -18,6 +19,18 @@ from ai_team.agents.instance_manager import InstanceManager
 
 if TYPE_CHECKING:
     from ai_team.dashboard.chat_manager import ChatManager
+
+
+class CreateTaskBody(BaseModel):
+    group_id: str
+    title: str
+    assigned_to: str
+    assigned_by: str
+    task_type: str
+    description: Optional[str] = None
+    priority: Optional[str] = "medium"
+    parent_id: Optional[str] = None
+    blocked_by: Optional[list[str]] = None
 
 
 class ConnectionManager:
@@ -148,6 +161,22 @@ def create_app(
         await event_bus.emit("group.created", {"group_id": group["id"], "title": title})
         await event_bus.emit("task.created", {"task_id": task["id"], "group_id": group["id"]})
         return {"group_id": group["id"], "task_id": task["id"]}
+
+    @app.post("/api/tasks")
+    async def create_task(body: CreateTaskBody):
+        task = await task_board.create_task(
+            group_id=body.group_id,
+            title=body.title,
+            task_type=body.task_type,
+            assigned_to=body.assigned_to,
+            created_by=body.assigned_by,
+            description=body.description,
+            priority=body.priority or "medium",
+            parent_id=body.parent_id,
+            blocked_by=body.blocked_by,
+        )
+        await event_bus.emit("task.created", {"task_id": task["id"], "group_id": body.group_id})
+        return task
 
     # ------------------------------------------------------------------
     # Agents
