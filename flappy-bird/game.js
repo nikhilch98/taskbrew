@@ -171,20 +171,6 @@ canvas.addEventListener('touchstart', function(e) {
 // ===== PIPE FUNCTIONS =====
 
 /**
- * Determine if a new pipe should be spawned.
- * Distance-based: spawn when the rightmost pipe has scrolled far enough
- * that the next pipe would appear at the right edge of the canvas.
- */
-function shouldSpawnPipe() {
-    if (pipes.length === 0) {
-        return true; // Spawn first pipe immediately when entering PLAYING
-    }
-    const lastPipe = pipes[pipes.length - 1];
-    // Spawn when rightmost pipe has scrolled far enough
-    return lastPipe.x <= CANVAS_WIDTH - PIPE_SPACING;
-}
-
-/**
  * Create a new pipe pair at the right edge of the canvas
  * with a randomized gap position within safe bounds.
  */
