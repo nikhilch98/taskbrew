@@ -813,24 +813,156 @@
         }
 
         /* ========== Task Detail Modal ========== */
-        .task-detail-overlay { display:none; position:fixed; inset:0; z-index:210; background:rgba(0,0,0,0.6); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); align-items:center; justify-content:center; }
-        .task-detail-overlay.open { display:flex; }
-        .task-detail-modal { width:90%; max-width:720px; max-height:85vh; background:rgba(15,20,38,0.95); backdrop-filter:blur(var(--glass-blur)); -webkit-backdrop-filter:blur(var(--glass-blur)); border:1px solid var(--border-subtle); border-radius:var(--radius-lg); box-shadow:0 24px 80px rgba(0,0,0,0.5),0 0 40px rgba(99,102,241,0.08); display:flex; flex-direction:column; overflow:hidden; animation:faqSlideIn 0.25s ease-out; }
-        .task-detail-header { display:flex; align-items:center; justify-content:space-between; padding:20px 24px; border-bottom:1px solid var(--border-subtle); }
-        .task-detail-header h2 { font-size:18px; font-weight:700; color:var(--text-primary); letter-spacing:-0.3px; }
-        .task-detail-body { padding:24px; overflow-y:auto; flex:1; }
-        .task-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
-        .task-detail-field label { display:block; font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
-        .task-detail-field .value { font-size:14px; color:var(--text-primary); }
-        .task-detail-description { margin-top:16px; padding:16px; background:rgba(5,7,14,0.6); border-radius:var(--radius-sm); border:1px solid var(--border-subtle); }
-        .task-detail-description label { display:block; font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; }
-        .task-detail-description .value { font-size:13px; color:var(--text-secondary); line-height:1.6; white-space:pre-wrap; }
-        .task-detail-status-badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:12px; font-weight:600; }
-        .task-detail-status-badge.status-pending { background:rgba(99,102,241,0.15); color:#818cf8; }
-        .task-detail-status-badge.status-in_progress { background:rgba(6,182,212,0.15); color:#22d3ee; }
-        .task-detail-status-badge.status-completed { background:rgba(16,185,129,0.15); color:#34d399; }
-        .task-detail-status-badge.status-blocked { background:rgba(245,158,11,0.15); color:#fbbf24; }
-        .task-detail-status-badge.status-failed, .task-detail-status-badge.status-rejected { background:rgba(244,63,94,0.15); color:#fb7185; }
+        .task-detail-overlay {
+            display: none; position: fixed; inset: 0; z-index: 210;
+            background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            align-items: center; justify-content: center;
+        }
+        .task-detail-overlay.open { display: flex; }
+
+        .task-detail-modal {
+            width: 92%; max-width: 760px; max-height: 88vh;
+            background: rgba(12, 16, 30, 0.97);
+            backdrop-filter: blur(var(--glass-blur)); -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid rgba(99, 102, 241, 0.15); border-radius: var(--radius-xl);
+            box-shadow: 0 32px 100px rgba(0, 0, 0, 0.6), 0 0 60px rgba(99, 102, 241, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            display: flex; flex-direction: column; overflow: hidden;
+            animation: taskDetailSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes taskDetailSlideIn {
+            from { opacity: 0; transform: translateY(24px) scale(0.96); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .task-detail-header {
+            display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+            padding: 24px 28px 20px; position: relative; overflow: hidden;
+        }
+        .task-detail-header::after {
+            content: ''; position: absolute; bottom: 0; left: 28px; right: 28px; height: 1px;
+            background: linear-gradient(90deg, var(--border-subtle), rgba(99, 102, 241, 0.2), var(--border-subtle));
+        }
+        .task-detail-header-left { flex: 1; min-width: 0; }
+        .task-detail-header-meta {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
+        }
+        .task-detail-id {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px; font-weight: 600; color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.04); padding: 2px 10px; border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .task-detail-header h2 {
+            font-size: 20px; font-weight: 700; color: var(--text-primary);
+            letter-spacing: -0.4px; line-height: 1.35; margin: 0;
+        }
+
+        .task-detail-body { padding: 24px 28px 28px; overflow-y: auto; flex: 1; }
+        .task-detail-body::-webkit-scrollbar { width: 4px; }
+        .task-detail-body::-webkit-scrollbar-track { background: transparent; }
+        .task-detail-body::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.15); border-radius: 2px; }
+
+        .task-detail-badges {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px;
+        }
+
+        .task-detail-badge {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+            border: 1px solid transparent;
+        }
+        .task-detail-badge .badge-icon { font-size: 13px; }
+
+        .task-detail-badge.badge-status-pending { background: rgba(99, 102, 241, 0.12); color: #818cf8; border-color: rgba(99, 102, 241, 0.2); }
+        .task-detail-badge.badge-status-in_progress { background: rgba(6, 182, 212, 0.12); color: #22d3ee; border-color: rgba(6, 182, 212, 0.2); }
+        .task-detail-badge.badge-status-completed { background: rgba(16, 185, 129, 0.12); color: #34d399; border-color: rgba(16, 185, 129, 0.2); }
+        .task-detail-badge.badge-status-blocked { background: rgba(245, 158, 11, 0.12); color: #fbbf24; border-color: rgba(245, 158, 11, 0.2); }
+        .task-detail-badge.badge-status-failed { background: rgba(244, 63, 94, 0.12); color: #fb7185; border-color: rgba(244, 63, 94, 0.2); }
+        .task-detail-badge.badge-status-rejected { background: rgba(244, 63, 94, 0.12); color: #fb7185; border-color: rgba(244, 63, 94, 0.2); }
+        .task-detail-badge.badge-priority { background: rgba(255, 255, 255, 0.04); color: var(--text-secondary); border-color: rgba(255, 255, 255, 0.08); }
+        .task-detail-badge.badge-priority-critical { background: rgba(244, 63, 94, 0.1); color: #fb7185; border-color: rgba(244, 63, 94, 0.2); }
+        .task-detail-badge.badge-priority-high { background: rgba(245, 158, 11, 0.1); color: #fbbf24; border-color: rgba(245, 158, 11, 0.2); }
+        .task-detail-badge.badge-role { border-color: transparent; }
+        .task-detail-badge.badge-type { background: rgba(255, 255, 255, 0.04); color: var(--text-secondary); border-color: rgba(255, 255, 255, 0.08); }
+
+        .task-detail-section {
+            margin-bottom: 20px;
+        }
+        .task-detail-section-title {
+            font-size: 11px; font-weight: 700; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .task-detail-section-title::after {
+            content: ''; flex: 1; height: 1px;
+            background: linear-gradient(90deg, var(--border-subtle), transparent 80%);
+        }
+
+        .task-detail-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 2px;
+            background: rgba(255, 255, 255, 0.02); border-radius: var(--radius-sm);
+            border: 1px solid rgba(255, 255, 255, 0.04); overflow: hidden;
+        }
+        .task-detail-field {
+            padding: 12px 16px; background: rgba(10, 14, 26, 0.5);
+            transition: background 0.15s ease;
+        }
+        .task-detail-field:hover { background: rgba(15, 20, 38, 0.8); }
+        .task-detail-field label {
+            display: block; font-size: 10px; font-weight: 600; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px;
+        }
+        .task-detail-field .value { font-size: 13px; color: var(--text-primary); font-weight: 500; }
+        .task-detail-field .value.mono {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 12px;
+        }
+        .task-detail-field .value.muted { color: var(--text-muted); font-weight: 400; }
+
+        .task-detail-description {
+            margin-top: 4px; padding: 20px;
+            background: rgba(5, 7, 14, 0.5); border-radius: var(--radius-md);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .task-detail-description .value {
+            font-size: 13.5px; color: var(--text-secondary); line-height: 1.7;
+        }
+        .task-detail-description .value p { margin: 0 0 12px; }
+        .task-detail-description .value p:last-child { margin-bottom: 0; }
+        .task-detail-description .value ul, .task-detail-description .value ol { margin: 8px 0; padding-left: 20px; }
+        .task-detail-description .value li { margin-bottom: 4px; }
+        .task-detail-description .value code {
+            font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
+            background: rgba(99, 102, 241, 0.1); color: #a5b4fc;
+            padding: 1px 6px; border-radius: 4px;
+        }
+        .task-detail-description .value pre {
+            background: rgba(5, 7, 14, 0.8); border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm); padding: 14px 16px; margin: 12px 0;
+            overflow-x: auto;
+        }
+        .task-detail-description .value pre code {
+            background: none; padding: 0; font-size: 12px; color: var(--text-secondary);
+        }
+        .task-detail-description .value strong { color: var(--text-primary); }
+        .task-detail-description .value h1, .task-detail-description .value h2,
+        .task-detail-description .value h3, .task-detail-description .value h4 {
+            color: var(--text-primary); margin: 16px 0 8px; font-weight: 700;
+        }
+        .task-detail-description .value h1 { font-size: 18px; }
+        .task-detail-description .value h2 { font-size: 16px; }
+        .task-detail-description .value h3 { font-size: 14px; }
+        .task-detail-description .value blockquote {
+            border-left: 3px solid rgba(99, 102, 241, 0.3); margin: 12px 0;
+            padding: 8px 16px; color: var(--text-muted); font-style: italic;
+        }
+
+        .task-detail-rejection {
+            margin-top: 4px; padding: 16px 20px;
+            background: rgba(244, 63, 94, 0.06); border-radius: var(--radius-md);
+            border: 1px solid rgba(244, 63, 94, 0.15);
+        }
+        .task-detail-rejection .value { font-size: 13px; color: #fda4af; line-height: 1.6; }
 
         /* ========== Settings Modal ========== */
         .settings-overlay { display:none; position:fixed; inset:0; z-index:220; background:rgba(0,0,0,0.6); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); align-items:center; justify-content:center; }
@@ -3061,31 +3193,101 @@
         // ================================================================
         function openTaskDetail(task) {
             const overlay = document.getElementById('taskDetailOverlay');
+            const headerEl = document.getElementById('taskDetailHeader');
             const body = document.getElementById('taskDetailBody');
             if (!overlay || !body) return;
+
             const s = task.status || 'pending';
-            let html = '<div class="task-detail-grid">';
-            html += tdField('Task ID', '<span style="font-family:monospace;font-size:13px">' + escapeHtml(String(task.id||'')) + '</span>');
-            html += tdField('Status', '<span class="task-detail-status-badge status-' + escapeHtml(s) + '">' + escapeHtml(s.replace('_',' ')) + '</span>');
-            html += tdField('Priority', escapeHtml(task.priority||'medium'));
-            html += tdField('Type', escapeHtml(task.task_type||'-'));
-            html += tdField('Assigned To', escapeHtml(task.assigned_to||'-'));
-            html += tdField('Claimed By', escapeHtml(task.claimed_by||'-'));
-            html += tdField('Group', escapeHtml(task.group_id||'-'));
-            html += tdField('Parent', escapeHtml(task.parent_id||'-'));
-            html += tdField('Created By', escapeHtml(task.created_by||'-'));
-            html += tdField('Created At', fmtTs(task.created_at));
-            if (task.started_at) html += tdField('Started At', fmtTs(task.started_at));
-            if (task.completed_at) html += tdField('Completed At', fmtTs(task.completed_at));
+            const role = task.assigned_to || '';
+            const roleColor = getRoleColor(role);
+            const emoji = getRoleEmoji(role);
+            const statusIcons = { blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5' };
+            const priorityIcons = { critical: '\uD83D\uDD34', high: '\uD83D\uDFE0', medium: '\uD83D\uDFE1', low: '\uD83D\uDFE2' };
+
+            // Header with accent color
+            if (headerEl) {
+                headerEl.style.borderTop = '3px solid ' + (roleColor.border || 'var(--accent-indigo)');
+            }
+
+            // Build header content
+            let headerHtml = '<div class="task-detail-header-left">';
+            headerHtml += '<div class="task-detail-header-meta">';
+            headerHtml += '<span class="task-detail-id">' + escapeHtml(String(task.id || '')) + '</span>';
+            if (task.group_id) headerHtml += '<span class="task-detail-id" style="color:var(--text-muted)">' + escapeHtml(task.group_id) + '</span>';
+            headerHtml += '</div>';
+            headerHtml += '<h2>' + escapeHtml(task.title || '(untitled)') + '</h2>';
+            headerHtml += '</div>';
+            document.getElementById('taskDetailHeaderLeft').innerHTML = headerHtml;
+
+            // Badges row
+            let html = '<div class="task-detail-badges">';
+            html += '<span class="task-detail-badge badge-status-' + escapeHtml(s) + '"><span class="badge-icon">' + (statusIcons[s] || '') + '</span>' + escapeHtml(s.replace('_', ' ')) + '</span>';
+            const p = task.priority || 'medium';
+            const pClass = (p === 'critical' || p === 'high') ? ' badge-priority-' + p : '';
+            html += '<span class="task-detail-badge badge-priority' + pClass + '"><span class="badge-icon">' + (priorityIcons[p] || '') + '</span>' + escapeHtml(p) + '</span>';
+            if (role && ROLE_COLORS[role]) {
+                html += '<span class="task-detail-badge badge-role" style="background:' + roleColor.bg + ';color:' + roleColor.text + ';border-color:' + roleColor.border + '">' + emoji + ' ' + escapeHtml(role) + '</span>';
+            }
+            if (task.task_type) {
+                html += '<span class="task-detail-badge badge-type">' + escapeHtml(task.task_type) + '</span>';
+            }
             html += '</div>';
-            if (task.description) html += '<div class="task-detail-description"><label>Description</label><div class="value">' + marked.parse(task.description) + '</div></div>';
-            if (task.rejection_reason) html += '<div class="task-detail-description" style="border-color:rgba(244,63,94,0.3)"><label style="color:var(--accent-rose)">Rejection Reason</label><div class="value">' + escapeHtml(task.rejection_reason) + '</div></div>';
+
+            // Details grid
+            html += '<div class="task-detail-section"><div class="task-detail-section-title">Details</div>';
+            html += '<div class="task-detail-grid">';
+            html += tdField('Assigned To', role ? (emoji + ' ' + escapeHtml(getRoleTitle(role))) : '-');
+            html += tdField('Claimed By', task.claimed_by || '-', task.claimed_by ? '' : 'muted');
+            html += tdField('Created By', task.created_by || '-');
+            html += tdField('Parent Task', task.parent_id || 'None', task.parent_id ? 'mono' : 'muted');
+            html += '</div></div>';
+
+            // Timeline grid
+            html += '<div class="task-detail-section"><div class="task-detail-section-title">Timeline</div>';
+            html += '<div class="task-detail-grid">';
+            html += tdField('Created', fmtTs(task.created_at));
+            html += tdField('Started', task.started_at ? fmtTs(task.started_at) : 'Not started', task.started_at ? '' : 'muted');
+            html += tdField('Completed', task.completed_at ? fmtTs(task.completed_at) : 'In progress', task.completed_at ? '' : 'muted');
+            if (task.started_at && task.completed_at) {
+                const dur = new Date(task.completed_at) - new Date(task.started_at);
+                const mins = Math.round(dur / 60000);
+                html += tdField('Duration', mins < 60 ? mins + 'm' : Math.round(mins / 60 * 10) / 10 + 'h');
+            } else if (task.started_at) {
+                const dur = Date.now() - new Date(task.started_at);
+                const mins = Math.round(dur / 60000);
+                html += tdField('Elapsed', mins < 60 ? mins + 'm' : Math.round(mins / 60 * 10) / 10 + 'h');
+            } else {
+                html += tdField('Duration', '-', 'muted');
+            }
+            html += '</div></div>';
+
+            // Description
+            if (task.description) {
+                html += '<div class="task-detail-section"><div class="task-detail-section-title">Description</div>';
+                html += '<div class="task-detail-description"><div class="value">' + marked.parse(task.description) + '</div></div></div>';
+            }
+
+            // Rejection reason
+            if (task.rejection_reason) {
+                html += '<div class="task-detail-section"><div class="task-detail-section-title" style="color:var(--accent-rose)">Rejection Reason</div>';
+                html += '<div class="task-detail-rejection"><div class="value">' + escapeHtml(task.rejection_reason) + '</div></div></div>';
+            }
+
             body.innerHTML = html;
-            document.getElementById('taskDetailTitle').textContent = task.title || '(untitled)';
             overlay.classList.add('open');
         }
-        function tdField(label, value) { return '<div class="task-detail-field"><label>' + label + '</label><div class="value">' + value + '</div></div>'; }
-        function fmtTs(iso) { if (!iso) return '-'; try { return new Date(iso).toLocaleString(); } catch(e) { return escapeHtml(iso); } }
+
+        function tdField(label, value, cls) {
+            const valClass = 'value' + (cls ? ' ' + cls : '');
+            return '<div class="task-detail-field"><label>' + label + '</label><div class="' + valClass + '">' + value + '</div></div>';
+        }
+        function fmtTs(iso) {
+            if (!iso) return '-';
+            try {
+                const d = new Date(iso);
+                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            } catch (e) { return escapeHtml(iso); }
+        }
         function closeTaskDetail() { const o = document.getElementById('taskDetailOverlay'); if (o) o.classList.remove('open'); }
 
         // ================================================================
@@ -3304,9 +3506,9 @@
     <!-- Task Detail Modal -->
     <div class="task-detail-overlay" id="taskDetailOverlay">
         <div class="task-detail-modal">
-            <div class="task-detail-header">
-                <h2 id="taskDetailTitle">Task Detail</h2>
-                <button class="faq-close" onclick="closeTaskDetail()" title="Close">&times;</button>
+            <div class="task-detail-header" id="taskDetailHeader">
+                <div id="taskDetailHeaderLeft" class="task-detail-header-left"></div>
+                <button class="faq-close" onclick="closeTaskDetail()" title="Close" style="flex-shrink:0;margin-top:4px">&times;</button>
             </div>
             <div class="task-detail-body" id="taskDetailBody"></div>
         </div>
