@@ -262,11 +262,13 @@ def create_app(
         for name, rc in roles.items():
             result.append({
                 "role": name,
+                "display_name": rc.display_name,
                 "system_prompt": rc.system_prompt,
-                "model": getattr(rc, "model", ""),
-                "allowed_tools": rc.allowed_tools,
+                "tools": rc.tools,
                 "max_instances": rc.max_instances,
-                "poll_interval": getattr(rc, "poll_interval", 5),
+                "prefix": rc.prefix,
+                "color": rc.color,
+                "emoji": rc.emoji,
             })
         return result
 
@@ -277,10 +279,8 @@ def create_app(
         rc = roles[role_name]
         if "system_prompt" in body:
             rc.system_prompt = body["system_prompt"]
-        if "allowed_tools" in body:
-            rc.allowed_tools = body["allowed_tools"]
-        if "model" in body:
-            rc.model = body["model"]
+        if "tools" in body:
+            rc.tools = body["tools"]
         return {"status": "ok", "role": role_name}
 
     # ------------------------------------------------------------------

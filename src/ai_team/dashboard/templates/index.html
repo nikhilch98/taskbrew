@@ -3362,11 +3362,10 @@
 
         function renderRoleSettings(c, role) {
             const r = settingsData.roles[role] || {};
-            let html = '<div class="settings-field"><label>System Prompt</label><textarea id="s_system_prompt" rows="6">' + escapeHtml(r.system_prompt||'') + '</textarea></div>';
-            html += '<div class="settings-field"><label>Model</label><input id="s_model" value="' + escapeHtml(r.model||'') + '"></div>';
-            html += '<div class="settings-field"><label>Allowed Tools (comma-separated)</label><input id="s_tools" value="' + escapeHtml((r.allowed_tools||[]).join(', ')) + '"></div>';
-            html += '<div class="settings-field"><label>Max Instances <span class="restart-badge">Requires restart</span></label><input id="s_max_instances" type="number" value="' + (r.max_instances||1) + '"></div>';
-            html += '<div class="settings-field"><label>Poll Interval (s) <span class="restart-badge">Requires restart</span></label><input id="s_poll_interval" type="number" value="' + (r.poll_interval||5) + '"></div>';
+            let html = '<div class="settings-field"><label>Display Name</label><input id="s_display_name" value="' + escapeHtml(r.display_name||'') + '" readonly style="opacity:0.6"></div>';
+            html += '<div class="settings-field"><label>System Prompt</label><textarea id="s_system_prompt" rows="6">' + escapeHtml(r.system_prompt||'') + '</textarea></div>';
+            html += '<div class="settings-field"><label>Tools (comma-separated)</label><input id="s_tools" value="' + escapeHtml((r.tools||[]).join(', ')) + '"></div>';
+            html += '<div class="settings-field"><label>Max Instances <span class="restart-badge">Requires restart</span></label><input id="s_max_instances" type="number" value="' + (r.max_instances||1) + '" readonly style="opacity:0.6"></div>';
             html += '<div style="margin-top:16px"><button class="settings-save-btn" onclick="saveRoleSettings(\'' + escapeHtml(role) + '\')">Save ' + escapeHtml(role) + ' Settings</button><span class="settings-saved-msg" id="roleSavedMsg">Saved!</span></div>';
             c.innerHTML = html;
         }
@@ -3378,7 +3377,7 @@
 
         async function saveRoleSettings(role) {
             const tools = document.getElementById('s_tools').value.split(',').map(s=>s.trim()).filter(Boolean);
-            await fetch('/api/settings/roles/' + role, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ system_prompt:document.getElementById('s_system_prompt').value, model:document.getElementById('s_model').value, allowed_tools:tools, max_instances:parseInt(document.getElementById('s_max_instances').value)||1, poll_interval:parseInt(document.getElementById('s_poll_interval').value)||5 }) });
+            await fetch('/api/settings/roles/' + role, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ system_prompt:document.getElementById('s_system_prompt').value, tools:tools }) });
             const m = document.getElementById('roleSavedMsg'); m.classList.add('show'); setTimeout(() => m.classList.remove('show'), 2000);
             await loadSettings();
         }
