@@ -1,155 +1,217 @@
-"""Main entry point for the AI Team Orchestrator."""
+"""AI Team Orchestrator — Main entry point."""
+
+from __future__ import annotations
 
 import asyncio
 import argparse
 from pathlib import Path
 
-import uvicorn
-
-from ai_team.config import OrchestratorConfig
-from ai_team.dashboard.chat_manager import ChatManager
-from ai_team.orchestrator.artifact_store import ArtifactStore
+from ai_team.config_loader import load_team_config, load_roles, validate_routing
+from ai_team.orchestrator.database import Database
+from ai_team.orchestrator.task_board import TaskBoard
 from ai_team.orchestrator.event_bus import EventBus
-from ai_team.orchestrator.task_queue import TaskQueue
-from ai_team.orchestrator.team_manager import TeamManager
-from ai_team.orchestrator.workflow import WorkflowEngine
-from ai_team.dashboard.app import create_app
+from ai_team.orchestrator.artifact_store import ArtifactStore
+from ai_team.agents.instance_manager import InstanceManager
+from ai_team.agents.agent_loop import AgentLoop
 
 
 class Orchestrator:
-    """Top-level orchestrator combining all components."""
+    """Central container for all orchestrator components."""
 
-    def __init__(self, event_bus, task_queue, team_manager, workflow_engine, config, artifact_store=None, chat_manager=None):
+    def __init__(self, db, task_board, event_bus, artifact_store, instance_manager,
+                 roles, team_config, project_dir):
+        self.db = db
+        self.task_board = task_board
         self.event_bus = event_bus
-        self.task_queue = task_queue
-        self.team_manager = team_manager
-        self.workflow_engine = workflow_engine
-        self.config = config
         self.artifact_store = artifact_store
-        self.chat_manager = chat_manager
+        self.instance_manager = instance_manager
+        self.roles = roles
+        self.team_config = team_config
+        self.project_dir = project_dir
+        self.agent_tasks: list[asyncio.Task] = []
 
     async def shutdown(self):
-        if self.chat_manager:
-            await self.chat_manager.stop_all()
-        await self.task_queue.close()
+        for task in self.agent_tasks:
+            task.cancel()
+        await self.db.close()
 
 
-async def build_orchestrator(project_dir=None, cli_path=None):
-    config = OrchestratorConfig(
-        project_dir=project_dir or Path.cwd(),
-        cli_path=cli_path,
-    )
+async def build_orchestrator(project_dir: Path | None = None, cli_path: str | None = None) -> Orchestrator:
+    project_dir = project_dir or Path.cwd()
+    config_dir = project_dir / "config"
+
+    # Load configs
+    team_config = load_team_config(config_dir / "team.yaml")
+    roles = load_roles(config_dir / "roles")
+    errors = validate_routing(roles)
+    if errors:
+        for err in errors:
+            print(f"  Routing error: {err}")
+        raise SystemExit(1)
+
+    # Initialize components
+    db_path = str(project_dir / team_config.db_path)
+    db = Database(db_path)
+    await db.initialize()
+
     event_bus = EventBus()
-    task_queue = TaskQueue(db_path=config.db_path)
-    await task_queue.initialize()
-    team_manager = TeamManager(event_bus=event_bus, cli_path=config.cli_path)
-    workflow_engine = WorkflowEngine()
 
-    pipelines_dir = config.project_dir / "pipelines"
-    if pipelines_dir.exists():
-        workflow_engine.load_pipelines(pipelines_dir)
+    # Build group prefixes from roles
+    group_prefixes = {}
+    for name, role in roles.items():
+        if role.can_create_groups and role.group_type:
+            group_prefixes[name] = role.group_type
 
-    artifact_store = ArtifactStore(base_dir=str(config.artifacts_dir))
-    chat_manager = ChatManager(cli_path=config.cli_path, project_dir=str(config.project_dir))
+    task_board = TaskBoard(db, group_prefixes=group_prefixes)
+
+    # Register role prefixes
+    role_prefixes = {name: role.prefix for name, role in roles.items()}
+    await task_board.register_prefixes(role_prefixes)
+
+    artifact_store = ArtifactStore(base_dir=str(project_dir / team_config.artifacts_base_dir))
+    instance_manager = InstanceManager(db)
 
     return Orchestrator(
-        event_bus=event_bus, task_queue=task_queue,
-        team_manager=team_manager, workflow_engine=workflow_engine,
-        config=config, artifact_store=artifact_store,
-        chat_manager=chat_manager,
+        db=db,
+        task_board=task_board,
+        event_bus=event_bus,
+        artifact_store=artifact_store,
+        instance_manager=instance_manager,
+        roles=roles,
+        team_config=team_config,
+        project_dir=str(project_dir),
     )
 
 
-async def run_server(orch):
+async def run_server(orch: Orchestrator):
+    """Start the dashboard server and agent loops."""
+    import uvicorn
+    from ai_team.dashboard.app import create_app
+
     app = create_app(
-        event_bus=orch.event_bus, team_manager=orch.team_manager,
-        task_queue=orch.task_queue, workflow_engine=orch.workflow_engine,
-        chat_manager=orch.chat_manager,
+        event_bus=orch.event_bus,
+        task_board=orch.task_board,
+        instance_manager=orch.instance_manager,
+        roles=orch.roles,
     )
+
+    # Spawn agent loops
+    for role_name, role_config in orch.roles.items():
+        for i in range(1, role_config.max_instances + 1):
+            instance_id = f"{role_name}-{i}"
+            loop = AgentLoop(
+                instance_id=instance_id,
+                role_config=role_config,
+                board=orch.task_board,
+                event_bus=orch.event_bus,
+                instance_manager=orch.instance_manager,
+                all_roles=orch.roles,
+                project_dir=orch.project_dir,
+                poll_interval=orch.team_config.default_poll_interval,
+            )
+            task = asyncio.create_task(loop.run())
+            orch.agent_tasks.append(task)
+
     config = uvicorn.Config(
-        app=app, host=orch.config.dashboard_host,
-        port=orch.config.dashboard_port, log_level="info",
+        app,
+        host=orch.team_config.dashboard_host,
+        port=orch.team_config.dashboard_port,
+        log_level="info",
     )
     server = uvicorn.Server(config)
     await server.serve()
 
 
-async def async_main(args):
-    orch = await build_orchestrator(
-        project_dir=Path(args.project_dir) if args.project_dir else None,
-        cli_path=args.cli_path,
+async def submit_goal(orch: Orchestrator, title: str, description: str = ""):
+    """Submit a new goal to the PM."""
+    group = await orch.task_board.create_group(title=title, origin="pm", created_by="human")
+    task = await orch.task_board.create_task(
+        group_id=group["id"],
+        title=f"Create PRD: {title}",
+        description=description,
+        task_type="goal",
+        assigned_to="pm",
+        created_by="human",
+        priority="high",
     )
+    print(f"Goal submitted: {group['id']}")
+    print(f"  Group: {group['id']} — {title}")
+    print(f"  Task:  {task['id']} — assigned to PM")
+    return group, task
 
+
+async def show_status(orch: Orchestrator):
+    """Print team status."""
+    instances = await orch.instance_manager.get_all_instances()
+    board = await orch.task_board.get_board()
+    groups = await orch.task_board.get_groups()
+
+    print("\n=== AI Team Status ===\n")
+
+    print(f"Groups: {len(groups)} active")
+    for g in groups:
+        print(f"  {g['id']}: {g['title']} ({g['status']})")
+
+    print(f"\nAgents: {len(instances)}")
+    for inst in instances:
+        task_info = f" → {inst['current_task']}" if inst.get('current_task') else ""
+        print(f"  {inst['instance_id']}: {inst['status']}{task_info}")
+
+    print(f"\nTask Board:")
+    for status, tasks in board.items():
+        if tasks:
+            print(f"  {status}: {len(tasks)}")
+            for t in tasks:
+                print(f"    {t['id']}: {t['title']}")
+
+
+async def async_main(args):
     if args.command == "serve":
-        orch.team_manager.spawn_default_team()
-        print(f"Dashboard: http://{orch.config.dashboard_host}:{orch.config.dashboard_port}")
-        await run_server(orch)
-
-    elif args.command == "run":
-        orch.team_manager.spawn_default_team()
-        if not args.pipeline:
-            print("Error: --pipeline required for 'run' command")
-            return
-        import uuid
-        run_id = str(uuid.uuid4())[:8]
-        run = orch.workflow_engine.start_run(
-            args.pipeline, run_id, initial_context={"goal": args.goal or ""}
+        orch = await build_orchestrator(
+            project_dir=Path(args.project_dir) if args.project_dir else None,
         )
-        print(f"Started pipeline '{args.pipeline}' (run: {run_id})")
+        try:
+            await run_server(orch)
+        finally:
+            await orch.shutdown()
 
-        while True:
-            step = orch.workflow_engine.get_current_step(run_id)
-            if not step:
-                print("Pipeline completed!")
-                break
-            print(f"\n--- Step: {step.agent} -> {step.action} ---")
-            print(f"Description: {step.description}")
-
-            artifact_context = orch.artifact_store.build_context(run_id, run.current_step)
-            prompt = (
-                f"You are executing step '{step.action}' of the "
-                f"'{args.pipeline}' pipeline.\n\n"
-                f"Goal: {args.goal or 'No goal specified'}\n\n"
-                f"Your task: {step.description}\n\n"
-            )
-            if artifact_context:
-                prompt += f"Context from previous steps:\n\n{artifact_context}\n\n"
-            prompt += "Work in the project directory. Produce your output and be thorough."
-
-            try:
-                result = await orch.team_manager.run_agent_task(
-                    step.agent, prompt, cwd=str(orch.config.project_dir)
-                )
-                orch.artifact_store.save_artifact(
-                    run_id, run.current_step, step.agent, "output.md", result
-                )
-                run.context[f"step_{run.current_step}_{step.agent}"] = result[:2000]
-                print(f"Result: {result[:500]}")
-                orch.workflow_engine.advance_run(run_id)
-            except Exception as e:
-                print(f"Error in step {step.agent}: {e}")
-                break
+    elif args.command == "goal":
+        orch = await build_orchestrator(
+            project_dir=Path(args.project_dir) if args.project_dir else None,
+        )
+        try:
+            await submit_goal(orch, title=args.title, description=args.description or "")
+        finally:
+            await orch.shutdown()
 
     elif args.command == "status":
-        orch.team_manager.spawn_default_team()
-        status = orch.team_manager.get_team_status()
-        for name, state in status.items():
-            print(f"  {name}: {state}")
-
-    await orch.shutdown()
+        orch = await build_orchestrator(
+            project_dir=Path(args.project_dir) if args.project_dir else None,
+        )
+        try:
+            await show_status(orch)
+        finally:
+            await orch.shutdown()
 
 
 def cli_main():
     parser = argparse.ArgumentParser(description="AI Team Orchestrator")
-    parser.add_argument(
-        "command", choices=["serve", "run", "status"],
-        help="Command to execute",
-    )
-    parser.add_argument("--project-dir", help="Project directory to work in")
-    parser.add_argument("--cli-path", help="Path to Claude Code CLI binary")
-    parser.add_argument("--pipeline", help="Pipeline to run (for 'run' command)")
-    parser.add_argument("--goal", help="Goal description (for 'run' command)")
+    parser.add_argument("--project-dir", help="Project directory", default=None)
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("serve", help="Start dashboard and agent loops")
+
+    goal_parser = sub.add_parser("goal", help="Submit a new goal")
+    goal_parser.add_argument("title", help="Goal title")
+    goal_parser.add_argument("--description", "-d", help="Goal description", default="")
+
+    sub.add_parser("status", help="Show team status")
+
     args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        return
+
     asyncio.run(async_main(args))
 
 
