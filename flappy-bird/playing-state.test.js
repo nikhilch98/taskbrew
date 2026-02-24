@@ -1423,7 +1423,7 @@ console.log('  AC6  Gap positions within bounds               ✅ Verified (Sect
 console.log('  AC7  Pipes move left, off-screen removed       ✅ Verified (Section 20)');
 console.log('  AC8  Score increments passing pipe center      ✅ Verified (Sections 12-13)');
 console.log('  AC9  Collision → GAME_OVER (ground/pipe)       ✅ Verified (Sections 8-10, 14)');
-console.log('       Collision → GAME_OVER (ceiling)           ⚠️  NOT implemented (see BUG-001)');
+console.log('       Ceiling behavior: clamp-only (AC-2.4)     ✅ Verified in ceiling-collision-qa.test.js');
 console.log('  AC10 Bird clamped on ground collision           ✅ Verified (Section 15)');
 console.log('  AC11 Ground scrolls during PLAYING             ✅ Verified (Section 16)');
 console.log('  AC12 Physics use delta-time (dt)               ✅ Verified (Section 18)');
