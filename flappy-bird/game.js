@@ -316,6 +316,15 @@ function checkGroundCollision() {
 }
 
 /**
+ * Check if the bird collides with the ceiling.
+ * Ceiling collision occurs when bird's top edge touches or crosses the top of the canvas.
+ * @returns {boolean} True if bird touches ceiling
+ */
+function checkCeilingCollision() {
+    return bird.y - bird.radius <= 0;
+}
+
+/**
  * Check if the bird collides with any pipe.
  * Uses horizontal optimization to skip pipes far from bird's x position.
  * @returns {boolean} True if bird collides with any pipe
@@ -350,6 +359,11 @@ function checkPipeCollisions() {
  * Called during STATE_PLAYING after bird physics and pipe updates.
  */
 function checkCollisions() {
+    if (checkCeilingCollision()) {
+        gameState = STATE_GAME_OVER;
+        return;
+    }
+
     if (checkGroundCollision()) {
         // Clamp bird to ground surface (prevents sinking through visually)
         bird.y = CANVAS_HEIGHT - GROUND_HEIGHT - bird.radius;
@@ -399,6 +413,7 @@ function update(dt) {
 
             // 3. Collision detection → GAME_OVER transition
             checkCollisions();
+            if (gameState !== STATE_PLAYING) break;  // Early exit: dead bird cannot score
 
             // 4. Scoring — check if bird passed pipe center
             updateScore();
@@ -452,34 +467,40 @@ function renderBird(ctx) {
     ctx.rotate(bird.rotation);
 
     // Body — yellow circle
-    ctx.fillStyle = '#F7DC6F';
+    ctx.fillStyle = '#f5c842';
     ctx.beginPath();
     ctx.arc(0, 0, bird.radius, 0, Math.PI * 2);
     ctx.fill();
 
     // Outline
-    ctx.strokeStyle = '#D4A017';
+    ctx.strokeStyle = '#d4a020';
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Eye — white circle (radius 5px, offset ~(5, -5) from center)
-    ctx.fillStyle = '#FFFFFF';
+    // Wing — darker yellow ellipse at (-2,3), radii (8,5), rotation -0.3
+    ctx.fillStyle = '#e0b030';
     ctx.beginPath();
-    ctx.arc(5, -5, 5, 0, Math.PI * 2);
+    ctx.ellipse(-2, 3, 8, 5, -0.3, 0, Math.PI * 2);
     ctx.fill();
 
-    // Pupil — black circle (radius 2.5px, offset slightly right)
+    // Eye — white circle (radius 4px, offset (6, -5) from center)
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(6, -5, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Pupil — black circle (radius 2px, offset slightly right)
     ctx.fillStyle = '#000000';
     ctx.beginPath();
-    ctx.arc(7, -5, 2.5, 0, Math.PI * 2);
+    ctx.arc(7, -5, 2, 0, Math.PI * 2);
     ctx.fill();
 
     // Beak — orange triangle protruding from right side (~8px wide)
-    ctx.fillStyle = '#E67E22';
+    ctx.fillStyle = '#e07020';
     ctx.beginPath();
-    ctx.moveTo(bird.radius, -4);
+    ctx.moveTo(bird.radius, -3);
     ctx.lineTo(bird.radius + 8, 0);
-    ctx.lineTo(bird.radius, 4);
+    ctx.lineTo(bird.radius, 3);
     ctx.closePath();
     ctx.fill();
 
