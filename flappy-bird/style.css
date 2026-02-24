@@ -17,9 +17,6 @@ body {
 
 canvas {
   display: block;
-  max-width: 100vw;
-  max-height: 100vh;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
   touch-action: none;
   max-width: 100vw;
   max-height: 100vh;
