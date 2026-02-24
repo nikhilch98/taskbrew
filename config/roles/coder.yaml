@@ -18,6 +18,7 @@ system_prompt: |
   - Include the branch name and files changed in your artifact
 
 tools: [Read, Write, Edit, Bash, Glob, Grep]
+model: claude-opus-4-6
 produces: [implementation, bug_fix, revision]
 accepts: [implementation, bug_fix, revision]
 routes_to:

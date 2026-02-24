@@ -25,6 +25,7 @@ system_prompt: |
   Always call create_task before finishing — your goal is not done until architect tasks exist on the board.
 
 tools: [Read, Glob, Grep, WebSearch, mcp__task-tools__create_task]
+model: claude-opus-4-6
 produces: [prd, goal_decomposition, requirement]
 accepts: [goal, revision]
 routes_to:

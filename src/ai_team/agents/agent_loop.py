@@ -145,6 +145,7 @@ class AgentLoop:
                 role=self.role_config.role,
                 system_prompt=self.role_config.system_prompt,
                 allowed_tools=self.role_config.tools,
+                model=self.role_config.model,
                 cwd=cwd,
                 api_url=self.api_url,
             )

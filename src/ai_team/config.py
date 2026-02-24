@@ -11,6 +11,7 @@ class AgentConfig:
     role: str
     system_prompt: str
     allowed_tools: list[str] = field(default_factory=list)
+    model: str | None = None
     max_turns: int | None = None
     cwd: Path | None = None
     api_url: str = "http://127.0.0.1:8420"

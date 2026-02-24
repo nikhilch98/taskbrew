@@ -67,6 +67,8 @@ class AgentRunner:
                 }
             },
         )
+        if self.config.model:
+            opts.model = self.config.model
         if self.config.max_turns:
             opts.max_turns = self.config.max_turns
         if self.cli_path:

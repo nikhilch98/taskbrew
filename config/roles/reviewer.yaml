@@ -23,6 +23,7 @@ system_prompt: |
   - After merging, delete the feature branch to keep the branch list clean
 
 tools: [Read, Glob, Grep, Bash]
+model: claude-opus-4-6
 produces: [code_review, approval, rejection]
 accepts: [code_review]
 routes_to:

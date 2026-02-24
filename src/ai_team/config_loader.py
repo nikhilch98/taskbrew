@@ -118,6 +118,7 @@ class RoleConfig:
     emoji: str
     system_prompt: str
     tools: list[str] = field(default_factory=list)
+    model: str = "claude-opus-4-6"
     produces: list[str] = field(default_factory=list)
     accepts: list[str] = field(default_factory=list)
     routes_to: list[RouteTarget] = field(default_factory=list)
@@ -154,6 +155,7 @@ def _parse_role(data: dict) -> RoleConfig:
         emoji=data["emoji"],
         system_prompt=data["system_prompt"],
         tools=data.get("tools", []),
+        model=data.get("model", "claude-opus-4-6"),
         produces=data.get("produces", []),
         accepts=data.get("accepts", []),
         routes_to=routes_to,

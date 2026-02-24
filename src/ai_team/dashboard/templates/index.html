@@ -3363,6 +3363,10 @@
         function renderRoleSettings(c, role) {
             const r = settingsData.roles[role] || {};
             let html = '<div class="settings-field"><label>Display Name</label><input id="s_display_name" value="' + escapeHtml(r.display_name||'') + '" readonly style="opacity:0.6"></div>';
+            html += '<div class="settings-field"><label>Model</label><select id="s_model" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">';
+            const models = ['claude-opus-4-6','claude-sonnet-4-6','claude-haiku-4-5-20251001'];
+            for (const m of models) { html += '<option value="' + m + '"' + (r.model===m?' selected':'') + '>' + m + '</option>'; }
+            html += '</select></div>';
             html += '<div class="settings-field"><label>System Prompt</label><textarea id="s_system_prompt" rows="6">' + escapeHtml(r.system_prompt||'') + '</textarea></div>';
             html += '<div class="settings-field"><label>Tools (comma-separated)</label><input id="s_tools" value="' + escapeHtml((r.tools||[]).join(', ')) + '"></div>';
             html += '<div class="settings-field"><label>Max Instances <span class="restart-badge">Requires restart</span></label><input id="s_max_instances" type="number" value="' + (r.max_instances||1) + '" readonly style="opacity:0.6"></div>';
@@ -3377,7 +3381,8 @@
 
         async function saveRoleSettings(role) {
             const tools = document.getElementById('s_tools').value.split(',').map(s=>s.trim()).filter(Boolean);
-            await fetch('/api/settings/roles/' + role, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ system_prompt:document.getElementById('s_system_prompt').value, tools:tools }) });
+            const model = document.getElementById('s_model').value;
+            await fetch('/api/settings/roles/' + role, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ system_prompt:document.getElementById('s_system_prompt').value, model:model, tools:tools }) });
             const m = document.getElementById('roleSavedMsg'); m.classList.add('show'); setTimeout(() => m.classList.remove('show'), 2000);
             await loadSettings();
         }

@@ -264,6 +264,7 @@ def create_app(
                 "role": name,
                 "display_name": rc.display_name,
                 "system_prompt": rc.system_prompt,
+                "model": rc.model,
                 "tools": rc.tools,
                 "max_instances": rc.max_instances,
                 "prefix": rc.prefix,
@@ -279,6 +280,8 @@ def create_app(
         rc = roles[role_name]
         if "system_prompt" in body:
             rc.system_prompt = body["system_prompt"]
+        if "model" in body:
+            rc.model = body["model"]
         if "tools" in body:
             rc.tools = body["tools"]
         return {"status": "ok", "role": role_name}
