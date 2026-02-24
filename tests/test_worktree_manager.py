@@ -53,3 +53,46 @@ async def test_get_worktree_path(worktree_manager):
 async def test_get_worktree_path_returns_none_for_unknown(worktree_manager):
     path = worktree_manager.get_worktree_path("unknown")
     assert path is None
+
+
+async def test_stale_worktree_is_replaced(worktree_manager):
+    """If a worktree directory already exists (crash recovery), re-create it."""
+    path = await worktree_manager.create_worktree("coder", "feature/stale")
+    assert os.path.isdir(path)
+    # Simulate a crash: remove from tracking but leave directory
+    worktree_manager._worktrees.clear()
+    # Creating with same agent name but different branch should work
+    path2 = await worktree_manager.create_worktree("coder", "feature/stale-2")
+    assert os.path.isdir(path2)
+    assert path2 == path  # same directory slot
+
+
+async def test_existing_branch_reuse(worktree_manager):
+    """If branch already exists, reuse it instead of -b."""
+    path = await worktree_manager.create_worktree("coder", "feature/reuse")
+    assert os.path.isdir(path)
+    await worktree_manager.cleanup_worktree("coder")
+    assert not os.path.isdir(path)
+    # Branch still exists after cleanup, create worktree again
+    path2 = await worktree_manager.create_worktree("coder", "feature/reuse")
+    assert os.path.isdir(path2)
+
+
+async def test_prune_stale(worktree_manager, git_repo):
+    """prune_stale should clean up leftover directories."""
+    wt_base = git_repo / ".worktrees"
+    wt_base.mkdir(exist_ok=True)
+    stale_dir = wt_base / "ghost-agent"
+    stale_dir.mkdir()
+    (stale_dir / "junk.txt").write_text("leftover")
+    await worktree_manager.prune_stale()
+    assert not stale_dir.exists()
+
+
+async def test_cleanup_all(worktree_manager):
+    """cleanup_all removes all managed worktrees."""
+    await worktree_manager.create_worktree("a", "feature/a")
+    await worktree_manager.create_worktree("b", "feature/b")
+    assert len(await worktree_manager.list_worktrees()) == 2
+    await worktree_manager.cleanup_all()
+    assert len(await worktree_manager.list_worktrees()) == 0

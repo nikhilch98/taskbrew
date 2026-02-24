@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from ai_team.agents.instance_manager import InstanceManager
 
@@ -11,6 +12,9 @@ logger = logging.getLogger(__name__)
 from ai_team.config_loader import RoleConfig
 from ai_team.orchestrator.event_bus import EventBus
 from ai_team.orchestrator.task_board import TaskBoard
+
+if TYPE_CHECKING:
+    from ai_team.tools.worktree_manager import WorktreeManager
 
 
 class AgentLoop:
@@ -37,6 +41,10 @@ class AgentLoop:
         Working directory for the agent.
     poll_interval:
         Seconds between poll attempts when idle.
+    worktree_manager:
+        Optional WorktreeManager for git worktree isolation.  When provided
+        the agent runs each task in its own worktree so it never touches the
+        main checkout.
     """
 
     def __init__(
@@ -51,6 +59,7 @@ class AgentLoop:
         project_dir: str = ".",
         poll_interval: float = 5.0,
         api_url: str = "http://127.0.0.1:8420",
+        worktree_manager: WorktreeManager | None = None,
     ) -> None:
         self.instance_id = instance_id
         self.role_config = role_config
@@ -62,6 +71,7 @@ class AgentLoop:
         self.project_dir = project_dir
         self.poll_interval = poll_interval
         self.api_url = api_url
+        self.worktree_manager = worktree_manager
         self._running = False
 
     async def poll_for_task(self) -> dict | None:
@@ -105,40 +115,79 @@ class AgentLoop:
         return "\n".join(parts)
 
     async def execute_task(self, task: dict) -> str:
-        """Run Claude SDK agent. Returns output text."""
+        """Run Claude SDK agent. Returns output text.
+
+        When a ``worktree_manager`` is configured, the agent runs inside a
+        per-task git worktree so it never mutates the main checkout.
+        """
         from ai_team.agents.base import AgentRunner
         from ai_team.config import AgentConfig
 
-        agent_config = AgentConfig(
-            name=self.instance_id,
-            role=self.role_config.role,
-            system_prompt=self.role_config.system_prompt,
-            allowed_tools=self.role_config.tools,
-            cwd=self.project_dir,
-            api_url=self.api_url,
-        )
-        runner = AgentRunner(
-            config=agent_config,
-            cli_path=self.cli_path,
-            event_bus=self.event_bus,
-        )
-        context = await self.build_context(task)
-        output = await runner.run(prompt=context, cwd=self.project_dir)
+        worktree_path: str | None = None
+        branch_name: str | None = None
 
-        # Record usage from SDK
-        if runner.last_usage:
-            u = runner.last_usage.get("usage") or {}
-            await self.board._db.record_task_usage(
-                task_id=task["id"],
-                agent_id=self.instance_id,
-                input_tokens=u.get("input_tokens", 0),
-                output_tokens=u.get("output_tokens", 0),
-                cost_usd=runner.last_usage.get("cost_usd") or 0,
-                duration_api_ms=runner.last_usage.get("duration_api_ms", 0),
-                num_turns=runner.last_usage.get("num_turns", 0),
+        if self.worktree_manager:
+            branch_name = f"feat/{task['id'].lower()}"
+            worktree_path = await self.worktree_manager.create_worktree(
+                agent_name=self.instance_id,
+                branch_name=branch_name,
+            )
+            logger.info(
+                "Agent %s using worktree %s (branch %s)",
+                self.instance_id, worktree_path, branch_name,
             )
 
-        return output
+        cwd = worktree_path or self.project_dir
+
+        try:
+            agent_config = AgentConfig(
+                name=self.instance_id,
+                role=self.role_config.role,
+                system_prompt=self.role_config.system_prompt,
+                allowed_tools=self.role_config.tools,
+                cwd=cwd,
+                api_url=self.api_url,
+            )
+            runner = AgentRunner(
+                config=agent_config,
+                cli_path=self.cli_path,
+                event_bus=self.event_bus,
+            )
+            context = await self.build_context(task)
+
+            if worktree_path:
+                context += (
+                    f"\n\n## Git Worktree\n"
+                    f"You are working in an isolated git worktree on branch "
+                    f"`{branch_name}`.  Commit your changes directly to this "
+                    f"branch — do NOT create new branches or switch branches."
+                )
+
+            output = await runner.run(prompt=context, cwd=cwd)
+
+            # Record usage from SDK
+            if runner.last_usage:
+                u = runner.last_usage.get("usage") or {}
+                await self.board._db.record_task_usage(
+                    task_id=task["id"],
+                    agent_id=self.instance_id,
+                    input_tokens=u.get("input_tokens", 0),
+                    output_tokens=u.get("output_tokens", 0),
+                    cost_usd=runner.last_usage.get("cost_usd") or 0,
+                    duration_api_ms=runner.last_usage.get("duration_api_ms", 0),
+                    num_turns=runner.last_usage.get("num_turns", 0),
+                )
+
+            return output
+        finally:
+            if self.worktree_manager:
+                try:
+                    await self.worktree_manager.cleanup_worktree(self.instance_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to cleanup worktree for %s", self.instance_id,
+                        exc_info=True,
+                    )
 
     async def complete_and_handoff(self, task: dict, output: str) -> None:
         """Mark task complete and emit event."""

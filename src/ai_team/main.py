@@ -20,13 +20,14 @@ from ai_team.orchestrator.event_bus import EventBus
 from ai_team.orchestrator.artifact_store import ArtifactStore
 from ai_team.agents.instance_manager import InstanceManager
 from ai_team.agents.agent_loop import AgentLoop
+from ai_team.tools.worktree_manager import WorktreeManager
 
 
 class Orchestrator:
     """Central container for all orchestrator components."""
 
     def __init__(self, db, task_board, event_bus, artifact_store, instance_manager,
-                 roles, team_config, project_dir):
+                 roles, team_config, project_dir, worktree_manager):
         self.db = db
         self.task_board = task_board
         self.event_bus = event_bus
@@ -35,11 +36,14 @@ class Orchestrator:
         self.roles = roles
         self.team_config = team_config
         self.project_dir = project_dir
+        self.worktree_manager = worktree_manager
         self.agent_tasks: list[asyncio.Task] = []
 
     async def shutdown(self):
         for task in self.agent_tasks:
             task.cancel()
+        if self.worktree_manager:
+            await self.worktree_manager.cleanup_all()
         await self.db.close()
 
 
@@ -77,6 +81,11 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
 
     artifact_store = ArtifactStore(base_dir=str(project_dir / team_config.artifacts_base_dir))
     instance_manager = InstanceManager(db)
+    worktree_manager = WorktreeManager(
+        repo_dir=str(project_dir),
+        worktree_base=str(project_dir / ".worktrees"),
+    )
+    await worktree_manager.prune_stale()
 
     return Orchestrator(
         db=db,
@@ -87,6 +96,7 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
         roles=roles,
         team_config=team_config,
         project_dir=str(project_dir),
+        worktree_manager=worktree_manager,
     )
 
 
@@ -118,6 +128,8 @@ async def run_server(orch: Orchestrator):
     connect_host = "127.0.0.1" if orch.team_config.dashboard_host in ("0.0.0.0", "::") else orch.team_config.dashboard_host
     api_url = f"http://{connect_host}:{orch.team_config.dashboard_port}"
     for role_name, role_config in orch.roles.items():
+        # Roles with Bash get worktree isolation so they can't mutate the main checkout
+        needs_worktree = "Bash" in role_config.tools
         for i in range(1, role_config.max_instances + 1):
             instance_id = f"{role_name}-{i}"
             loop = AgentLoop(
@@ -130,6 +142,7 @@ async def run_server(orch: Orchestrator):
                 project_dir=orch.project_dir,
                 poll_interval=orch.team_config.default_poll_interval,
                 api_url=api_url,
+                worktree_manager=orch.worktree_manager if needs_worktree else None,
             )
             task = asyncio.create_task(loop.run())
             orch.agent_tasks.append(task)
