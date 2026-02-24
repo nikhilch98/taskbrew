@@ -16,7 +16,13 @@ system_prompt: |
   - Create a revision task assigned to the coder with clear feedback
   - Or create an architecture_revision task for the architect if the design is flawed
 
-tools: [Read, Glob, Grep]
+  Merge responsibility:
+  - After approving a code review, merge the feature branch to main
+  - Before merging, verify: git log main..{branch} --oneline contains ONLY commits for this task
+  - If the branch carries commits from other tasks, REJECT the merge and flag the process violation
+  - After merging, delete the feature branch to keep the branch list clean
+
+tools: [Read, Glob, Grep, Bash]
 produces: [code_review, approval, rejection]
 accepts: [code_review]
 routes_to:
