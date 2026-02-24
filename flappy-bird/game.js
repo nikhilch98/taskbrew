@@ -415,6 +415,17 @@ function update(dt) {
 
 // ===== RENDER LOGIC =====
 
+/**
+ * Render the sky background (Layer 0).
+ * Fills the entire canvas with light sky blue, serving as both
+ * the background and the canvas clear (every pixel is overwritten).
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context
+ */
+function renderBackground(ctx) {
+    ctx.fillStyle = '#70c5ce';  // Light sky blue
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+
 function renderGround(ctx) {
     // Brown dirt strip
     ctx.fillStyle = '#8B5E3C';
@@ -548,9 +559,8 @@ function renderGameOverOverlay(ctx) {
 }
 
 function render(ctx) {
-    // 1. Sky background (canvas clear)
-    ctx.fillStyle = '#70c5ce';
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    // 1. Sky background (Layer 0 — canvas clear)
+    renderBackground(ctx);
 
     // 2. Pipes (behind ground and bird)
     renderPipes(ctx);
