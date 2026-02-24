@@ -50,6 +50,7 @@ class AgentLoop:
         cli_path: str | None = None,
         project_dir: str = ".",
         poll_interval: float = 5.0,
+        api_url: str = "http://127.0.0.1:8420",
     ) -> None:
         self.instance_id = instance_id
         self.role_config = role_config
@@ -60,6 +61,7 @@ class AgentLoop:
         self.cli_path = cli_path
         self.project_dir = project_dir
         self.poll_interval = poll_interval
+        self.api_url = api_url
         self._running = False
 
     async def poll_for_task(self) -> dict | None:
@@ -113,6 +115,7 @@ class AgentLoop:
             system_prompt=self.role_config.system_prompt,
             allowed_tools=self.role_config.tools,
             cwd=self.project_dir,
+            api_url=self.api_url,
         )
         runner = AgentRunner(
             config=agent_config,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, TYPE_CHECKING
@@ -54,8 +55,16 @@ class AgentRunner:
             system_prompt=self.config.system_prompt,
             allowed_tools=self.config.allowed_tools,
             permission_mode="bypassPermissions",
-            env={"CLAUDECODE": ""},
+            env={"CLAUDECODE": "", "AI_TEAM_API_URL": self.config.api_url},
             setting_sources=[],
+            mcp_servers={
+                "task-tools": {
+                    "type": "stdio",
+                    "command": sys.executable,
+                    "args": ["-m", "ai_team.tools.task_tools"],
+                    "env": {"AI_TEAM_API_URL": self.config.api_url},
+                }
+            },
         )
         if self.config.max_turns:
             opts.max_turns = self.config.max_turns

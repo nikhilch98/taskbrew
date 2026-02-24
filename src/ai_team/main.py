@@ -103,6 +103,7 @@ async def run_server(orch: Orchestrator):
     )
 
     # Spawn agent loops
+    api_url = f"http://{orch.team_config.dashboard_host}:{orch.team_config.dashboard_port}"
     for role_name, role_config in orch.roles.items():
         for i in range(1, role_config.max_instances + 1):
             instance_id = f"{role_name}-{i}"
@@ -115,6 +116,7 @@ async def run_server(orch: Orchestrator):
                 all_roles=orch.roles,
                 project_dir=orch.project_dir,
                 poll_interval=orch.team_config.default_poll_interval,
+                api_url=api_url,
             )
             task = asyncio.create_task(loop.run())
             orch.agent_tasks.append(task)
