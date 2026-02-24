@@ -28,7 +28,7 @@ class CreateTaskBody(BaseModel):
     assigned_by: str
     task_type: str
     description: Optional[str] = None
-    priority: Optional[str] = "medium"
+    priority: str = "medium"
     parent_id: Optional[str] = None
     blocked_by: Optional[list[str]] = None
 
@@ -171,7 +171,7 @@ def create_app(
             assigned_to=body.assigned_to,
             created_by=body.assigned_by,
             description=body.description,
-            priority=body.priority or "medium",
+            priority=body.priority,
             parent_id=body.parent_id,
             blocked_by=body.blocked_by,
         )
