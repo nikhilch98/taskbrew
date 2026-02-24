@@ -490,6 +490,63 @@ function renderScore(ctx) {
     }
 }
 
+function renderIdleOverlay(ctx) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+
+    // Title — "Flappy Bird" in upper area
+    ctx.font = 'bold 36px Arial, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3;
+    ctx.strokeText('Flappy Bird', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 4);
+    ctx.fillText('Flappy Bird', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 4);
+
+    // Instruction — below bird
+    ctx.font = '18px Arial, sans-serif';
+    ctx.lineWidth = 2;
+    ctx.strokeText('Press Space or Tap to Start', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80);
+    ctx.fillText('Press Space or Tap to Start', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80);
+
+    ctx.restore();
+}
+
+function renderGameOverOverlay(ctx) {
+    ctx.save();
+
+    // Semi-transparent dark overlay covering entire canvas
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // Text setup
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#000000';
+
+    // "Game Over" title
+    ctx.font = 'bold 40px Arial, sans-serif';
+    ctx.lineWidth = 3;
+    ctx.strokeText('Game Over', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+    ctx.fillText('Game Over', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+
+    // Final score
+    ctx.font = 'bold 30px Arial, sans-serif';
+    ctx.strokeText('Score: ' + score, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3 + 60);
+    ctx.fillText('Score: ' + score, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3 + 60);
+
+    // Restart instruction
+    ctx.font = '18px Arial, sans-serif';
+    ctx.lineWidth = 2;
+    ctx.strokeText('Press Space or Tap to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3 + 120);
+    ctx.fillText('Press Space or Tap to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3 + 120);
+
+    ctx.restore();
+}
+
 function render(ctx) {
     // 1. Sky background (canvas clear)
     ctx.fillStyle = '#70c5ce';
@@ -504,8 +561,18 @@ function render(ctx) {
     // 4. Bird (always on top)
     renderBird(ctx);
 
-    // 5. Score (topmost UI layer)
-    renderScore(ctx);
+    // 5. UI overlays (topmost layer) — state-dependent
+    switch (gameState) {
+        case STATE_IDLE:
+            renderIdleOverlay(ctx);
+            break;
+        case STATE_PLAYING:
+            renderScore(ctx);
+            break;
+        case STATE_GAME_OVER:
+            renderGameOverOverlay(ctx);
+            break;
+    }
 }
 
 // ===== GAME LOOP =====
