@@ -5,7 +5,8 @@ const CANVAS_WIDTH    = 400;    // px
 const CANVAS_HEIGHT   = 600;    // px
 
 // Ground
-const GROUND_HEIGHT   = 60;     // px — height of ground strip at bottom
+const GROUND_HEIGHT       = 60;  // px — height of ground strip at bottom
+const GROUND_HASH_SPACING = 24;  // px — distance between vertical hash lines in ground texture
 
 // Bird
 const BIRD_X          = 100;    // px — fixed horizontal position (25% of canvas width)
@@ -156,6 +157,12 @@ document.addEventListener('keyup', function(e) {
     }
 });
 
+// Reset spacebar state when window loses focus (e.g. user tabs away while
+// holding spacebar). Prevents stuck spacebar state on re-focus.
+window.addEventListener('blur', function() {
+    spacePressed = false;
+});
+
 // Mouse — on canvas only
 canvas.addEventListener('mousedown', function(e) {
     e.preventDefault();
@@ -164,7 +171,12 @@ canvas.addEventListener('mousedown', function(e) {
 
 // Touch — on canvas with preventDefault for mobile
 canvas.addEventListener('touchstart', function(e) {
-    e.preventDefault(); // Prevents scroll, zoom, and double-tap-to-zoom
+    // preventDefault() serves dual purpose here:
+    // 1. Prevents scroll, zoom, and double-tap-to-zoom on mobile
+    // 2. Suppresses synthetic mousedown/click events that browsers fire after
+    //    touch events on hybrid (touch + mouse) devices per W3C Touch Events spec,
+    //    avoiding duplicate handleInput() calls from the mousedown listener above.
+    e.preventDefault();
     handleInput();
 }, { passive: false }); // passive: false required to allow preventDefault
 
