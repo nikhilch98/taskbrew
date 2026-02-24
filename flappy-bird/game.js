@@ -227,7 +227,7 @@ function renderPipes(ctx) {
         const bottomPipeTop = pipe.gapY + PIPE_GAP;
 
         // Pipe body color
-        ctx.fillStyle = '#3cb043';  // Green
+        ctx.fillStyle = '#2ECC71';  // Green
 
         // Top pipe: from top of canvas down to gap
         ctx.fillRect(pipe.x, 0, PIPE_WIDTH, pipe.gapY);
@@ -236,7 +236,7 @@ function renderPipes(ctx) {
         ctx.fillRect(pipe.x, bottomPipeTop, PIPE_WIDTH, groundY - bottomPipeTop);
 
         // Pipe caps (darker green, slightly wider) for visual polish
-        ctx.fillStyle = '#2d8a34'; // Darker green
+        ctx.fillStyle = '#27AE60'; // Darker green
 
         // Top pipe cap (at bottom of top pipe)
         ctx.fillRect(
@@ -283,66 +283,78 @@ function update(dt) {
 
 // ===== RENDER LOGIC =====
 
+function renderGround(ctx) {
+    // Brown dirt strip
+    ctx.fillStyle = '#8B5E3C';
+    ctx.fillRect(0, CANVAS_HEIGHT - GROUND_HEIGHT, CANVAS_WIDTH, GROUND_HEIGHT);
+
+    // Green grass accent at top edge of ground (~4px tall)
+    ctx.fillStyle = '#5CBF2A';
+    ctx.fillRect(0, CANVAS_HEIGHT - GROUND_HEIGHT, CANVAS_WIDTH, 4);
+
+    // Scrolling vertical hash lines for ground texture
+    ctx.strokeStyle = '#7A5232';
+    ctx.lineWidth = 1;
+    for (var x = -groundOffset % 24; x < CANVAS_WIDTH; x += 24) {
+        ctx.beginPath();
+        ctx.moveTo(x, CANVAS_HEIGHT - GROUND_HEIGHT + 10);
+        ctx.lineTo(x, CANVAS_HEIGHT - 5);
+        ctx.stroke();
+    }
+}
+
 function renderBird(ctx) {
     ctx.save();
-
-    // Translate to bird center, rotate, then draw at origin
     ctx.translate(bird.x, bird.y);
     ctx.rotate(bird.rotation);
 
-    // Body — yellow/orange filled circle
-    ctx.fillStyle = '#f5c842';  // Golden yellow
+    // Body — yellow circle
+    ctx.fillStyle = '#F7DC6F';
     ctx.beginPath();
     ctx.arc(0, 0, bird.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Body outline
-    ctx.strokeStyle = '#d4a020';
+    // Outline
+    ctx.strokeStyle = '#D4A017';
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Eye — small white circle with black pupil
-    ctx.fillStyle = '#ffffff';
+    // Eye — white circle (radius 5px, offset ~(5, -5) from center)
+    ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
-    ctx.arc(6, -5, 4, 0, Math.PI * 2);  // Offset right and up from center
+    ctx.arc(5, -5, 5, 0, Math.PI * 2);
     ctx.fill();
 
+    // Pupil — black circle (radius 2.5px, offset slightly right)
     ctx.fillStyle = '#000000';
     ctx.beginPath();
-    ctx.arc(7, -5, 2, 0, Math.PI * 2);  // Pupil
+    ctx.arc(7, -5, 2.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // Beak — small orange triangle
-    ctx.fillStyle = '#e07020';
+    // Beak — orange triangle protruding from right side (~8px wide)
+    ctx.fillStyle = '#E67E22';
     ctx.beginPath();
-    ctx.moveTo(bird.radius, -3);
+    ctx.moveTo(bird.radius, -4);
     ctx.lineTo(bird.radius + 8, 0);
-    ctx.lineTo(bird.radius, 3);
+    ctx.lineTo(bird.radius, 4);
     ctx.closePath();
-    ctx.fill();
-
-    // Wing — small ellipse on the body
-    ctx.fillStyle = '#e0b030';
-    ctx.beginPath();
-    ctx.ellipse(-2, 3, 8, 5, -0.3, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
 }
 
 function render(ctx) {
-    // Layer 0: Fill canvas with sky blue background (doubles as canvas clear)
+    // 1. Sky background (canvas clear)
     ctx.fillStyle = '#70c5ce';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    // Layer 1: Pipes (only in PLAYING and GAME_OVER — NOT in IDLE)
-    if (gameState === STATE_PLAYING || gameState === STATE_GAME_OVER) {
-        renderPipes(ctx);
-    }
+    // 2. Pipes (behind ground and bird)
+    renderPipes(ctx);
 
-    // Layer 2: Ground will be rendered here (by future task)
+    // 3. Ground (covers pipe bottoms)
+    renderGround(ctx);
 
-    // Layer 3: Bird — always on top of game elements
+    // 4. Bird (always on top)
     renderBird(ctx);
 }
 
