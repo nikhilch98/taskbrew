@@ -27,6 +27,25 @@ class InstanceManager:
 
     def __init__(self, db: Database) -> None:
         self._db = db
+        self._paused_roles: set[str] = set()
+
+    def pause_role(self, role: str) -> None:
+        self._paused_roles.add(role)
+
+    def resume_role(self, role: str) -> None:
+        self._paused_roles.discard(role)
+
+    def is_role_paused(self, role: str) -> bool:
+        return role in self._paused_roles
+
+    def get_paused_roles(self) -> list[str]:
+        return sorted(self._paused_roles)
+
+    def pause_all(self, roles: list[str]) -> None:
+        self._paused_roles.update(roles)
+
+    def resume_all(self) -> None:
+        self._paused_roles.clear()
 
     async def register_instance(
         self, instance_id: str, role_config: RoleConfig

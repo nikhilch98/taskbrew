@@ -100,6 +100,8 @@ async def run_server(orch: Orchestrator):
         task_board=orch.task_board,
         instance_manager=orch.instance_manager,
         roles=orch.roles,
+        team_config=orch.team_config,
+        project_dir=orch.project_dir,
     )
 
     # Spawn agent loops

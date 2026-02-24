@@ -12,7 +12,9 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
 
-from ai_team.config_loader import RoleConfig
+import yaml
+
+from ai_team.config_loader import RoleConfig, TeamConfig
 from ai_team.orchestrator.event_bus import EventBus
 from ai_team.orchestrator.task_board import TaskBoard
 from ai_team.agents.instance_manager import InstanceManager
@@ -59,6 +61,8 @@ def create_app(
     instance_manager: InstanceManager,
     chat_manager: ChatManager | None = None,
     roles: dict[str, RoleConfig] | None = None,
+    team_config: TeamConfig | None = None,
+    project_dir: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AI Team Dashboard")
     ws_manager = ConnectionManager()
@@ -185,6 +189,98 @@ def create_app(
     @app.get("/api/agents")
     async def get_agents():
         return await instance_manager.get_all_instances()
+
+    # ------------------------------------------------------------------
+    # Pause / Resume
+    # ------------------------------------------------------------------
+
+    @app.post("/api/agents/pause")
+    async def pause_agents(body: dict):
+        role = body.get("role")
+        if role == "all":
+            all_roles = list(roles.keys()) if roles else []
+            instance_manager.pause_all(all_roles)
+            await event_bus.emit("team.paused", {"roles": all_roles})
+            return {"status": "ok", "paused": all_roles}
+        elif role:
+            instance_manager.pause_role(role)
+            await event_bus.emit("role.paused", {"role": role})
+            return {"status": "ok", "paused": [role]}
+        raise HTTPException(status_code=400, detail="role is required")
+
+    @app.post("/api/agents/resume")
+    async def resume_agents(body: dict):
+        role = body.get("role")
+        if role == "all":
+            instance_manager.resume_all()
+            await event_bus.emit("team.resumed", {})
+            return {"status": "ok", "resumed": "all"}
+        elif role:
+            instance_manager.resume_role(role)
+            await event_bus.emit("role.resumed", {"role": role})
+            return {"status": "ok", "resumed": [role]}
+        raise HTTPException(status_code=400, detail="role is required")
+
+    @app.get("/api/agents/paused")
+    async def get_paused():
+        return {"paused_roles": instance_manager.get_paused_roles()}
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
+    @app.get("/api/settings/team")
+    async def get_team_settings():
+        if not team_config:
+            return {}
+        return {
+            "name": team_config.name,
+            "project_dir": project_dir,
+            "default_model": getattr(team_config, "default_model", ""),
+            "db_path": team_config.db_path,
+            "dashboard_host": team_config.dashboard_host,
+            "dashboard_port": team_config.dashboard_port,
+            "default_poll_interval": team_config.default_poll_interval,
+        }
+
+    @app.put("/api/settings/team")
+    async def update_team_settings(body: dict):
+        if not team_config:
+            raise HTTPException(status_code=404, detail="No team config loaded")
+        if "name" in body:
+            team_config.name = body["name"]
+        if "default_model" in body:
+            team_config.default_model = body["default_model"]
+        return {"status": "ok"}
+
+    @app.get("/api/settings/roles")
+    async def get_roles_settings():
+        if not roles:
+            return []
+        result = []
+        for name, rc in roles.items():
+            result.append({
+                "role": name,
+                "system_prompt": rc.system_prompt,
+                "model": getattr(rc, "model", ""),
+                "allowed_tools": rc.allowed_tools,
+                "max_instances": rc.max_instances,
+                "poll_interval": getattr(rc, "poll_interval", 5),
+            })
+        return result
+
+    @app.put("/api/settings/roles/{role_name}")
+    async def update_role_settings(role_name: str, body: dict):
+        if not roles or role_name not in roles:
+            raise HTTPException(status_code=404, detail=f"Role '{role_name}' not found")
+        rc = roles[role_name]
+        if "system_prompt" in body:
+            rc.system_prompt = body["system_prompt"]
+        if "allowed_tools" in body:
+            rc.allowed_tools = body["allowed_tools"]
+        if "model" in body:
+            rc.model = body["model"]
+        return {"status": "ok", "role": role_name}
 
     # ------------------------------------------------------------------
     # Board filters

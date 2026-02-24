@@ -284,7 +284,9 @@
 
         /* ========== Nav Buttons ========== */
         .nav-faq-btn,
-        .nav-agents-btn {
+        .nav-agents-btn,
+        .nav-pause-btn,
+        .nav-settings-btn {
             display: flex;
             align-items: center;
             gap: 6px;
@@ -301,17 +303,30 @@
         }
 
         .nav-faq-btn:hover,
-        .nav-agents-btn:hover {
+        .nav-agents-btn:hover,
+        .nav-pause-btn:hover,
+        .nav-settings-btn:hover {
             color: var(--text-primary);
             background: rgba(99, 102, 241, 0.12);
             border-color: rgba(99, 102, 241, 0.3);
         }
 
         .nav-faq-btn svg,
-        .nav-agents-btn svg {
+        .nav-agents-btn svg,
+        .nav-pause-btn svg,
+        .nav-settings-btn svg {
             width: 14px;
             height: 14px;
         }
+
+        .nav-pause-btn.paused { color: var(--accent-amber); background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); }
+        .role-pause-btn { font-size:11px; padding:3px 10px; border-radius:12px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.04); color:var(--text-secondary); cursor:pointer; transition:all 0.2s; font-family:'Inter',sans-serif; }
+        .role-pause-btn:hover { background:rgba(245,158,11,0.15); color:var(--accent-amber); }
+        .role-pause-btn.paused { color:var(--accent-amber); border-color:rgba(245,158,11,0.3); background:rgba(245,158,11,0.1); }
+        .role-controls { display:flex; align-items:center; justify-content:space-between; padding:6px 12px; margin-bottom:8px; border-bottom:1px solid var(--border-subtle); }
+        .role-controls .role-label { font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; }
+        .sidebar-status-paused { color:var(--accent-amber); }
+        .sidebar-status-paused .status-dot { background:var(--accent-amber); box-shadow:0 0 6px rgba(245,158,11,0.4); }
 
         /* ========== FAQ Modal ========== */
         .faq-overlay {
@@ -794,8 +809,50 @@
             padding: 14px;
             margin-bottom: 10px;
             transition: all 0.2s ease;
-            cursor: default;
+            cursor: pointer;
         }
+
+        /* ========== Task Detail Modal ========== */
+        .task-detail-overlay { display:none; position:fixed; inset:0; z-index:210; background:rgba(0,0,0,0.6); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); align-items:center; justify-content:center; }
+        .task-detail-overlay.open { display:flex; }
+        .task-detail-modal { width:90%; max-width:720px; max-height:85vh; background:rgba(15,20,38,0.95); backdrop-filter:blur(var(--glass-blur)); -webkit-backdrop-filter:blur(var(--glass-blur)); border:1px solid var(--border-subtle); border-radius:var(--radius-lg); box-shadow:0 24px 80px rgba(0,0,0,0.5),0 0 40px rgba(99,102,241,0.08); display:flex; flex-direction:column; overflow:hidden; animation:faqSlideIn 0.25s ease-out; }
+        .task-detail-header { display:flex; align-items:center; justify-content:space-between; padding:20px 24px; border-bottom:1px solid var(--border-subtle); }
+        .task-detail-header h2 { font-size:18px; font-weight:700; color:var(--text-primary); letter-spacing:-0.3px; }
+        .task-detail-body { padding:24px; overflow-y:auto; flex:1; }
+        .task-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
+        .task-detail-field label { display:block; font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
+        .task-detail-field .value { font-size:14px; color:var(--text-primary); }
+        .task-detail-description { margin-top:16px; padding:16px; background:rgba(5,7,14,0.6); border-radius:var(--radius-sm); border:1px solid var(--border-subtle); }
+        .task-detail-description label { display:block; font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; }
+        .task-detail-description .value { font-size:13px; color:var(--text-secondary); line-height:1.6; white-space:pre-wrap; }
+        .task-detail-status-badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:12px; font-weight:600; }
+        .task-detail-status-badge.status-pending { background:rgba(99,102,241,0.15); color:#818cf8; }
+        .task-detail-status-badge.status-in_progress { background:rgba(6,182,212,0.15); color:#22d3ee; }
+        .task-detail-status-badge.status-completed { background:rgba(16,185,129,0.15); color:#34d399; }
+        .task-detail-status-badge.status-blocked { background:rgba(245,158,11,0.15); color:#fbbf24; }
+        .task-detail-status-badge.status-failed, .task-detail-status-badge.status-rejected { background:rgba(244,63,94,0.15); color:#fb7185; }
+
+        /* ========== Settings Modal ========== */
+        .settings-overlay { display:none; position:fixed; inset:0; z-index:220; background:rgba(0,0,0,0.6); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); align-items:center; justify-content:center; }
+        .settings-overlay.open { display:flex; }
+        .settings-modal { width:90%; max-width:780px; max-height:85vh; background:rgba(15,20,38,0.95); backdrop-filter:blur(var(--glass-blur)); -webkit-backdrop-filter:blur(var(--glass-blur)); border:1px solid var(--border-subtle); border-radius:var(--radius-lg); box-shadow:0 24px 80px rgba(0,0,0,0.5),0 0 40px rgba(99,102,241,0.08); display:flex; flex-direction:column; overflow:hidden; animation:faqSlideIn 0.25s ease-out; }
+        .settings-header { display:flex; align-items:center; justify-content:space-between; padding:20px 24px; border-bottom:1px solid var(--border-subtle); }
+        .settings-header h2 { font-size:18px; font-weight:700; color:var(--text-primary); }
+        .settings-body { padding:24px; overflow-y:auto; flex:1; }
+        .settings-tabs { display:flex; gap:8px; margin-bottom:20px; border-bottom:1px solid var(--border-subtle); padding-bottom:12px; }
+        .settings-tab { padding:6px 16px; border-radius:16px; border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.04); color:var(--text-secondary); cursor:pointer; font-size:12px; font-weight:500; font-family:'Inter',sans-serif; transition:all 0.2s; }
+        .settings-tab:hover { background:rgba(99,102,241,0.12); color:var(--text-primary); }
+        .settings-tab.active { background:rgba(99,102,241,0.2); color:var(--accent-indigo); border-color:rgba(99,102,241,0.3); }
+        .settings-field { margin-bottom:16px; }
+        .settings-field label { display:block; font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; }
+        .settings-field input, .settings-field textarea, .settings-field select { width:100%; padding:8px 12px; background:rgba(5,7,14,0.8); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); color:var(--text-primary); font-size:13px; font-family:'Inter',sans-serif; transition:border-color 0.2s; }
+        .settings-field input:focus, .settings-field textarea:focus { outline:none; border-color:rgba(99,102,241,0.5); }
+        .settings-field textarea { min-height:80px; resize:vertical; font-family:'SF Mono','Fira Code',monospace; font-size:12px; }
+        .settings-field .restart-badge { display:inline-block; font-size:10px; color:var(--accent-amber); background:rgba(245,158,11,0.1); padding:2px 8px; border-radius:8px; margin-left:8px; }
+        .settings-save-btn { padding:8px 20px; border-radius:16px; border:1px solid rgba(99,102,241,0.3); background:rgba(99,102,241,0.15); color:var(--accent-indigo); cursor:pointer; font-size:12px; font-weight:600; font-family:'Inter',sans-serif; transition:all 0.2s; }
+        .settings-save-btn:hover { background:rgba(99,102,241,0.25); }
+        .settings-saved-msg { display:inline-block; margin-left:12px; font-size:12px; color:var(--accent-emerald); opacity:0; transition:opacity 0.3s; }
+        .settings-saved-msg.show { opacity:1; }
 
         .task-card:hover {
             border-color: rgba(255, 255, 255, 0.08);
@@ -1678,6 +1735,14 @@
             </div>
         </div>
         <div class="nav-right">
+            <button class="nav-pause-btn" id="teamPauseBtn" onclick="toggleTeamPause()" title="Pause/Resume Team">
+                <svg id="teamPauseIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                <span id="teamPauseLabel">Pause Team</span>
+            </button>
+            <button class="nav-settings-btn" onclick="toggleSettingsModal()" title="Settings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Settings
+            </button>
             <button class="nav-agents-btn" onclick="toggleSidebar()" title="Agent Sidebar">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                 Agents
@@ -2276,6 +2341,7 @@
             }
 
             card.innerHTML = html;
+            card.addEventListener('click', () => openTaskDetail(task));
             return card;
         }
 
@@ -2317,6 +2383,8 @@
 
             for (const task of sorted) {
                 const tr = document.createElement('tr');
+                tr.style.cursor = 'pointer';
+                tr.addEventListener('click', () => openTaskDetail(task));
                 const status = task._status || task.status || 'pending';
                 const role = task.assigned_to || '';
                 const roleColor = getRoleColor(role);
@@ -2577,7 +2645,7 @@
                 const role = agent.role || '';
                 const roleColor = getRoleColor(role);
                 const emoji = getRoleEmoji(role);
-                const statusClass = agent.status === 'working' ? 'sidebar-status-working' : 'sidebar-status-idle';
+                const statusClass = agent.status === 'paused' ? 'sidebar-status-paused' : (agent.status === 'working' ? 'sidebar-status-working' : 'sidebar-status-idle');
                 const statusLabel = agent.status || 'idle';
 
                 const card = document.createElement('div');
@@ -2615,6 +2683,27 @@
 
                 card.innerHTML = html;
                 container.appendChild(card);
+            }
+
+            // Per-role pause controls
+            const roles = [...new Set(agents.map(a => a.role).filter(Boolean))];
+            if (roles.length > 0) {
+                const divider = document.createElement('div');
+                divider.style.cssText = 'height:1px;background:var(--border-subtle);margin:12px 0;';
+                container.appendChild(divider);
+                const controlsTitle = document.createElement('div');
+                controlsTitle.style.cssText = 'font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;';
+                controlsTitle.textContent = 'Role Controls';
+                container.appendChild(controlsTitle);
+                for (const role of roles) {
+                    const row = document.createElement('div');
+                    row.className = 'role-controls';
+                    const isPaused = pausedRoles.has(role);
+                    row.innerHTML = '<span class="role-label">' + escapeHtml(role) + '</span>' +
+                        '<button class="role-pause-btn' + (isPaused ? ' paused' : '') + '" onclick="toggleRolePause(\'' + escapeHtml(role) + '\')">' +
+                        (isPaused ? '&#9654; Resume' : '&#10074;&#10074; Pause') + '</button>';
+                    container.appendChild(row);
+                }
             }
         }
 
@@ -2691,6 +2780,9 @@
                     appendAgentActivity(event.agent_name, 'result', event.result || '');
                 } else if (type === 'tool.pre_use') {
                     appendAgentActivity(event.agent_name, 'tool', event.tool_name + (event.tool_input ? ': ' + truncate(JSON.stringify(event.tool_input), 120) : ''));
+                } else if (type === 'team.paused' || type === 'team.resumed' || type === 'role.paused' || type === 'role.resumed') {
+                    refreshPausedState();
+                    refreshAgents();
                 } else if (type.startsWith('agent.')) {
                     refreshAgents();
                 }
@@ -2911,6 +3003,165 @@
         }
 
         // ================================================================
+        // Pause / Resume
+        // ================================================================
+        let pausedRoles = new Set();
+
+        async function refreshPausedState() {
+            try {
+                const res = await fetch('/api/agents/paused');
+                const data = await res.json();
+                pausedRoles = new Set(data.paused_roles || []);
+                updatePauseUI();
+            } catch (e) { /* ignore */ }
+        }
+
+        function updatePauseUI() {
+            const btn = document.getElementById('teamPauseBtn');
+            const icon = document.getElementById('teamPauseIcon');
+            const label = document.getElementById('teamPauseLabel');
+            if (!btn) return;
+            if (pausedRoles.size > 0) {
+                btn.classList.add('paused');
+                icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+                label.textContent = 'Resume Team';
+            } else {
+                btn.classList.remove('paused');
+                icon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+                label.textContent = 'Pause Team';
+            }
+            document.querySelectorAll('.role-pause-btn').forEach(el => {
+                const role = el.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+                if (!role) return;
+                if (pausedRoles.has(role)) { el.classList.add('paused'); el.innerHTML = '&#9654; Resume'; }
+                else { el.classList.remove('paused'); el.innerHTML = '&#10074;&#10074; Pause'; }
+            });
+        }
+
+        async function toggleTeamPause() {
+            if (pausedRoles.size > 0) {
+                await fetch('/api/agents/resume', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role:'all'}) });
+            } else {
+                await fetch('/api/agents/pause', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role:'all'}) });
+            }
+            await refreshPausedState(); refreshAgents();
+        }
+
+        async function toggleRolePause(role) {
+            if (pausedRoles.has(role)) {
+                await fetch('/api/agents/resume', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role}) });
+            } else {
+                await fetch('/api/agents/pause', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role}) });
+            }
+            await refreshPausedState(); refreshAgents();
+        }
+
+        // ================================================================
+        // Task Detail Modal
+        // ================================================================
+        function openTaskDetail(task) {
+            const overlay = document.getElementById('taskDetailOverlay');
+            const body = document.getElementById('taskDetailBody');
+            if (!overlay || !body) return;
+            const s = task.status || 'pending';
+            let html = '<div class="task-detail-grid">';
+            html += tdField('Task ID', '<span style="font-family:monospace;font-size:13px">' + escapeHtml(String(task.id||'')) + '</span>');
+            html += tdField('Status', '<span class="task-detail-status-badge status-' + escapeHtml(s) + '">' + escapeHtml(s.replace('_',' ')) + '</span>');
+            html += tdField('Priority', escapeHtml(task.priority||'medium'));
+            html += tdField('Type', escapeHtml(task.task_type||'-'));
+            html += tdField('Assigned To', escapeHtml(task.assigned_to||'-'));
+            html += tdField('Claimed By', escapeHtml(task.claimed_by||'-'));
+            html += tdField('Group', escapeHtml(task.group_id||'-'));
+            html += tdField('Parent', escapeHtml(task.parent_id||'-'));
+            html += tdField('Created By', escapeHtml(task.created_by||'-'));
+            html += tdField('Created At', fmtTs(task.created_at));
+            if (task.started_at) html += tdField('Started At', fmtTs(task.started_at));
+            if (task.completed_at) html += tdField('Completed At', fmtTs(task.completed_at));
+            html += '</div>';
+            if (task.description) html += '<div class="task-detail-description"><label>Description</label><div class="value">' + escapeHtml(task.description) + '</div></div>';
+            if (task.rejection_reason) html += '<div class="task-detail-description" style="border-color:rgba(244,63,94,0.3)"><label style="color:var(--accent-rose)">Rejection Reason</label><div class="value">' + escapeHtml(task.rejection_reason) + '</div></div>';
+            body.innerHTML = html;
+            document.getElementById('taskDetailTitle').textContent = task.title || '(untitled)';
+            overlay.classList.add('open');
+        }
+        function tdField(label, value) { return '<div class="task-detail-field"><label>' + label + '</label><div class="value">' + value + '</div></div>'; }
+        function fmtTs(iso) { if (!iso) return '-'; try { return new Date(iso).toLocaleString(); } catch(e) { return escapeHtml(iso); } }
+        function closeTaskDetail() { const o = document.getElementById('taskDetailOverlay'); if (o) o.classList.remove('open'); }
+
+        // ================================================================
+        // Settings Modal
+        // ================================================================
+        let settingsData = { team: null, roles: {} };
+        let settingsActiveTab = 'team';
+
+        function toggleSettingsModal() {
+            const o = document.getElementById('settingsOverlay');
+            if (!o) return;
+            if (o.classList.contains('open')) { o.classList.remove('open'); }
+            else { o.classList.add('open'); loadSettings(); }
+        }
+        function closeSettings() { const o = document.getElementById('settingsOverlay'); if (o) o.classList.remove('open'); }
+
+        async function loadSettings() {
+            try {
+                const [teamRes, rolesRes] = await Promise.all([fetch('/api/settings/team'), fetch('/api/settings/roles')]);
+                settingsData.team = await teamRes.json();
+                settingsData.roles = {};
+                const arr = await rolesRes.json();
+                for (const r of arr) settingsData.roles[r.role] = r;
+                renderSettingsTabs(); switchSettingsTab(settingsActiveTab);
+            } catch (e) { document.getElementById('settingsContent').innerHTML = '<div style="color:var(--accent-rose)">Failed to load settings</div>'; }
+        }
+
+        function renderSettingsTabs() {
+            const el = document.getElementById('settingsTabs');
+            let html = '<button class="settings-tab' + (settingsActiveTab==='team'?' active':'') + '" onclick="switchSettingsTab(\'team\')">Team</button>';
+            for (const role of Object.keys(settingsData.roles).sort()) {
+                html += '<button class="settings-tab' + (settingsActiveTab===role?' active':'') + '" onclick="switchSettingsTab(\'' + escapeHtml(role) + '\')">' + escapeHtml(role) + '</button>';
+            }
+            el.innerHTML = html;
+        }
+
+        function switchSettingsTab(tab) {
+            settingsActiveTab = tab;
+            document.querySelectorAll('.settings-tab').forEach(el => el.classList.toggle('active', el.textContent.trim().toLowerCase() === tab));
+            const c = document.getElementById('settingsContent');
+            if (tab === 'team') renderTeamSettings(c); else renderRoleSettings(c, tab);
+        }
+
+        function renderTeamSettings(c) {
+            const t = settingsData.team || {};
+            let html = '<div class="settings-field"><label>Team Name</label><input id="s_team_name" value="' + escapeHtml(t.name||'') + '"></div>';
+            html += '<div class="settings-field"><label>Project Directory <span class="restart-badge">Requires restart</span></label><input id="s_project_dir" value="' + escapeHtml(t.project_dir||'') + '" readonly style="opacity:0.6"></div>';
+            html += '<div class="settings-field"><label>Default Model</label><input id="s_default_model" value="' + escapeHtml(t.default_model||'') + '"></div>';
+            html += '<div style="margin-top:16px"><button class="settings-save-btn" onclick="saveTeamSettings()">Save Team Settings</button><span class="settings-saved-msg" id="teamSavedMsg">Saved!</span></div>';
+            c.innerHTML = html;
+        }
+
+        function renderRoleSettings(c, role) {
+            const r = settingsData.roles[role] || {};
+            let html = '<div class="settings-field"><label>System Prompt</label><textarea id="s_system_prompt" rows="6">' + escapeHtml(r.system_prompt||'') + '</textarea></div>';
+            html += '<div class="settings-field"><label>Model</label><input id="s_model" value="' + escapeHtml(r.model||'') + '"></div>';
+            html += '<div class="settings-field"><label>Allowed Tools (comma-separated)</label><input id="s_tools" value="' + escapeHtml((r.allowed_tools||[]).join(', ')) + '"></div>';
+            html += '<div class="settings-field"><label>Max Instances <span class="restart-badge">Requires restart</span></label><input id="s_max_instances" type="number" value="' + (r.max_instances||1) + '"></div>';
+            html += '<div class="settings-field"><label>Poll Interval (s) <span class="restart-badge">Requires restart</span></label><input id="s_poll_interval" type="number" value="' + (r.poll_interval||5) + '"></div>';
+            html += '<div style="margin-top:16px"><button class="settings-save-btn" onclick="saveRoleSettings(\'' + escapeHtml(role) + '\')">Save ' + escapeHtml(role) + ' Settings</button><span class="settings-saved-msg" id="roleSavedMsg">Saved!</span></div>';
+            c.innerHTML = html;
+        }
+
+        async function saveTeamSettings() {
+            await fetch('/api/settings/team', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ name:document.getElementById('s_team_name').value, default_model:document.getElementById('s_default_model').value }) });
+            const m = document.getElementById('teamSavedMsg'); m.classList.add('show'); setTimeout(() => m.classList.remove('show'), 2000);
+        }
+
+        async function saveRoleSettings(role) {
+            const tools = document.getElementById('s_tools').value.split(',').map(s=>s.trim()).filter(Boolean);
+            await fetch('/api/settings/roles/' + role, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ system_prompt:document.getElementById('s_system_prompt').value, model:document.getElementById('s_model').value, allowed_tools:tools, max_instances:parseInt(document.getElementById('s_max_instances').value)||1, poll_interval:parseInt(document.getElementById('s_poll_interval').value)||5 }) });
+            const m = document.getElementById('roleSavedMsg'); m.classList.add('show'); setTimeout(() => m.classList.remove('show'), 2000);
+            await loadSettings();
+        }
+
+        // ================================================================
         // FAQ Modal
         // ================================================================
         function toggleFaqModal() {
@@ -2923,13 +3174,17 @@
         }
 
         window.addEventListener('DOMContentLoaded', function () {
-            document.getElementById('faqOverlay').addEventListener('click', function (e) {
-                if (e.target === this) toggleFaqModal();
-            });
+            document.getElementById('faqOverlay').addEventListener('click', function (e) { if (e.target === this) toggleFaqModal(); });
+            document.getElementById('taskDetailOverlay').addEventListener('click', function (e) { if (e.target === this) closeTaskDetail(); });
+            document.getElementById('settingsOverlay').addEventListener('click', function (e) { if (e.target === this) closeSettings(); });
         });
 
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
+                const td = document.getElementById('taskDetailOverlay');
+                if (td && td.classList.contains('open')) { closeTaskDetail(); return; }
+                const st = document.getElementById('settingsOverlay');
+                if (st && st.classList.contains('open')) { closeSettings(); return; }
                 const overlay = document.getElementById('faqOverlay');
                 if (overlay && overlay.classList.contains('open')) toggleFaqModal();
             }
@@ -2943,6 +3198,7 @@
             refreshBoard();
             refreshGroups();
             refreshAgents();
+            refreshPausedState();
         }
 
         connectWebSocket();
@@ -3041,6 +3297,31 @@
                     </div>
                 </div>
 
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Detail Modal -->
+    <div class="task-detail-overlay" id="taskDetailOverlay">
+        <div class="task-detail-modal">
+            <div class="task-detail-header">
+                <h2 id="taskDetailTitle">Task Detail</h2>
+                <button class="faq-close" onclick="closeTaskDetail()" title="Close">&times;</button>
+            </div>
+            <div class="task-detail-body" id="taskDetailBody"></div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="settings-overlay" id="settingsOverlay">
+        <div class="settings-modal">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button class="faq-close" onclick="closeSettings()" title="Close">&times;</button>
+            </div>
+            <div class="settings-body">
+                <div class="settings-tabs" id="settingsTabs"></div>
+                <div id="settingsContent"></div>
             </div>
         </div>
     </div>

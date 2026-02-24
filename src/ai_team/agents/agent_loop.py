@@ -139,6 +139,24 @@ class AgentLoop:
 
     async def run_once(self) -> bool:
         """One poll/claim/execute/complete cycle. Returns True if task processed."""
+        # Skip polling if role is paused
+        if self.instance_manager.is_role_paused(self.role_config.role):
+            current = await self.instance_manager.get_instance(self.instance_id)
+            if current and current["status"] != "paused":
+                await self.instance_manager.update_status(self.instance_id, "paused")
+                await self.event_bus.emit("agent.status_changed", {
+                    "instance_id": self.instance_id, "status": "paused", "role": self.role_config.role,
+                })
+            return False
+
+        # If was paused but now resumed, set back to idle
+        current = await self.instance_manager.get_instance(self.instance_id)
+        if current and current["status"] == "paused":
+            await self.instance_manager.update_status(self.instance_id, "idle")
+            await self.event_bus.emit("agent.status_changed", {
+                "instance_id": self.instance_id, "status": "idle", "role": self.role_config.role,
+            })
+
         task = await self.poll_for_task()
         if task is None:
             return False
