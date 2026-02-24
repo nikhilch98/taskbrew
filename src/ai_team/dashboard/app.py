@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -80,6 +82,18 @@ def create_app(
     @app.get("/api/health")
     async def health():
         return {"status": "ok"}
+
+    # ------------------------------------------------------------------
+    # Server restart
+    # ------------------------------------------------------------------
+
+    @app.post("/api/server/restart")
+    async def restart_server():
+        async def _do_restart():
+            await asyncio.sleep(0.5)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        asyncio.create_task(_do_restart())
+        return {"status": "restarting"}
 
     # ------------------------------------------------------------------
     # Task board endpoints

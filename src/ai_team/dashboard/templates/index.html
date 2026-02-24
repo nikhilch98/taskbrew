@@ -286,7 +286,8 @@
         .nav-faq-btn,
         .nav-agents-btn,
         .nav-pause-btn,
-        .nav-settings-btn {
+        .nav-settings-btn,
+        .nav-restart-btn {
             display: flex;
             align-items: center;
             gap: 6px;
@@ -305,16 +306,38 @@
         .nav-faq-btn:hover,
         .nav-agents-btn:hover,
         .nav-pause-btn:hover,
-        .nav-settings-btn:hover {
+        .nav-settings-btn:hover,
+        .nav-restart-btn:hover {
             color: var(--text-primary);
             background: rgba(99, 102, 241, 0.12);
             border-color: rgba(99, 102, 241, 0.3);
         }
 
+        .nav-restart-btn { color: var(--accent-amber); border-color: rgba(245, 158, 11, 0.2); }
+        .nav-restart-btn:hover { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.3); }
+
+        .restart-overlay {
+            position: fixed; inset: 0; z-index: 10000;
+            background: rgba(5, 7, 14, 0.92);
+            backdrop-filter: blur(12px);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+        .restart-overlay.active { opacity: 1; pointer-events: all; }
+        .restart-spinner {
+            width: 48px; height: 48px; border: 3px solid rgba(99, 102, 241, 0.2);
+            border-top-color: var(--accent-indigo); border-radius: 50%;
+            animation: spin 0.8s linear infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .restart-overlay .restart-text { color: var(--text-primary); font-size: 1.1rem; font-weight: 500; }
+        .restart-overlay .restart-sub { color: var(--text-secondary); font-size: 0.85rem; margin-top: 8px; }
+
         .nav-faq-btn svg,
         .nav-agents-btn svg,
         .nav-pause-btn svg,
-        .nav-settings-btn svg {
+        .nav-settings-btn svg,
+        .nav-restart-btn svg {
             width: 14px;
             height: 14px;
         }
@@ -1883,6 +1906,10 @@
                 <svg id="teamPauseIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                 <span id="teamPauseLabel">Pause Team</span>
             </button>
+            <button class="nav-restart-btn" onclick="restartServer()" title="Restart Server">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Restart
+            </button>
             <button class="nav-settings-btn" onclick="toggleSettingsModal()" title="Settings">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 Settings
@@ -3388,6 +3415,35 @@
         }
 
         // ================================================================
+        // Server Restart
+        // ================================================================
+        async function restartServer() {
+            if (!confirm('Restart the server? All agents will be stopped and restarted.')) return;
+            const overlay = document.getElementById('restartOverlay');
+            const status = document.getElementById('restartStatus');
+            overlay.classList.add('active');
+            status.textContent = 'Sending restart signal...';
+            try {
+                await fetch('/api/server/restart', { method: 'POST' });
+            } catch (e) { /* expected — server dies */ }
+            status.textContent = 'Waiting for server to come back...';
+            await new Promise(r => setTimeout(r, 2000));
+            let attempts = 0;
+            const poll = setInterval(async () => {
+                attempts++;
+                status.textContent = 'Waiting for server to come back... (' + attempts + 's)';
+                try {
+                    const res = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
+                    if (res.ok) {
+                        clearInterval(poll);
+                        status.textContent = 'Server is back! Reloading...';
+                        setTimeout(() => location.reload(), 500);
+                    }
+                } catch (e) { /* still down */ }
+            }, 1000);
+        }
+
+        // ================================================================
         // FAQ Modal
         // ================================================================
         function toggleFaqModal() {
@@ -3562,6 +3618,13 @@
                 <div id="settingsContent"></div>
             </div>
         </div>
+    </div>
+
+    <!-- Restart overlay -->
+    <div class="restart-overlay" id="restartOverlay">
+        <div class="restart-spinner"></div>
+        <div class="restart-text">Restarting server...</div>
+        <div class="restart-sub" id="restartStatus">Sending restart signal</div>
     </div>
 
 </body>
