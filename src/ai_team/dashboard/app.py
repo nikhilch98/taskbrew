@@ -11,11 +11,10 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from ai_team.agents.base import AgentStatus
+from ai_team.config_loader import RoleConfig
 from ai_team.orchestrator.event_bus import EventBus
-from ai_team.orchestrator.team_manager import TeamManager
-from ai_team.orchestrator.task_queue import TaskQueue
-from ai_team.orchestrator.workflow import WorkflowEngine
+from ai_team.orchestrator.task_board import TaskBoard
+from ai_team.agents.instance_manager import InstanceManager
 
 if TYPE_CHECKING:
     from ai_team.dashboard.chat_manager import ChatManager
@@ -43,10 +42,10 @@ class ConnectionManager:
 
 def create_app(
     event_bus: EventBus,
-    team_manager: TeamManager,
-    task_queue: TaskQueue,
-    workflow_engine: WorkflowEngine,
+    task_board: TaskBoard,
+    instance_manager: InstanceManager,
     chat_manager: ChatManager | None = None,
+    roles: dict[str, RoleConfig] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AI Team Dashboard")
     ws_manager = ConnectionManager()
@@ -56,123 +55,127 @@ def create_app(
 
     event_bus.subscribe("*", broadcast_event)
 
+    # ------------------------------------------------------------------
+    # Health
+    # ------------------------------------------------------------------
+
     @app.get("/api/health")
     async def health():
         return {"status": "ok"}
 
-    @app.get("/api/team")
-    async def get_team():
-        return {name: str(status) for name, status in team_manager.get_team_status().items()}
+    # ------------------------------------------------------------------
+    # Task board endpoints
+    # ------------------------------------------------------------------
 
-    @app.get("/api/tasks")
-    async def get_tasks():
-        return await task_queue.get_pending_tasks()
+    @app.get("/api/board")
+    async def get_board(
+        group_id: str | None = None,
+        assigned_to: str | None = None,
+        claimed_by: str | None = None,
+        task_type: str | None = None,
+        priority: str | None = None,
+    ):
+        return await task_board.get_board(
+            group_id=group_id,
+            assigned_to=assigned_to,
+            claimed_by=claimed_by,
+            task_type=task_type,
+            priority=priority,
+        )
 
-    @app.get("/api/pipelines")
-    async def get_pipelines():
-        return [
-            {"name": p.name, "description": p.description, "steps": len(p.steps)}
-            for p in workflow_engine.pipelines.values()
-        ]
+    @app.get("/api/groups")
+    async def get_groups(status: str | None = None):
+        return await task_board.get_groups(status=status)
 
-    @app.post("/api/pipelines/{pipeline_name}/run")
-    async def start_pipeline(pipeline_name: str, goal: dict):
-        import uuid
-        run_id = str(uuid.uuid4())[:8]
-        run = workflow_engine.start_run(pipeline_name, run_id, initial_context=goal)
-        step = workflow_engine.get_current_step(run_id)
-        if step:
-            task_id = await task_queue.create_task(
-                pipeline_id=run_id, task_type=step.action, input_context=json.dumps(goal)
+    @app.get("/api/groups/{group_id}/graph")
+    async def get_group_graph(group_id: str):
+        tasks = await task_board.get_group_tasks(group_id)
+        nodes = []
+        edges = []
+        for task in tasks:
+            nodes.append({
+                "id": task["id"],
+                "title": task["title"],
+                "status": task["status"],
+                "assigned_to": task["assigned_to"],
+                "claimed_by": task.get("claimed_by"),
+                "task_type": task["task_type"],
+            })
+            if task.get("parent_id"):
+                edges.append({
+                    "from": task["parent_id"],
+                    "to": task["id"],
+                    "type": "parent",
+                })
+        # Also add blocked_by edges from task_dependencies
+        task_ids = [t["id"] for t in tasks]
+        if task_ids:
+            placeholders = ",".join("?" * len(task_ids))
+            deps = await task_board._db.execute_fetchall(
+                f"SELECT task_id, blocked_by FROM task_dependencies WHERE task_id IN ({placeholders})",
+                tuple(task_ids),
             )
-            await event_bus.emit(
-                "pipeline_started",
-                {"run_id": run_id, "pipeline": pipeline_name, "first_task": task_id},
-            )
-        return {"run_id": run_id, "status": "started"}
+            for dep in deps:
+                edges.append({
+                    "from": dep["blocked_by"],
+                    "to": dep["task_id"],
+                    "type": "blocked_by",
+                })
+        return {"nodes": nodes, "edges": edges}
 
-    @app.post("/api/runs/{run_id}/approve")
-    async def approve_run(run_id: str):
-        run = workflow_engine.active_runs.get(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="Run not found")
-        if run.status != "awaiting_approval":
-            raise HTTPException(status_code=400, detail="Run not awaiting approval")
-        workflow_engine.approve_checkpoint(run_id)
-        await event_bus.emit("checkpoint_approved", {"run_id": run_id})
-        return {"status": "approved", "run_id": run_id}
+    # ------------------------------------------------------------------
+    # Goals
+    # ------------------------------------------------------------------
 
-    @app.post("/api/runs/{run_id}/reject")
-    async def reject_run(run_id: str, body: dict = {}):
-        run = workflow_engine.active_runs.get(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="Run not found")
-        if run.status != "awaiting_approval":
-            raise HTTPException(status_code=400, detail="Run not awaiting approval")
-        reason = body.get("reason", "")
-        workflow_engine.reject_checkpoint(run_id, reason=reason)
-        await event_bus.emit("checkpoint_rejected", {"run_id": run_id, "reason": reason})
-        return {"status": "rejected", "run_id": run_id}
+    @app.post("/api/goals")
+    async def submit_goal(body: dict):
+        title = body.get("title", "")
+        description = body.get("description", "")
+        if not title:
+            raise HTTPException(status_code=400, detail="Title is required")
+        group = await task_board.create_group(
+            title=title, origin="pm", created_by="human",
+        )
+        task = await task_board.create_task(
+            group_id=group["id"],
+            title=f"Create PRD: {title}",
+            description=description,
+            task_type="goal",
+            assigned_to="pm",
+            created_by="human",
+            priority="high",
+        )
+        await event_bus.emit("group.created", {"group_id": group["id"], "title": title})
+        await event_bus.emit("task.created", {"task_id": task["id"], "group_id": group["id"]})
+        return {"group_id": group["id"], "task_id": task["id"]}
 
-    @app.get("/api/tasks/board")
-    async def get_task_board():
-        """Return tasks grouped by status for Kanban board."""
-        all_tasks = await task_queue.get_pending_tasks()
-        board = {
-            "pending": [],
-            "assigned": [],
-            "in_progress": [],
-            "review": [],
-            "completed": [],
-            "failed": [],
+    # ------------------------------------------------------------------
+    # Agents
+    # ------------------------------------------------------------------
+
+    @app.get("/api/agents")
+    async def get_agents():
+        return await instance_manager.get_all_instances()
+
+    # ------------------------------------------------------------------
+    # Board filters
+    # ------------------------------------------------------------------
+
+    @app.get("/api/board/filters")
+    async def get_board_filters():
+        groups = await task_board.get_groups()
+        instances = await instance_manager.get_all_instances()
+        role_names = list(set(i["role"] for i in instances)) if instances else []
+        return {
+            "groups": [{"id": g["id"], "title": g["title"]} for g in groups],
+            "roles": role_names if role_names else (list(roles.keys()) if roles else []),
+            "statuses": ["blocked", "pending", "in_progress", "completed", "failed", "rejected"],
+            "priorities": ["critical", "high", "medium", "low"],
         }
-        for task in all_tasks:
-            status = task.get("status", "pending")
-            if status in board:
-                board[status].append(task)
-            else:
-                board["pending"].append(task)
-        return board
 
-    @app.get("/api/runs")
-    async def get_runs():
-        """Return all active pipeline runs."""
-        return [
-            {
-                "run_id": run.run_id,
-                "pipeline": run.pipeline_name,
-                "current_step": run.current_step,
-                "status": run.status,
-            }
-            for run in workflow_engine.active_runs.values()
-        ]
-
-    @app.post("/api/agents/{agent_name}/pause")
-    async def pause_agent(agent_name: str):
-        agent = team_manager.get_agent(agent_name)
-        if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
-        agent.status = AgentStatus.BLOCKED
-        await event_bus.emit("agent_paused", {"agent": agent_name})
-        return {"agent": agent_name, "status": "blocked"}
-
-    @app.post("/api/agents/{agent_name}/resume")
-    async def resume_agent(agent_name: str):
-        agent = team_manager.get_agent(agent_name)
-        if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
-        agent.status = AgentStatus.IDLE
-        await event_bus.emit("agent_resumed", {"agent": agent_name})
-        return {"agent": agent_name, "status": "idle"}
-
-    @app.post("/api/agents/{agent_name}/kill")
-    async def kill_agent(agent_name: str):
-        agent = team_manager.get_agent(agent_name)
-        if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
-        team_manager.stop_agent(agent_name)
-        await event_bus.emit("agent_killed", {"agent": agent_name})
-        return {"agent": agent_name, "status": "stopped"}
+    # ------------------------------------------------------------------
+    # WebSocket
+    # ------------------------------------------------------------------
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
@@ -185,6 +188,10 @@ def create_app(
                     await ws.send_text(json.dumps({"type": "pong"}))
         except WebSocketDisconnect:
             ws_manager.disconnect(ws)
+
+    # ------------------------------------------------------------------
+    # Chat endpoints (kept as-is)
+    # ------------------------------------------------------------------
 
     if chat_manager:
         from ai_team.agents.roles import get_agent_config
@@ -287,6 +294,10 @@ def create_app(
 
             except WebSocketDisconnect:
                 await chat_manager.stop_session(agent_name)
+
+    # ------------------------------------------------------------------
+    # Template rendering
+    # ------------------------------------------------------------------
 
     templates_dir = Path(__file__).parent / "templates"
     templates = Jinja2Templates(directory=str(templates_dir))
