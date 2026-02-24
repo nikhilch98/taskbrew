@@ -126,6 +126,11 @@ class AgentRunner:
                         event_type="complete",
                         data={"result": result_text},
                     ))
+                    if self.event_bus:
+                        await self.event_bus.emit("agent.result", {
+                            "agent_name": self.name,
+                            "result": result_text[:500],
+                        })
                 elif isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
@@ -134,6 +139,11 @@ class AgentRunner:
                                 event_type="message",
                                 data={"text": block.text},
                             ))
+                            if self.event_bus:
+                                await self.event_bus.emit("agent.text", {
+                                    "agent_name": self.name,
+                                    "text": block.text[:1000],
+                                })
         except Exception as e:
             self.status = AgentStatus.ERROR
             self._log.append(AgentEvent(

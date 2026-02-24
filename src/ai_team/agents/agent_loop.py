@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from ai_team.agents.instance_manager import InstanceManager
+
+logger = logging.getLogger(__name__)
 from ai_team.config_loader import RoleConfig
 from ai_team.orchestrator.event_bus import EventBus
 from ai_team.orchestrator.task_board import TaskBoard
@@ -169,10 +172,16 @@ class AgentLoop:
             "agent.status_changed",
             {"instance_id": self.instance_id, "status": "idle"},
         )
+        logger.info("Agent %s started, polling every %ss", self.instance_id, self.poll_interval)
 
         while self._running:
-            processed = await self.run_once()
-            if not processed:
+            try:
+                processed = await self.run_once()
+                if not processed:
+                    await asyncio.sleep(self.poll_interval)
+            except Exception:
+                logger.exception("Agent %s crashed in run_once, recovering", self.instance_id)
+                await self.instance_manager.update_status(self.instance_id, "idle")
                 await asyncio.sleep(self.poll_interval)
             await self.instance_manager.heartbeat(self.instance_id)
 

@@ -1261,6 +1261,25 @@
             margin-top: 10px;
         }
 
+        .agent-activity {
+            margin-top: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'SF Mono', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: var(--radius-sm);
+            padding: 8px;
+            display: none;
+        }
+        .agent-activity.active { display: block; }
+        .agent-activity .activity-text { color: var(--text-secondary); margin-bottom: 4px; white-space: pre-wrap; word-break: break-word; }
+        .agent-activity .activity-tool { color: #f59e0b; margin-bottom: 4px; }
+        .agent-activity .activity-tool .tool-name { font-weight: 600; }
+        .agent-activity .activity-result { color: #10b981; margin-bottom: 4px; font-style: italic; }
+        .agent-activity .activity-error { color: #ef4444; margin-bottom: 4px; }
+
         .btn {
             padding: 6px 14px;
             border: 1px solid rgba(255, 255, 255, 0.08);
@@ -2585,6 +2604,10 @@
                     html += '<div class="sidebar-agent-meta">Last seen: ' + timeAgo(agent.last_heartbeat) + '</div>';
                 }
 
+                // Activity log
+                const activityClass = agent.status === 'working' ? 'agent-activity active' : 'agent-activity';
+                html += '<div class="' + activityClass + '" id="activity-' + escapeHtml(agent.instance_id || '') + '"></div>';
+
                 // Actions
                 html += '<div class="sidebar-agent-actions">';
                 html += '<button class="btn btn-chat" onclick="openChat(\'' + escapeHtml(agent.instance_id || '') + '\')">Chat</button>';
@@ -2592,6 +2615,43 @@
 
                 card.innerHTML = html;
                 container.appendChild(card);
+            }
+        }
+
+        // ================================================================
+        // Agent Activity Streaming
+        // ================================================================
+        function truncate(str, max) {
+            return str.length > max ? str.substring(0, max) + '...' : str;
+        }
+
+        function appendAgentActivity(agentName, kind, text) {
+            const el = document.getElementById('activity-' + agentName);
+            if (!el) return;
+            el.classList.add('active');
+
+            const div = document.createElement('div');
+            if (kind === 'text') {
+                div.className = 'activity-text';
+                div.textContent = text;
+            } else if (kind === 'tool') {
+                div.className = 'activity-tool';
+                div.innerHTML = '<span class="tool-name">' + escapeHtml(text) + '</span>';
+            } else if (kind === 'result') {
+                div.className = 'activity-result';
+                div.textContent = text;
+                // Clear activity after a short delay when agent completes
+                setTimeout(() => { el.classList.remove('active'); }, 5000);
+            } else if (kind === 'error') {
+                div.className = 'activity-error';
+                div.textContent = text;
+            }
+            el.appendChild(div);
+            el.scrollTop = el.scrollHeight;
+
+            // Keep activity log from growing too large
+            while (el.children.length > 50) {
+                el.removeChild(el.firstChild);
             }
         }
 
@@ -2625,7 +2685,13 @@
                     refreshGroups();
                     refreshBoard();
                 }
-                if (type.startsWith('agent.')) {
+                if (type === 'agent.text') {
+                    appendAgentActivity(event.agent_name, 'text', event.text || '');
+                } else if (type === 'agent.result') {
+                    appendAgentActivity(event.agent_name, 'result', event.result || '');
+                } else if (type === 'tool.pre_use') {
+                    appendAgentActivity(event.agent_name, 'tool', event.tool_name + (event.tool_input ? ': ' + truncate(JSON.stringify(event.tool_input), 120) : ''));
+                } else if (type.startsWith('agent.')) {
                     refreshAgents();
                 }
             };
@@ -2880,6 +2946,7 @@
         }
 
         connectWebSocket();
+        refreshAll();  // Load data immediately, don't wait for WebSocket
     </script>
 
     <!-- FAQ Modal -->
