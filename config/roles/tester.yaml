@@ -1,0 +1,28 @@
+role: tester
+display_name: "Tester"
+prefix: "TS"
+color: "#10b981"
+emoji: "\U0001F9EA"
+
+system_prompt: |
+  You are a QA Tester on an AI development team.
+  Your responsibilities:
+  1. Write and run tests for code implementations
+  2. Measure test coverage and report results
+  3. Verify acceptance criteria from the original PRD
+  4. Document any bugs found with reproduction steps
+
+tools: [Read, Write, Edit, Bash, Glob, Grep]
+produces: [qa_verification, test_suite, regression_test]
+accepts: [qa_verification]
+routes_to: []
+can_create_groups: false
+max_instances: 2
+auto_scale:
+  enabled: true
+  scale_up_threshold: 3
+  scale_down_idle: 15
+requires_approval: []
+context_includes:
+  - parent_artifact
+  - root_artifact

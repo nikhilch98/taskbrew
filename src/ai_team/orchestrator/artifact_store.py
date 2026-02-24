@@ -1,74 +1,84 @@
-"""Artifact store for passing data between pipeline steps."""
+"""Artifact store organized by group_id/task_id."""
+
+from __future__ import annotations
 
 import os
-from pathlib import Path
 
 
 class ArtifactStore:
-    """Manages artifacts produced by pipeline steps."""
+    """Manages artifacts organized by group and task.
 
-    def __init__(self, base_dir: str):
+    Directory layout::
+
+        base_dir/
+          <group_id>/
+            <task_id>/
+              <filename>
+
+    Parameters
+    ----------
+    base_dir:
+        Root directory for all artifact storage.
+    """
+
+    def __init__(self, base_dir: str) -> None:
         self.base_dir = base_dir
 
-    def get_artifact_dir(self, run_id: str, step_index: int, agent_name: str) -> str:
-        """Returns path: base_dir/run_id/step_index_agent_name/"""
-        path = os.path.join(self.base_dir, run_id, f"{step_index}_{agent_name}")
+    def get_artifact_dir(self, group_id: str, task_id: str) -> str:
+        """Return (and create) the directory for a specific task's artifacts.
+
+        Path: ``base_dir/group_id/task_id/``
+        """
+        path = os.path.join(self.base_dir, group_id, task_id)
         os.makedirs(path, exist_ok=True)
         return path
 
-    def save_artifact(self, run_id: str, step_index: int, agent_name: str, filename: str, content: str) -> str:
-        """Write artifact file, creating dirs as needed. Returns the file path."""
-        dir_path = self.get_artifact_dir(run_id, step_index, agent_name)
+    def save_artifact(
+        self, group_id: str, task_id: str, filename: str, content: str
+    ) -> str:
+        """Save an artifact file for a task.
+
+        Creates directories as needed. Returns the full file path.
+        """
+        dir_path = self.get_artifact_dir(group_id, task_id)
         file_path = os.path.join(dir_path, filename)
         with open(file_path, "w") as f:
             f.write(content)
         return file_path
 
-    def load_artifact(self, run_id: str, step_index: int, agent_name: str, filename: str) -> str:
-        """Read artifact file content."""
-        dir_path = self.get_artifact_dir(run_id, step_index, agent_name)
-        file_path = os.path.join(dir_path, filename)
+    def load_artifact(
+        self, group_id: str, task_id: str, filename: str
+    ) -> str:
+        """Load an artifact file's content.
+
+        Returns an empty string if the file does not exist.
+        """
+        file_path = os.path.join(self.base_dir, group_id, task_id, filename)
+        if not os.path.isfile(file_path):
+            return ""
         with open(file_path) as f:
             return f.read()
 
-    def get_step_artifacts(self, run_id: str, step_index: int, agent_name: str) -> list[str]:
-        """List all artifact filenames for a step."""
-        dir_path = os.path.join(self.base_dir, run_id, f"{step_index}_{agent_name}")
+    def get_task_artifacts(self, group_id: str, task_id: str) -> list[str]:
+        """List all artifact filenames for a given task."""
+        dir_path = os.path.join(self.base_dir, group_id, task_id)
         if not os.path.isdir(dir_path):
             return []
         return sorted(os.listdir(dir_path))
 
-    def get_previous_artifacts(self, run_id: str, step_index: int) -> list[dict]:
-        """Get all artifacts from steps 0..step_index-1.
-        Returns list of {"step_index": int, "agent": str, "files": list[str]}"""
-        result = []
-        run_dir = os.path.join(self.base_dir, run_id)
-        if not os.path.isdir(run_dir):
-            return result
-        for entry in sorted(os.listdir(run_dir)):
-            parts = entry.split("_", 1)
-            if len(parts) != 2:
-                continue
-            try:
-                idx = int(parts[0])
-            except ValueError:
-                continue
-            if idx < step_index:
-                agent = parts[1]
-                files = sorted(os.listdir(os.path.join(run_dir, entry)))
-                result.append({"step_index": idx, "agent": agent, "files": files})
-        return result
+    def get_group_artifacts(self, group_id: str) -> dict[str, list[str]]:
+        """Return all artifacts for a group, organized by task_id.
 
-    def build_context(self, run_id: str, step_index: int) -> str:
-        """Build prompt-ready context string from all previous artifacts."""
-        previous = self.get_previous_artifacts(run_id, step_index)
-        if not previous:
-            return ""
-        sections = []
-        for item in previous:
-            agent = item["agent"]
-            idx = item["step_index"]
-            for filename in item["files"]:
-                content = self.load_artifact(run_id, idx, agent, filename)
-                sections.append(f"## Step {idx} ({agent}) - {filename}\n\n{content}")
-        return "\n\n---\n\n".join(sections)
+        Returns a dict mapping ``task_id -> [filenames]`` for every task
+        directory found under the group.
+        """
+        group_dir = os.path.join(self.base_dir, group_id)
+        if not os.path.isdir(group_dir):
+            return {}
+        result: dict[str, list[str]] = {}
+        for entry in sorted(os.listdir(group_dir)):
+            entry_path = os.path.join(group_dir, entry)
+            if os.path.isdir(entry_path):
+                files = sorted(os.listdir(entry_path))
+                result[entry] = files
+        return result

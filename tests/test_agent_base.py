@@ -39,3 +39,5 @@ def test_agent_runner_builds_options():
     assert options.system_prompt == "You are a coding agent."
     assert "Read" in options.allowed_tools
     assert options.permission_mode == "bypassPermissions"
+    assert options.mcp_servers is not None
+    assert "task-tools" in options.mcp_servers

@@ -13,6 +13,7 @@ class AgentConfig:
     allowed_tools: list[str] = field(default_factory=list)
     max_turns: int | None = None
     cwd: Path | None = None
+    api_url: str = "http://127.0.0.1:8420"
 
 
 @dataclass

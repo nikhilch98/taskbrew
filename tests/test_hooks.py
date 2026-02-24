@@ -1,10 +1,15 @@
 # tests/test_hooks.py
-"""Tests for PreToolUse/PostToolUse hooks wired to EventBus."""
+"""Tests for AgentRunner EventBus integration and streaming events.
+
+SDK hooks (PreToolUse/PostToolUse) are disabled because they cause "Stream closed"
+errors in the bundled CLI. Agent activity is instead streamed via the message
+iterator in run(). The hook callback methods are kept as fire-and-forget helpers
+but are NOT wired into ClaudeAgentOptions.
+"""
 
 import asyncio
 
 import pytest
-from claude_agent_sdk import HookMatcher
 
 from ai_team.agents.base import AgentRunner, AgentStatus
 from ai_team.config import AgentConfig
@@ -36,17 +41,15 @@ def test_agent_runner_event_bus_defaults_to_none():
     assert runner.event_bus is None
 
 
-# -- build_options hook wiring --
+# -- build_options: hooks disabled, setting_sources empty --
 
 
-def test_build_options_includes_hooks_when_event_bus_set():
-    """build_options should include PreToolUse and PostToolUse hooks when event_bus is set."""
+def test_build_options_has_no_hooks():
+    """build_options should NOT include hooks (disabled to avoid Stream closed errors)."""
     bus = EventBus()
     runner = AgentRunner(_make_config(), event_bus=bus)
     opts = runner.build_options()
-    assert opts.hooks is not None
-    assert "PreToolUse" in opts.hooks
-    assert "PostToolUse" in opts.hooks
+    assert opts.hooks is None
 
 
 def test_build_options_no_hooks_when_event_bus_is_none():
@@ -56,40 +59,32 @@ def test_build_options_no_hooks_when_event_bus_is_none():
     assert opts.hooks is None
 
 
-def test_hooks_use_hook_matcher_with_none_matcher():
-    """Each hook entry should be a HookMatcher with matcher=None (match all tools)."""
-    bus = EventBus()
-    runner = AgentRunner(_make_config(), event_bus=bus)
+def test_build_options_sets_empty_setting_sources():
+    """build_options should set setting_sources=[] to prevent loading global plugins."""
+    runner = AgentRunner(_make_config())
     opts = runner.build_options()
-
-    for event_name in ("PreToolUse", "PostToolUse"):
-        matchers = opts.hooks[event_name]
-        assert len(matchers) == 1
-        m = matchers[0]
-        assert isinstance(m, HookMatcher)
-        assert m.matcher is None  # match all tools
+    assert opts.setting_sources == []
 
 
-def test_hooks_reference_correct_callbacks():
-    """PreToolUse hook should reference _on_pre_tool_use, PostToolUse _on_post_tool_use."""
-    bus = EventBus()
-    runner = AgentRunner(_make_config(), event_bus=bus)
+def test_build_options_sets_bypass_permissions():
+    """build_options should use bypassPermissions mode."""
+    runner = AgentRunner(_make_config())
     opts = runner.build_options()
-
-    pre_hooks = opts.hooks["PreToolUse"][0].hooks
-    assert len(pre_hooks) == 1
-    assert pre_hooks[0] == runner._on_pre_tool_use
-
-    post_hooks = opts.hooks["PostToolUse"][0].hooks
-    assert len(post_hooks) == 1
-    assert post_hooks[0] == runner._on_post_tool_use
+    assert opts.permission_mode == "bypassPermissions"
 
 
-# -- Hook callback behavior --
+def test_build_options_unsets_claudecode_env():
+    """build_options should set CLAUDECODE='' to allow nested SDK sessions."""
+    runner = AgentRunner(_make_config())
+    opts = runner.build_options()
+    assert opts.env.get("CLAUDECODE") == ""
+
+
+# -- Hook callback behavior (fire-and-forget, simplified data) --
 
 
 async def test_pre_tool_use_callback_emits_event():
-    """_on_pre_tool_use should emit a tool.pre_use event to the EventBus."""
+    """_on_pre_tool_use should emit a tool.pre_use event via fire-and-forget."""
     bus = EventBus()
     runner = AgentRunner(_make_config(name="coder"), event_bus=bus)
 
@@ -105,17 +100,20 @@ async def test_pre_tool_use_callback_emits_event():
 
     assert result == {"continue_": True}
 
+    # Fire-and-forget: allow asyncio task to complete
+    await asyncio.sleep(0.05)
+
     history = bus.get_history("tool.pre_use")
     assert len(history) == 1
     event = history[0]
     assert event["agent_name"] == "coder"
     assert event["tool_name"] == "Bash"
-    assert event["tool_input"] == {"command": "ls"}
-    assert event["tool_use_id"] == "tu_123"
+    # tool_input is now stringified and truncated
+    assert "command" in event["tool_input"]
 
 
 async def test_post_tool_use_callback_emits_event():
-    """_on_post_tool_use should emit a tool.post_use event to the EventBus."""
+    """_on_post_tool_use should emit a tool.post_use event via fire-and-forget."""
     bus = EventBus()
     runner = AgentRunner(_make_config(name="reviewer"), event_bus=bus)
 
@@ -132,14 +130,13 @@ async def test_post_tool_use_callback_emits_event():
 
     assert result == {"continue_": True}
 
+    await asyncio.sleep(0.05)
+
     history = bus.get_history("tool.post_use")
     assert len(history) == 1
     event = history[0]
     assert event["agent_name"] == "reviewer"
     assert event["tool_name"] == "Read"
-    assert event["tool_input"] == {"file_path": "/tmp/foo.py"}
-    assert event["tool_use_id"] == "tu_456"
-    assert event["tool_response"] == "file contents here"
 
 
 async def test_hook_callbacks_return_continue_true():
@@ -190,8 +187,7 @@ async def test_event_bus_subscribers_receive_hook_events():
         "cwd": "/project",
     }
     await runner._on_pre_tool_use(pre_input, "sess_ghi", {"signal": None})
-    # Allow asyncio tasks from EventBus.emit to complete
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
 
     assert len(pre_events) == 1
     assert pre_events[0]["tool_name"] == "Glob"
@@ -207,8 +203,7 @@ async def test_event_bus_subscribers_receive_hook_events():
         "cwd": "/project",
     }
     await runner._on_post_tool_use(post_input, "sess_ghi", {"signal": None})
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
 
     assert len(post_events) == 1
     assert post_events[0]["tool_name"] == "Glob"
-    assert post_events[0]["tool_response"] == ["a.py", "b.py"]
