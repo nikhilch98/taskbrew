@@ -238,7 +238,7 @@ function renderPipes(ctx) {
         const bottomPipeTop = pipe.gapY + PIPE_GAP;
 
         // Pipe body color
-        ctx.fillStyle = '#2ECC71';  // Green
+        ctx.fillStyle = '#3cb043';  // Green
 
         // Top pipe: from top of canvas down to gap
         ctx.fillRect(pipe.x, 0, PIPE_WIDTH, pipe.gapY);
@@ -247,7 +247,7 @@ function renderPipes(ctx) {
         ctx.fillRect(pipe.x, bottomPipeTop, PIPE_WIDTH, groundY - bottomPipeTop);
 
         // Pipe caps (darker green, slightly wider) for visual polish
-        ctx.fillStyle = '#27AE60'; // Darker green
+        ctx.fillStyle = '#2d8a34'; // Darker green
 
         // Top pipe cap (at bottom of top pipe)
         ctx.fillRect(
