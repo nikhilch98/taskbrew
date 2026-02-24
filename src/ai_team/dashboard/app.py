@@ -249,7 +249,7 @@ def create_app(
         if not team_config:
             return {}
         return {
-            "name": team_config.name,
+            "name": team_config.team_name,
             "project_dir": project_dir,
             "default_model": getattr(team_config, "default_model", ""),
             "db_path": team_config.db_path,
@@ -263,7 +263,7 @@ def create_app(
         if not team_config:
             raise HTTPException(status_code=404, detail="No team config loaded")
         if "name" in body:
-            team_config.name = body["name"]
+            team_config.team_name = body["name"]
         if "default_model" in body:
             team_config.default_model = body["default_model"]
         return {"status": "ok"}
