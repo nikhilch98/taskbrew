@@ -9,7 +9,7 @@
  *  4.  circleRectCollision() — circle fully outside rect
  *  5.  circleRectCollision() — exact tangent edge case (distSq == r*r)
  *  6.  checkCollisions() — ground collision detection
- *  7.  checkCollisions() — ceiling does not trigger GAME_OVER
+ *  7.  Ceiling clamp behavior — updateBird() clamps at ceiling, no GAME_OVER
  *  8.  checkCollisions() — pipe collision with top pipe
  *  9.  checkCollisions() — pipe collision with bottom pipe
  * 10.  checkCollisions() — bird in gap (no collision)
@@ -414,46 +414,62 @@ section('6. Ground Collision — checkCollisions()');
 })();
 
 // ═══════════════════════════════════════════════════════
-// 7. Ceiling Collision Detection
+// 7. Ceiling Clamp Behavior
 // ═══════════════════════════════════════════════════════
 
-section('7. Ceiling Collision — checkCollisions()');
+section('7. Ceiling Clamp Behavior — updateBird()');
 
-// NOTE: Current checkCollisions() does NOT check ceiling (by design — spec
-// doesn't require it). updateBird() clamps the bird at the ceiling but does
-// not trigger GAME_OVER. These tests verify the current (no ceiling GAME_OVER)
-// behavior.
+// AR-009: Ceiling contact does NOT trigger GAME_OVER. updateBird() clamps the
+// bird at the ceiling (bird.y = bird.radius) and zeros velocity. These tests
+// verify that clamping works correctly and that checkCollisions() does not
+// treat ceiling contact as a game-ending event.
 
 (() => {
     const sb = createSandbox();
-    // Bird at ceiling: bird.y - bird.radius <= 0
-    // bird.radius = 15, so at bird.y = 15: 15 - 15 = 0 (exactly at ceiling)
+    // Bird moving upward past ceiling: give strong upward velocity so
+    // updateBird() would push y above 0 if not clamped.
     sb.gameState = 'PLAYING';
-    sb.bird.y = 15;
-    sb.bird.velocity = 0;
+    sb.bird.y = 20;
+    sb.bird.velocity = -500;  // strong upward
     sb.pipes.length = 0;
-    sb.checkCollisions();
-    assertEqual(sb.gameState, 'PLAYING', 'Bird at ceiling (y-r == 0) → stays PLAYING (no ceiling GAME_OVER)');
+    sb.updateBird(0.016);  // dt = 1 frame
+    assertEqual(sb.bird.y, sb.bird.radius, 'Bird moving upward past ceiling → bird.y clamped to bird.radius');
 })();
 
 (() => {
     const sb = createSandbox();
+    // Bird at ceiling — velocity should be zeroed
     sb.gameState = 'PLAYING';
-    sb.bird.y = 10;  // 10 - 15 = -5 < 0
-    sb.bird.velocity = 0;
+    sb.bird.y = 20;
+    sb.bird.velocity = -500;
     sb.pipes.length = 0;
-    sb.checkCollisions();
-    assertEqual(sb.gameState, 'PLAYING', 'Bird above ceiling (y-r == -5) → stays PLAYING (no ceiling GAME_OVER)');
+    sb.updateBird(0.016);
+    assertEqual(sb.bird.velocity, 0, 'Bird at ceiling → velocity set to 0');
 })();
 
 (() => {
     const sb = createSandbox();
+    // Bird well below ceiling — no clamping should occur
     sb.gameState = 'PLAYING';
-    sb.bird.y = 16;  // 16 - 15 = 1 > 0
-    sb.bird.velocity = 0;
+    sb.bird.y = 300;
+    sb.bird.velocity = -50;  // mild upward, won't reach ceiling
     sb.pipes.length = 0;
+    const yBefore = sb.bird.y;
+    sb.updateBird(0.016);
+    assert(sb.bird.y < yBefore, 'Bird below ceiling moves upward normally (no clamping)');
+    assert(sb.bird.y > sb.bird.radius, 'Bird stays well above ceiling clamp threshold');
+})();
+
+(() => {
+    const sb = createSandbox();
+    // After clamping, checkCollisions() must NOT trigger GAME_OVER
+    sb.gameState = 'PLAYING';
+    sb.bird.y = 20;
+    sb.bird.velocity = -500;
+    sb.pipes.length = 0;
+    sb.updateBird(0.016);  // clamp to ceiling
     sb.checkCollisions();
-    assertEqual(sb.gameState, 'PLAYING', 'Bird 1px below ceiling (y-r == 1) → stays PLAYING');
+    assertEqual(sb.gameState, 'PLAYING', 'After ceiling clamp, checkCollisions() → stays PLAYING (no GAME_OVER)');
 })();
 
 // ═══════════════════════════════════════════════════════
@@ -1063,10 +1079,10 @@ section('22. Integration — Full PLAYING Update Cycle');
 })();
 
 // ═══════════════════════════════════════════════════════
-// 23. Ceiling collision does NOT exist in spec but is implemented
+// 23. Ceiling collision is NOT in checkCollisions() (AR-009)
 // ═══════════════════════════════════════════════════════
 
-section('23. Ceiling Collision — Extra Feature Audit');
+section('23. Ceiling Collision — Spec Compliance Audit');
 
 (() => {
     const collCheckFn = src.slice(
@@ -1077,19 +1093,7 @@ section('23. Ceiling Collision — Extra Feature Audit');
     const hasCeilingCheck = collCheckFn.includes('bird.y - bird.radius <= 0') ||
                             collCheckFn.includes('bird.y - bird.radius < 0');
 
-    if (hasCeilingCheck) {
-        passed++;
-        console.log('  ⚠️  [EXTRA] Ceiling collision check exists (not in original spec)');
-        logBug('CD007-007',
-            'Extra ceiling collision in checkCollisions() not in spec',
-            '1. Examine checkCollisions()\n2. Contains ceiling check: bird.y - bird.radius <= 0',
-            'No ceiling collision check in spec (only ground and pipes)',
-            'Ceiling collision implemented as additional check — may be intentional enhancement'
-        );
-    } else {
-        passed++;
-        console.log('  ✅ No ceiling collision check (matches spec)');
-    }
+    assert(!hasCeilingCheck, 'No ceiling collision check in checkCollisions() (matches spec per AR-009)');
 })();
 
 // ═══════════════════════════════════════════════════════
