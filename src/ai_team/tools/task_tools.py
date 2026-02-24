@@ -39,7 +39,11 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             title: Short task title describing the work to be done.
             assigned_to: Role that should pick up the task: architect, coder, tester, reviewer.
             assigned_by: Your agent instance ID (e.g. pm-1) — who is creating this task.
-            task_type: Task type the target role accepts. For architect: tech_design, architecture_review. For coder: implementation, bug_fix.
+            task_type: Task type the target role accepts.
+                - architect: tech_design, architecture_review
+                - coder: implementation, bug_fix
+                - tester: qa_verification
+                - reviewer: code_review
             description: Detailed description with acceptance criteria, file references, etc.
             priority: Task priority — critical, high, medium (default), or low.
             parent_id: Optional parent task ID to link this task in the hierarchy.
@@ -54,8 +58,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         }
         if description:
             payload["description"] = description
-        if priority:
-            payload["priority"] = priority
+        payload["priority"] = priority
         if parent_id:
             payload["parent_id"] = parent_id
         if blocked_by:
@@ -71,12 +74,17 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 result = json.loads(resp.read())
-                return f"Task created: {result['id']} — {result['title']} (status: {result['status']})"
+                task_id = result.get("id", "<unknown>")
+                task_title = result.get("title", "<unknown>")
+                task_status = result.get("status", "<unknown>")
+                return f"Task created: {task_id} — {task_title} (status: {task_status})"
         except urllib.error.HTTPError as e:
             body = e.read().decode()
             return f"Error creating task (HTTP {e.code}): {body}"
+        except urllib.error.URLError as e:
+            return f"Error creating task (connection failed — is the dashboard running?): {e.reason}"
         except Exception as e:
-            return f"Error creating task: {e}"
+            return f"Error creating task (unexpected error): {e}"
 
     return mcp
 
