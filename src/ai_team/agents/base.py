@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, TYPE_CHECKING
 
-from claude_agent_sdk import ClaudeAgentOptions, AssistantMessage, ResultMessage, TextBlock, HookMatcher
+from claude_agent_sdk import ClaudeAgentOptions, AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 from ai_team.config import AgentConfig
 
@@ -54,6 +55,7 @@ class AgentRunner:
             allowed_tools=self.config.allowed_tools,
             permission_mode="bypassPermissions",
             env={"CLAUDECODE": ""},
+            setting_sources=[],
         )
         if self.config.max_turns:
             opts.max_turns = self.config.max_turns
@@ -61,49 +63,35 @@ class AgentRunner:
             opts.cli_path = self.cli_path
         if cwd or self.config.cwd:
             opts.cwd = str(cwd or self.config.cwd)
-        if self.event_bus is not None:
-            opts.hooks = {
-                "PreToolUse": [
-                    HookMatcher(matcher=None, hooks=[self._on_pre_tool_use]),
-                ],
-                "PostToolUse": [
-                    HookMatcher(matcher=None, hooks=[self._on_post_tool_use]),
-                ],
-            }
+        # Note: SDK hooks disabled for task execution — they cause "Stream closed"
+        # errors in the bundled CLI. Agent activity is streamed via the message
+        # iterator in run() instead (agent.text, agent.result events).
         return opts
 
     async def _on_pre_tool_use(
         self, hook_input: Any, session_id: str | None, context: Any
     ) -> dict[str, Any]:
         """Hook callback for PreToolUse events. Emits tool.pre_use to EventBus."""
-        tool_name = hook_input.get("tool_name", "")
-        tool_input = hook_input.get("tool_input", {})
-        tool_use_id = hook_input.get("tool_use_id", "")
-        assert self.event_bus is not None
-        await self.event_bus.emit("tool.pre_use", {
-            "agent_name": self.name,
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "tool_use_id": tool_use_id,
-        })
+        if self.event_bus is not None:
+            tool_name = hook_input.get("tool_name", "")
+            tool_input = hook_input.get("tool_input", {})
+            asyncio.create_task(self.event_bus.emit("tool.pre_use", {
+                "agent_name": self.name,
+                "tool_name": tool_name,
+                "tool_input": str(tool_input)[:200],
+            }))
         return {"continue_": True}
 
     async def _on_post_tool_use(
         self, hook_input: Any, session_id: str | None, context: Any
     ) -> dict[str, Any]:
         """Hook callback for PostToolUse events. Emits tool.post_use to EventBus."""
-        tool_name = hook_input.get("tool_name", "")
-        tool_input = hook_input.get("tool_input", {})
-        tool_use_id = hook_input.get("tool_use_id", "")
-        tool_response = hook_input.get("tool_response", None)
-        assert self.event_bus is not None
-        await self.event_bus.emit("tool.post_use", {
-            "agent_name": self.name,
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "tool_use_id": tool_use_id,
-            "tool_response": tool_response,
-        })
+        if self.event_bus is not None:
+            tool_name = hook_input.get("tool_name", "")
+            asyncio.create_task(self.event_bus.emit("tool.post_use", {
+                "agent_name": self.name,
+                "tool_name": tool_name,
+            }))
         return {"continue_": True}
 
     async def run(self, prompt: str, cwd: str | None = None) -> str:
@@ -116,7 +104,7 @@ class AgentRunner:
 
         try:
             async for message in query(prompt=prompt, options=options):
-                if hasattr(message, "subtype") and message.subtype == "init":
+                if hasattr(message, "session_id"):
                     self.session_id = message.session_id
 
                 if isinstance(message, ResultMessage):
@@ -143,6 +131,14 @@ class AgentRunner:
                                 await self.event_bus.emit("agent.text", {
                                     "agent_name": self.name,
                                     "text": block.text[:1000],
+                                })
+                        elif isinstance(block, ToolUseBlock):
+                            tool_name = block.name if hasattr(block, "name") else "unknown"
+                            if self.event_bus:
+                                await self.event_bus.emit("tool.pre_use", {
+                                    "agent_name": self.name,
+                                    "tool_name": tool_name,
+                                    "tool_input": str(block.input)[:200] if hasattr(block, "input") else "",
                                 })
         except Exception as e:
             self.status = AgentStatus.ERROR

@@ -140,6 +140,7 @@ class AgentLoop:
         if task is None:
             return False
 
+        logger.info("Agent %s claimed task %s: %s", self.instance_id, task["id"], task["title"])
         await self.instance_manager.update_status(
             self.instance_id, "working", current_task=task["id"]
         )
@@ -150,8 +151,10 @@ class AgentLoop:
 
         try:
             output = await self.execute_task(task)
+            logger.info("Agent %s completed task %s", self.instance_id, task["id"])
             await self.complete_and_handoff(task, output)
         except Exception as e:
+            logger.error("Agent %s failed task %s: %s", self.instance_id, task["id"], e, exc_info=True)
             await self.board.fail_task(task["id"])
             await self.event_bus.emit(
                 "task.failed",
