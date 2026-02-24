@@ -199,6 +199,7 @@ class AgentLoop:
                 "task_id": task["id"],
                 "group_id": task["group_id"],
                 "agent_id": self.instance_id,
+                "model": self.role_config.model,
             },
         )
 
@@ -232,7 +233,7 @@ class AgentLoop:
         )
         await self.event_bus.emit(
             "task.claimed",
-            {"task_id": task["id"], "claimed_by": self.instance_id},
+            {"task_id": task["id"], "claimed_by": self.instance_id, "model": self.role_config.model},
         )
 
         try:
@@ -244,7 +245,7 @@ class AgentLoop:
             await self.board.fail_task(task["id"])
             await self.event_bus.emit(
                 "task.failed",
-                {"task_id": task["id"], "error": str(e)},
+                {"task_id": task["id"], "error": str(e), "model": self.role_config.model},
             )
         finally:
             await self.instance_manager.update_status(self.instance_id, "idle")

@@ -2980,6 +2980,14 @@
         // ================================================================
         // Event Log
         // ================================================================
+        function formatModelBadge(model) {
+            if (!model) return '';
+            const short = model.replace('claude-', '').replace('-20251001', '');
+            const colors = { 'opus-4-6': '#8b5cf6', 'sonnet-4-6': '#3b82f6', 'haiku-4-5': '#10b981' };
+            const c = colors[short] || 'var(--text-muted)';
+            return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.7rem;font-weight:600;background:' + c + '22;color:' + c + ';border:1px solid ' + c + '44;margin-left:6px">' + escapeHtml(short) + '</span>';
+        }
+
         function appendLog(event) {
             const logPanel = document.getElementById('logPanel');
             const emptyState = logPanel.querySelector('.empty-state');
@@ -2990,11 +2998,16 @@
 
             const time = new Date().toLocaleTimeString();
             const type = event.type || 'unknown';
-            const body = JSON.stringify(event, null, 0);
+            const model = event.model || '';
+            const filtered = Object.assign({}, event);
+            delete filtered.type;
+            delete filtered.model;
+            const body = JSON.stringify(filtered, null, 0);
 
             entry.innerHTML =
                 '<span class="log-time">' + escapeHtml(time) + '</span>' +
                 '<span class="log-type">' + escapeHtml(type) + '</span>' +
+                formatModelBadge(model) +
                 '<span class="log-body">' + escapeHtml(body) + '</span>';
 
             logPanel.prepend(entry);
