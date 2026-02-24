@@ -2897,27 +2897,28 @@
                         <span class="faq-chevron">&#9654;</span>
                     </button>
                     <div class="faq-section-content">
-                        <p>Install the project, then launch the dashboard from your project directory:</p>
+                        <p>Install the project, then launch the dashboard and agents:</p>
                         <code class="faq-cmd">pip install -e /path/to/ai-team</code>
                         <code class="faq-cmd">cd /your/project &amp;&amp; ai-team serve</code>
-                        <p>The dashboard starts at <strong>http://127.0.0.1:8420</strong>. From here you can monitor agents, view the task board, run pipelines, and chat with agents.</p>
+                        <p>The dashboard starts at <strong>http://127.0.0.1:8420</strong>. Agents launch automatically based on your <code>config/roles/</code> YAML files. Submit a goal via the Goal Bar or CLI to kick off work.</p>
                     </div>
                 </div>
 
                 <div class="faq-section">
                     <button class="faq-section-toggle" onclick="toggleFaqSection(this)">
-                        Pipeline Types
+                        How Tasks Work
                         <span class="faq-chevron">&#9654;</span>
                     </button>
                     <div class="faq-section-content">
+                        <p>There are no fixed pipelines. Agents create tasks for each other based on configurable routing rules:</p>
                         <ul>
-                            <li><strong>feature_dev</strong> &mdash; Full 6-step lifecycle: PM &rarr; Researcher &rarr; Architect &rarr; Coder &rarr; Tester &rarr; Reviewer</li>
-                            <li><strong>bugfix</strong> &mdash; 4-step flow: Researcher &rarr; Coder &rarr; Tester &rarr; Reviewer</li>
-                            <li><strong>code_review</strong> &mdash; 3-step review: Reviewer &rarr; Coder &rarr; Reviewer</li>
+                            <li><strong>Groups</strong> &mdash; Every initiative gets a group ID (e.g. FEAT-001). All downstream tasks share this ID for audit.</li>
+                            <li><strong>Task Flow</strong> &mdash; PM creates PRD &rarr; tasks for Architect &rarr; Architect creates tasks for Coder &rarr; Coder creates Tester + Reviewer tasks (chained)</li>
+                            <li><strong>Dependencies</strong> &mdash; Tasks can be blocked by other tasks. When a dependency completes, blocked tasks auto-unblock.</li>
+                            <li><strong>Rejections</strong> &mdash; Reviewers can reject work, creating a new linked revision task back to the original author.</li>
                         </ul>
-                        <p>Run a pipeline from the CLI:</p>
-                        <code class="faq-cmd">ai-team run --pipeline feature_dev --goal "Add dark mode"</code>
-                        <p>Or use the <strong>Submit Goal</strong> bar in the dashboard.</p>
+                        <p>Submit a goal from the CLI:</p>
+                        <code class="faq-cmd">ai-team goal "Add dark mode to the application"</code>
                     </div>
                 </div>
 
@@ -2927,14 +2928,15 @@
                         <span class="faq-chevron">&#9654;</span>
                     </button>
                     <div class="faq-section-content">
+                        <p>Roles are defined in <code>config/roles/*.yaml</code>. Default roles:</p>
                         <ul>
-                            <li><strong>PM</strong> &mdash; Decomposes goals into tasks, prioritizes, and tracks progress</li>
-                            <li><strong>Researcher</strong> &mdash; Gathers context, reads the codebase, searches docs</li>
-                            <li><strong>Architect</strong> &mdash; Designs technical solutions and writes architecture docs</li>
-                            <li><strong>Coder</strong> &mdash; Implements code on feature branches and commits changes</li>
-                            <li><strong>Tester</strong> &mdash; Writes and runs tests, measures coverage</li>
-                            <li><strong>Reviewer</strong> &mdash; Reviews code quality, security, and suggests improvements</li>
+                            <li><strong>PM</strong> &mdash; Receives goals, creates PRDs, routes to Architect. Creates FEAT groups.</li>
+                            <li><strong>Architect</strong> &mdash; Designs technical solutions, creates implementation tasks for Coder. Can create DEBT groups independently.</li>
+                            <li><strong>Coder</strong> &mdash; Implements code, creates chained Tester + Reviewer tasks. Scales up to 3 instances.</li>
+                            <li><strong>Tester</strong> &mdash; Runs tests and verifies implementations. Completing a test auto-unblocks the Reviewer.</li>
+                            <li><strong>Reviewer</strong> &mdash; Reviews code quality. Can approve (complete) or reject (creates revision task).</li>
                         </ul>
+                        <p>Add new roles by creating a YAML file in <code>config/roles/</code> and updating routing. No code changes needed.</p>
                     </div>
                 </div>
 
@@ -2946,12 +2948,12 @@
                     <div class="faq-section-content">
                         <ul>
                             <li><strong>Stats Bar</strong> &mdash; Shows agents online, active tasks, blocked tasks, active groups, and events</li>
-                            <li><strong>Goal Bar</strong> &mdash; Submit a new goal to create a task group</li>
+                            <li><strong>Goal Bar</strong> &mdash; Submit a new goal to create a task group assigned to PM</li>
                             <li><strong>Filter Bar</strong> &mdash; Filter tasks by group, role, status, and priority</li>
-                            <li><strong>Board View</strong> &mdash; Kanban view: Blocked, Pending, In Progress, Completed, Rejected</li>
-                            <li><strong>List View</strong> &mdash; Sortable table of all tasks</li>
-                            <li><strong>Graph View</strong> &mdash; DAG visualization of task dependencies within a group</li>
-                            <li><strong>Agent Sidebar</strong> &mdash; View agent statuses, chat with agents</li>
+                            <li><strong>Board View</strong> &mdash; Kanban columns: Blocked, Pending, In Progress, Completed, Rejected</li>
+                            <li><strong>List View</strong> &mdash; Sortable table of all tasks with inline details</li>
+                            <li><strong>Graph View</strong> &mdash; DAG visualization of task dependencies within a group for end-to-end audit</li>
+                            <li><strong>Agent Sidebar</strong> &mdash; View agent instance statuses, chat with agents</li>
                             <li><strong>Event Log</strong> &mdash; Real-time stream of all system events</li>
                         </ul>
                     </div>
@@ -2964,11 +2966,11 @@
                     </button>
                     <div class="faq-section-content">
                         <code class="faq-cmd">ai-team serve</code>
-                        <p>Start the dashboard server (default: port 8420)</p>
-                        <code class="faq-cmd">ai-team run --pipeline &lt;name&gt; --goal "description"</code>
-                        <p>Execute a pipeline with a goal. Pipelines: <code>feature_dev</code>, <code>bugfix</code>, <code>code_review</code></p>
+                        <p>Start the dashboard and all agent instances</p>
+                        <code class="faq-cmd">ai-team goal "Add dark mode"</code>
+                        <p>Submit a new goal (creates a FEAT group and PM task)</p>
                         <code class="faq-cmd">ai-team status</code>
-                        <p>Check the current status of agents and tasks</p>
+                        <p>Check current status of agents, tasks, and groups</p>
                     </div>
                 </div>
 
