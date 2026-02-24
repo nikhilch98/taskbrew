@@ -320,11 +320,11 @@ section('5. circleRectCollision — Exact Tangent Edge Case');
     const sb = createSandbox();
     // Circle at (-10, 50), radius 10, rect (0,0,100,100)
     // Closest point: (0, 50). Distance = 10. distSq = 100, r*r = 100.
-    // Spec says <= should return true, but implementation uses < so this returns false
+    // Spec says <= should return true; implementation also uses <= so this returns true
     const result = sb.circleRectCollision(-10, 50, 10, 0, 0, 100, 100);
 
-    // NOTE: Spec says <= (tangent should collide), but implementation uses <
-    // We test the ACTUAL behavior and log a bug if it deviates from spec
+    // NOTE: Spec says <= (tangent should collide); implementation uses <=
+    // We test the ACTUAL behavior and log a bug if it ever deviates from spec
     if (result === false) {
         // Implementation uses strict < — exact tangent does NOT trigger collision
         passed++;
