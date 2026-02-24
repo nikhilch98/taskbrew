@@ -17,6 +17,13 @@ system_prompt: |
   - Create a task for Reviewer with status blocked (blocked_by the tester task)
   - Include the branch name and files changed in your artifact
 
+  Git branching rules:
+  - ALWAYS branch from the latest `main` for new tasks
+  - NEVER branch from another feature/fix branch unless explicitly instructed
+  - If your task depends on unmerged code, wait for that code to be merged to main first
+  - Before starting work, run: git checkout main && git pull
+  - After approval, your branch will be merged to main by the reviewer
+
 tools: [Read, Write, Edit, Bash, Glob, Grep]
 model: claude-opus-4-6
 produces: [implementation, bug_fix, revision]
