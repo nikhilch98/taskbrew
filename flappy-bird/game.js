@@ -399,6 +399,7 @@ function update(dt) {
 
             // 3. Collision detection → GAME_OVER transition
             checkCollisions();
+            if (gameState !== STATE_PLAYING) break;  // Early exit: dead bird cannot score
 
             // 4. Scoring — check if bird passed pipe center
             updateScore();
