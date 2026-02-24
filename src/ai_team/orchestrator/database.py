@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS events (
     data        TEXT,
     created_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS task_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    duration_api_ms INTEGER DEFAULT 0,
+    num_turns INTEGER DEFAULT 0,
+    recorded_at TEXT NOT NULL
+);
 """
 
 _INDEX_SQL = """
@@ -212,3 +224,34 @@ class Database:
         assert self._conn is not None
         await self._conn.execute(sql, params)
         await self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Usage tracking
+    # ------------------------------------------------------------------
+
+    async def record_task_usage(
+        self, task_id: str, agent_id: str, input_tokens: int = 0,
+        output_tokens: int = 0, cost_usd: float = 0, duration_api_ms: int = 0,
+        num_turns: int = 0,
+    ) -> None:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        await self.execute(
+            "INSERT INTO task_usage (task_id, agent_id, input_tokens, output_tokens, "
+            "cost_usd, duration_api_ms, num_turns, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, agent_id, input_tokens, output_tokens, cost_usd, duration_api_ms, num_turns, now),
+        )
+
+    async def get_usage_summary(self, since: str) -> dict:
+        row = await self.execute_fetchone(
+            "SELECT COALESCE(SUM(input_tokens), 0) as input_tokens, "
+            "COALESCE(SUM(output_tokens), 0) as output_tokens, "
+            "COALESCE(SUM(cost_usd), 0) as cost_usd, "
+            "COALESCE(SUM(duration_api_ms), 0) as duration_api_ms, "
+            "COALESCE(SUM(num_turns), 0) as num_turns, "
+            "COUNT(*) as tasks_completed "
+            "FROM task_usage WHERE recorded_at >= ?",
+            (since,),
+        )
+        return dict(row) if row else {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0, "duration_api_ms": 0, "num_turns": 0, "tasks_completed": 0}

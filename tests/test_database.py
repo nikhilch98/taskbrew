@@ -35,6 +35,7 @@ async def test_initialize_creates_tables(db: Database):
         "agent_instances",
         "id_sequences",
         "events",
+        "task_usage",
     }
     assert expected.issubset(table_names), f"Missing tables: {expected - table_names}"
 

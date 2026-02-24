@@ -123,7 +123,22 @@ class AgentLoop:
             event_bus=self.event_bus,
         )
         context = await self.build_context(task)
-        return await runner.run(prompt=context, cwd=self.project_dir)
+        output = await runner.run(prompt=context, cwd=self.project_dir)
+
+        # Record usage from SDK
+        if runner.last_usage:
+            u = runner.last_usage.get("usage") or {}
+            await self.board._db.record_task_usage(
+                task_id=task["id"],
+                agent_id=self.instance_id,
+                input_tokens=u.get("input_tokens", 0),
+                output_tokens=u.get("output_tokens", 0),
+                cost_usd=runner.last_usage.get("cost_usd") or 0,
+                duration_api_ms=runner.last_usage.get("duration_api_ms", 0),
+                num_turns=runner.last_usage.get("num_turns", 0),
+            )
+
+        return output
 
     async def complete_and_handoff(self, task: dict, output: str) -> None:
         """Mark task complete and emit event."""

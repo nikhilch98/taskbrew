@@ -104,6 +104,15 @@ async def run_server(orch: Orchestrator):
         project_dir=orch.project_dir,
     )
 
+    # Recover orphaned tasks from previous crash
+    recovered = await orch.task_board.recover_orphaned_tasks()
+    if recovered:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Recovered %d orphaned in_progress tasks to pending", len(recovered))
+        for t in recovered:
+            await orch.event_bus.emit("task.recovered", {"task_id": t["id"]})
+
     # Spawn agent loops
     # Map bind host to connect host (0.0.0.0 binds all interfaces but can't be connected to)
     connect_host = "127.0.0.1" if orch.team_config.dashboard_host in ("0.0.0.0", "::") else orch.team_config.dashboard_host

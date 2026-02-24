@@ -48,6 +48,7 @@ class AgentRunner:
         self.event_bus = event_bus
         self.session_id: str | None = None
         self._log: list[AgentEvent] = []
+        self.last_usage: dict | None = None
 
     def build_options(self, cwd: str | None = None) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions from agent config."""
@@ -128,6 +129,12 @@ class AgentRunner:
                             "agent_name": self.name,
                             "result": result_text[:500],
                         })
+                    self.last_usage = {
+                        "cost_usd": message.total_cost_usd,
+                        "usage": message.usage,
+                        "duration_api_ms": message.duration_api_ms,
+                        "num_turns": message.num_turns,
+                    }
                 elif isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):

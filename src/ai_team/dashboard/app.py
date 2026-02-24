@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -281,6 +282,26 @@ def create_app(
         if "model" in body:
             rc.model = body["model"]
         return {"status": "ok", "role": role_name}
+
+    # ------------------------------------------------------------------
+    # Usage
+    # ------------------------------------------------------------------
+
+    @app.get("/api/usage")
+    async def get_usage():
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        week_start = (now - timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).isoformat()
+        daily = await task_board._db.get_usage_summary(today_start)
+        weekly = await task_board._db.get_usage_summary(week_start)
+        return {
+            "daily": daily,
+            "weekly": weekly,
+            "today": today_start,
+            "week_start": week_start,
+        }
 
     # ------------------------------------------------------------------
     # Board filters

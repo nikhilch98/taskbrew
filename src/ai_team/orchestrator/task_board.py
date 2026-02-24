@@ -399,3 +399,21 @@ class TaskBoard:
                     queue.append(upstream)
 
         return False
+
+    # ------------------------------------------------------------------
+    # Resilience / Recovery
+    # ------------------------------------------------------------------
+
+    async def recover_orphaned_tasks(self) -> list[dict]:
+        """Reset in_progress tasks to pending on server restart.
+
+        When the server crashes, any tasks that were in_progress become
+        orphaned since all agents are new on restart.
+        """
+        rows = await self._db.execute_fetchall(
+            "UPDATE tasks SET status = 'pending', claimed_by = NULL, started_at = NULL "
+            "WHERE status = 'in_progress' RETURNING *"
+        )
+        if rows:
+            await self._db._conn.commit()
+        return rows
