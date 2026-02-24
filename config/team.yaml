@@ -1,0 +1,26 @@
+team_name: "AI Development Team"
+
+database:
+  path: "data/ai_team.db"
+
+dashboard:
+  host: "127.0.0.1"
+  port: 8420
+
+artifacts:
+  base_dir: "artifacts"
+
+defaults:
+  max_instances: 1
+  poll_interval_seconds: 5
+  idle_timeout_minutes: 30
+  auto_scale:
+    enabled: false
+    scale_up_threshold: 3
+    scale_down_idle: 15
+
+approval_required: []
+
+group_prefixes:
+  pm: "FEAT"
+  architect: "DEBT"
