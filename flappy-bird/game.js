@@ -256,6 +256,73 @@ function renderPipes(ctx) {
     }
 }
 
+// ===== COLLISION DETECTION =====
+
+/**
+ * Check if a circle overlaps with an axis-aligned rectangle.
+ * Uses closest-point-on-rect to circle-center distance check.
+ * @param {number} cx - Circle center X
+ * @param {number} cy - Circle center Y
+ * @param {number} cr - Circle radius
+ * @param {number} rx - Rectangle left X
+ * @param {number} ry - Rectangle top Y
+ * @param {number} rw - Rectangle width
+ * @param {number} rh - Rectangle height
+ * @returns {boolean} True if circle and rectangle overlap
+ */
+function circleRectCollision(cx, cy, cr, rx, ry, rw, rh) {
+    // Find closest point on rectangle to circle center
+    let closestX = Math.max(rx, Math.min(cx, rx + rw));
+    let closestY = Math.max(ry, Math.min(cy, ry + rh));
+    let dx = cx - closestX;
+    let dy = cy - closestY;
+    return (dx * dx + dy * dy) < (cr * cr);
+}
+
+/**
+ * Check if the bird collides with ground, ceiling, or any pipe.
+ * @returns {boolean} True if any collision is detected
+ */
+function checkCollision() {
+    // Ground collision
+    if (bird.y + bird.radius >= CANVAS_HEIGHT - GROUND_HEIGHT) return true;
+
+    // Ceiling collision
+    if (bird.y - bird.radius <= 0) return true;
+
+    // Pipe collision (circle vs rectangle for each pipe pair)
+    for (let i = 0; i < pipes.length; i++) {
+        let p = pipes[i];
+
+        // Top pipe rect: from canvas top to gap top
+        if (circleRectCollision(bird.x, bird.y, bird.radius,
+            p.x, 0, PIPE_WIDTH, p.gapY)) return true;
+
+        // Bottom pipe rect: from gap bottom to ground top
+        let bottomY = p.gapY + PIPE_GAP;
+        let bottomH = CANVAS_HEIGHT - GROUND_HEIGHT - bottomY;
+        if (circleRectCollision(bird.x, bird.y, bird.radius,
+            p.x, bottomY, PIPE_WIDTH, bottomH)) return true;
+    }
+
+    return false;
+}
+
+// ===== SCORING =====
+
+/**
+ * Check all pipes for scoring — bird passing the pipe's center line.
+ * Each pipe can only be scored once (tracked by pipe.scored flag).
+ */
+function updateScore() {
+    for (let i = 0; i < pipes.length; i++) {
+        if (!pipes[i].scored && pipes[i].x + PIPE_WIDTH / 2 < bird.x) {
+            pipes[i].scored = true;
+            score++;
+        }
+    }
+}
+
 // ===== UPDATE LOGIC =====
 
 function update(dt) {
@@ -269,10 +336,26 @@ function update(dt) {
             break;
 
         case STATE_PLAYING:
+            // 1. Bird physics (gravity, velocity cap, position, rotation)
             updateBird(dt);
-            updatePipes(dt);
-            // Ground scrolling continues during play
+
+            // 2. Ground scrolling continues during play
             groundOffset = (groundOffset + PIPE_SPEED * dt) % 24;
+
+            // 3. Pipe spawning, movement & cleanup
+            updatePipes(dt);
+
+            // 4. Scoring — check if bird passed pipe center
+            updateScore();
+
+            // 5. Collision detection → GAME_OVER transition
+            if (checkCollision()) {
+                gameState = STATE_GAME_OVER;
+                // Clamp bird to ground if it hit ground (prevents sinking through)
+                if (bird.y + bird.radius >= CANVAS_HEIGHT - GROUND_HEIGHT) {
+                    bird.y = CANVAS_HEIGHT - GROUND_HEIGHT - bird.radius;
+                }
+            }
             break;
 
         case STATE_GAME_OVER:
@@ -343,6 +426,21 @@ function renderBird(ctx) {
     ctx.restore();
 }
 
+function renderScore(ctx) {
+    if (gameState === STATE_PLAYING || gameState === STATE_GAME_OVER) {
+        ctx.save();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 48px Arial';
+        ctx.textAlign = 'center';
+        // Black outline for readability against sky
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 3;
+        ctx.strokeText(score, CANVAS_WIDTH / 2, 60);
+        ctx.fillText(score, CANVAS_WIDTH / 2, 60);
+        ctx.restore();
+    }
+}
+
 function render(ctx) {
     // 1. Sky background (canvas clear)
     ctx.fillStyle = '#70c5ce';
@@ -356,6 +454,9 @@ function render(ctx) {
 
     // 4. Bird (always on top)
     renderBird(ctx);
+
+    // 5. Score (topmost UI layer)
+    renderScore(ctx);
 }
 
 // ===== GAME LOOP =====
