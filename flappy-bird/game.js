@@ -103,6 +103,32 @@ function flap() {
     bird.velocity = FLAP_VELOCITY;   // Set (not add) upward impulse
 }
 
+function updateBird(dt) {
+    // Apply gravity
+    bird.velocity += GRAVITY * dt;
+
+    // Cap fall speed (terminal velocity)
+    if (bird.velocity > MAX_FALL_SPEED) {
+        bird.velocity = MAX_FALL_SPEED;
+    }
+
+    // Update position
+    bird.y += bird.velocity * dt;
+
+    // Clamp to top of canvas (bird can't fly above screen)
+    if (bird.y - bird.radius < 0) {
+        bird.y = bird.radius;
+        bird.velocity = 0; // Stop upward movement at ceiling
+    }
+
+    // Update rotation based on velocity
+    // Map velocity range [-280, 600] to rotation range [-0.52rad (-30deg), 1.57rad (90deg)]
+    bird.rotation = Math.min(
+        Math.max(bird.velocity / MAX_FALL_SPEED * (Math.PI / 2), -Math.PI / 6),
+        Math.PI / 2
+    );
+}
+
 // ===== INPUT HANDLERS =====
 
 // Keyboard — on document for broad capture
@@ -134,18 +160,119 @@ canvas.addEventListener('touchstart', function(e) {
     handleInput();
 }, { passive: false }); // passive: false required to allow preventDefault
 
+// ===== PIPE FUNCTIONS =====
+
+/**
+ * Determine if a new pipe should be spawned.
+ * Distance-based: spawn when the rightmost pipe has scrolled far enough
+ * that the next pipe would appear at the right edge of the canvas.
+ */
+function shouldSpawnPipe() {
+    if (pipes.length === 0) {
+        return true; // Spawn first pipe immediately when entering PLAYING
+    }
+    const lastPipe = pipes[pipes.length - 1];
+    // Spawn when rightmost pipe has scrolled far enough
+    return lastPipe.x <= CANVAS_WIDTH - PIPE_SPACING;
+}
+
+/**
+ * Create a new pipe pair at the right edge of the canvas
+ * with a randomized gap position within safe bounds.
+ */
+function spawnPipe() {
+    // Random gap position, constrained to safe bounds
+    // gapY is the TOP of the gap
+    const gapY = PIPE_MIN_TOP + Math.random() * (PIPE_MAX_TOP - PIPE_MIN_TOP);
+
+    pipes.push({
+        x: CANVAS_WIDTH,   // Spawn at right edge (400px)
+        gapY: gapY,        // Random gap top position within [50, 360]
+        scored: false       // Not yet passed by bird
+    });
+}
+
+/**
+ * Update all pipes: move left, spawn new ones, cleanup off-screen.
+ * @param {number} dt - Delta time in seconds
+ */
+function updatePipes(dt) {
+    // 1. Move all pipes left
+    for (let i = 0; i < pipes.length; i++) {
+        pipes[i].x -= PIPE_SPEED * dt;
+    }
+
+    // 2. Spawn new pipe if needed
+    if (shouldSpawnPipe()) {
+        spawnPipe();
+    }
+
+    // 3. Cleanup: remove pipes that are fully off-screen left
+    //    Using shift from front since pipes are ordered left-to-right
+    while (pipes.length > 0 && pipes[0].x + PIPE_WIDTH < 0) {
+        pipes.shift();
+    }
+}
+
+/**
+ * Render all pipe pairs with body and cap details.
+ * Pipes are green rectangles with darker green caps at gap edges.
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context
+ */
+function renderPipes(ctx) {
+    const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
+
+    for (let i = 0; i < pipes.length; i++) {
+        const pipe = pipes[i];
+        const bottomPipeTop = pipe.gapY + PIPE_GAP;
+
+        // Pipe body color
+        ctx.fillStyle = '#3cb043';  // Green
+
+        // Top pipe: from top of canvas down to gap
+        ctx.fillRect(pipe.x, 0, PIPE_WIDTH, pipe.gapY);
+
+        // Bottom pipe: from bottom of gap down to ground level
+        ctx.fillRect(pipe.x, bottomPipeTop, PIPE_WIDTH, groundY - bottomPipeTop);
+
+        // Pipe caps (darker green, slightly wider) for visual polish
+        ctx.fillStyle = '#2d8a34'; // Darker green
+
+        // Top pipe cap (at bottom of top pipe)
+        ctx.fillRect(
+            pipe.x - PIPE_CAP_OVERHANG,
+            pipe.gapY - PIPE_CAP_HEIGHT,
+            PIPE_WIDTH + PIPE_CAP_OVERHANG * 2,
+            PIPE_CAP_HEIGHT
+        );
+
+        // Bottom pipe cap (at top of bottom pipe)
+        ctx.fillRect(
+            pipe.x - PIPE_CAP_OVERHANG,
+            bottomPipeTop,
+            PIPE_WIDTH + PIPE_CAP_OVERHANG * 2,
+            PIPE_CAP_HEIGHT
+        );
+    }
+}
+
 // ===== UPDATE LOGIC =====
 
 function update(dt) {
     switch (gameState) {
         case STATE_IDLE:
-            // Placeholder: bob animation and ground scroll
+            // Bob animation — bird oscillates up/down at 2Hz, 8px amplitude
             bobTimer += dt;
             bird.y = BIRD_START_Y + Math.sin(bobTimer * BOB_FREQUENCY * Math.PI * 2) * BOB_AMPLITUDE;
+            // Ground scrolling (matches pipe speed for visual consistency)
+            groundOffset = (groundOffset + PIPE_SPEED * dt) % 24;
             break;
 
         case STATE_PLAYING:
-            // Placeholder: full game update logic will go here
+            updateBird(dt);
+            updatePipes(dt);
+            // Ground scrolling continues during play
+            groundOffset = (groundOffset + PIPE_SPEED * dt) % 24;
             break;
 
         case STATE_GAME_OVER:
@@ -156,10 +283,67 @@ function update(dt) {
 
 // ===== RENDER LOGIC =====
 
+function renderBird(ctx) {
+    ctx.save();
+
+    // Translate to bird center, rotate, then draw at origin
+    ctx.translate(bird.x, bird.y);
+    ctx.rotate(bird.rotation);
+
+    // Body — yellow/orange filled circle
+    ctx.fillStyle = '#f5c842';  // Golden yellow
+    ctx.beginPath();
+    ctx.arc(0, 0, bird.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body outline
+    ctx.strokeStyle = '#d4a020';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Eye — small white circle with black pupil
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(6, -5, 4, 0, Math.PI * 2);  // Offset right and up from center
+    ctx.fill();
+
+    ctx.fillStyle = '#000000';
+    ctx.beginPath();
+    ctx.arc(7, -5, 2, 0, Math.PI * 2);  // Pupil
+    ctx.fill();
+
+    // Beak — small orange triangle
+    ctx.fillStyle = '#e07020';
+    ctx.beginPath();
+    ctx.moveTo(bird.radius, -3);
+    ctx.lineTo(bird.radius + 8, 0);
+    ctx.lineTo(bird.radius, 3);
+    ctx.closePath();
+    ctx.fill();
+
+    // Wing — small ellipse on the body
+    ctx.fillStyle = '#e0b030';
+    ctx.beginPath();
+    ctx.ellipse(-2, 3, 8, 5, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
 function render(ctx) {
-    // Fill canvas with sky blue background (doubles as canvas clear)
+    // Layer 0: Fill canvas with sky blue background (doubles as canvas clear)
     ctx.fillStyle = '#70c5ce';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // Layer 1: Pipes (only in PLAYING and GAME_OVER — NOT in IDLE)
+    if (gameState === STATE_PLAYING || gameState === STATE_GAME_OVER) {
+        renderPipes(ctx);
+    }
+
+    // Layer 2: Ground will be rendered here (by future task)
+
+    // Layer 3: Bird — always on top of game elements
+    renderBird(ctx);
 }
 
 // ===== GAME LOOP =====
