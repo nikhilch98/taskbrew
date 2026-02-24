@@ -103,7 +103,9 @@ async def run_server(orch: Orchestrator):
     )
 
     # Spawn agent loops
-    api_url = f"http://{orch.team_config.dashboard_host}:{orch.team_config.dashboard_port}"
+    # Map bind host to connect host (0.0.0.0 binds all interfaces but can't be connected to)
+    connect_host = "127.0.0.1" if orch.team_config.dashboard_host in ("0.0.0.0", "::") else orch.team_config.dashboard_host
+    api_url = f"http://{connect_host}:{orch.team_config.dashboard_port}"
     for role_name, role_config in orch.roles.items():
         for i in range(1, role_config.max_instances + 1):
             instance_id = f"{role_name}-{i}"

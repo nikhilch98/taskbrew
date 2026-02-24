@@ -55,7 +55,7 @@ class AgentRunner:
             system_prompt=self.config.system_prompt,
             allowed_tools=self.config.allowed_tools,
             permission_mode="bypassPermissions",
-            env={"CLAUDECODE": "", "AI_TEAM_API_URL": self.config.api_url},
+            env={"CLAUDECODE": ""},
             setting_sources=[],
             mcp_servers={
                 "task-tools": {
