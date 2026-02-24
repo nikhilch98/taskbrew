@@ -3078,7 +3078,7 @@
             if (task.started_at) html += tdField('Started At', fmtTs(task.started_at));
             if (task.completed_at) html += tdField('Completed At', fmtTs(task.completed_at));
             html += '</div>';
-            if (task.description) html += '<div class="task-detail-description"><label>Description</label><div class="value">' + escapeHtml(task.description) + '</div></div>';
+            if (task.description) html += '<div class="task-detail-description"><label>Description</label><div class="value">' + marked.parse(task.description) + '</div></div>';
             if (task.rejection_reason) html += '<div class="task-detail-description" style="border-color:rgba(244,63,94,0.3)"><label style="color:var(--accent-rose)">Rejection Reason</label><div class="value">' + escapeHtml(task.rejection_reason) + '</div></div>';
             body.innerHTML = html;
             document.getElementById('taskDetailTitle').textContent = task.title || '(untitled)';
