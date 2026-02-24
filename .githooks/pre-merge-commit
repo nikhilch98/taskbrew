@@ -24,7 +24,8 @@ SCOPE_SCRIPT="${REPO_ROOT}/scripts/check-merge-scope.sh"
 # During a merge, MERGE_HEAD contains the tip commit of the branch
 # being merged. We resolve it back to a branch name.
 # ------------------------------------------------------------------
-MERGE_HEAD_FILE="${REPO_ROOT}/.git/MERGE_HEAD"
+GIT_DIR="$(git rev-parse --git-dir)"
+MERGE_HEAD_FILE="${GIT_DIR}/MERGE_HEAD"
 
 if [ ! -f "${MERGE_HEAD_FILE}" ]; then
     # No MERGE_HEAD means this isn't a merge — nothing to check.
