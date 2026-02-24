@@ -316,15 +316,6 @@ function checkGroundCollision() {
 }
 
 /**
- * Check if the bird collides with the ceiling.
- * Ceiling collision occurs when bird's top edge touches or crosses the top of the canvas.
- * @returns {boolean} True if bird touches ceiling
- */
-function checkCeilingCollision() {
-    return bird.y - bird.radius <= 0;
-}
-
-/**
  * Check if the bird collides with any pipe.
  * Uses horizontal optimization to skip pipes far from bird's x position.
  * @returns {boolean} True if bird collides with any pipe
@@ -359,11 +350,6 @@ function checkPipeCollisions() {
  * Called during STATE_PLAYING after bird physics and pipe updates.
  */
 function checkCollisions() {
-    if (checkCeilingCollision()) {
-        gameState = STATE_GAME_OVER;
-        return;
-    }
-
     if (checkGroundCollision()) {
         // Clamp bird to ground surface (prevents sinking through visually)
         bird.y = CANVAS_HEIGHT - GROUND_HEIGHT - bird.radius;
