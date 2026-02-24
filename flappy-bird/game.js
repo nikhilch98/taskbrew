@@ -27,6 +27,9 @@ const PIPE_MAX_TOP    = CANVAS_HEIGHT - GROUND_HEIGHT - PIPE_GAP - 50; // = 360p
 const BOB_AMPLITUDE   = 8;      // px — vertical bob range on start screen
 const BOB_FREQUENCY   = 2;      // Hz — bob oscillation speed
 
+// Pipe timing
+const FIRST_PIPE_DELAY   = 60;  // px — scrolling distance before first pipe spawns
+
 // Pipe cap (visual polish)
 const PIPE_CAP_HEIGHT    = 20;  // px
 const PIPE_CAP_OVERHANG  = 3;   // px — extra width on each side
@@ -56,6 +59,7 @@ let pipes = [];
 let score = 0;
 let bobTimer = 0;
 let groundOffset = 0;
+let distanceSinceLastPipe = 0;
 let gameState = STATE_IDLE;
 let lastTimestamp = 0;
 let spacePressed = false;
@@ -65,6 +69,7 @@ let spacePressed = false;
 function handleInput() {
     switch (gameState) {
         case STATE_IDLE:
+            distanceSinceLastPipe = PIPE_SPACING - FIRST_PIPE_DELAY; // Seed so first pipe appears shortly after start
             gameState = STATE_PLAYING;
             flap();      // Immediate first flap so bird doesn't just drop
             break;
@@ -97,6 +102,9 @@ function resetGame() {
 
     // Ground
     groundOffset  = 0;               // Reset ground scroll position
+
+    // Pipe timing
+    distanceSinceLastPipe = 0;       // Reset pipe spawn distance tracker
 }
 
 function flap() {
@@ -194,6 +202,7 @@ function spawnPipe() {
 
 /**
  * Update all pipes: move left, spawn new ones, cleanup off-screen.
+ * Uses distanceSinceLastPipe accumulator for spawn timing.
  * @param {number} dt - Delta time in seconds
  */
 function updatePipes(dt) {
@@ -202,8 +211,10 @@ function updatePipes(dt) {
         pipes[i].x -= PIPE_SPEED * dt;
     }
 
-    // 2. Spawn new pipe if needed
-    if (shouldSpawnPipe()) {
+    // 2. Spawn new pipe based on accumulated distance
+    distanceSinceLastPipe += PIPE_SPEED * dt;
+    if (distanceSinceLastPipe >= PIPE_SPACING) {
+        distanceSinceLastPipe -= PIPE_SPACING; // Preserve remainder for consistent spacing
         spawnPipe();
     }
 
