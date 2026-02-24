@@ -120,6 +120,11 @@ function createSandbox() {
                 _listeners['doc_' + type] = { fn };
             }
         };
+        const window = {
+            addEventListener: (type, fn) => {
+                _listeners['window_' + type] = { fn };
+            }
+        };
         let _rafCallback = null;
         function requestAnimationFrame(cb) { _rafCallback = cb; }
     `;
