@@ -270,53 +270,97 @@ function renderPipes(ctx) {
 // ===== COLLISION DETECTION =====
 
 /**
- * Check if a circle overlaps with an axis-aligned rectangle.
- * Uses closest-point-on-rect to circle-center distance check.
- * @param {number} cx - Circle center X
- * @param {number} cy - Circle center Y
- * @param {number} cr - Circle radius
- * @param {number} rx - Rectangle left X
- * @param {number} ry - Rectangle top Y
- * @param {number} rw - Rectangle width
- * @param {number} rh - Rectangle height
- * @returns {boolean} True if circle and rectangle overlap
+ * Clamp a value between a minimum and maximum bound.
+ * @param {number} value - Value to clamp
+ * @param {number} min - Minimum bound
+ * @param {number} max - Maximum bound
+ * @returns {number} Clamped value
  */
-function circleRectCollision(cx, cy, cr, rx, ry, rw, rh) {
-    // Find closest point on rectangle to circle center
-    let closestX = Math.max(rx, Math.min(cx, rx + rw));
-    let closestY = Math.max(ry, Math.min(cy, ry + rh));
-    let dx = cx - closestX;
-    let dy = cy - closestY;
-    return (dx * dx + dy * dy) < (cr * cr);
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
 }
 
 /**
- * Check if the bird collides with ground, ceiling, or any pipe.
- * @returns {boolean} True if any collision is detected
+ * Check if a circle overlaps with an axis-aligned bounding box (AABB).
+ * Uses nearest-point-on-rect algorithm with squared distance (no sqrt).
+ * @param {number} cx - Circle center X
+ * @param {number} cy - Circle center Y
+ * @param {number} r - Circle radius
+ * @param {number} rectX - Rectangle left X
+ * @param {number} rectY - Rectangle top Y
+ * @param {number} rectW - Rectangle width
+ * @param {number} rectH - Rectangle height
+ * @returns {boolean} True if circle and rectangle overlap
  */
-function checkCollision() {
-    // Ground collision
-    if (bird.y + bird.radius >= CANVAS_HEIGHT - GROUND_HEIGHT) return true;
+function circleRectCollision(cx, cy, r, rectX, rectY, rectW, rectH) {
+    // Find nearest point on rectangle to circle center
+    const nearestX = clamp(cx, rectX, rectX + rectW);
+    const nearestY = clamp(cy, rectY, rectY + rectH);
 
-    // Ceiling collision
-    if (bird.y - bird.radius <= 0) return true;
+    // Compute squared distance from circle center to nearest point
+    const dx = cx - nearestX;
+    const dy = cy - nearestY;
+    const distSquared = dx * dx + dy * dy;
 
-    // Pipe collision (circle vs rectangle for each pipe pair)
+    // Collision if distance <= radius (using squared values to avoid sqrt)
+    return distSquared <= r * r;
+}
+
+/**
+ * Check if the bird collides with the ground.
+ * Ground collision occurs when bird's bottom edge touches ground top.
+ * @returns {boolean} True if bird touches ground
+ */
+function checkGroundCollision() {
+    return bird.y + bird.radius >= CANVAS_HEIGHT - GROUND_HEIGHT;
+}
+
+/**
+ * Check if the bird collides with any pipe.
+ * Uses horizontal optimization to skip pipes far from bird's x position.
+ * @returns {boolean} True if bird collides with any pipe
+ */
+function checkPipeCollisions() {
     for (let i = 0; i < pipes.length; i++) {
-        let p = pipes[i];
+        const pipe = pipes[i];
 
-        // Top pipe rect: from canvas top to gap top
-        if (circleRectCollision(bird.x, bird.y, bird.radius,
-            p.x, 0, PIPE_WIDTH, p.gapY)) return true;
+        // Horizontal optimization: skip pipes far from bird's x position
+        if (pipe.x > bird.x + bird.radius + PIPE_WIDTH) continue;  // Too far right
+        if (pipe.x + PIPE_WIDTH < bird.x - bird.radius) continue;  // Too far left
 
-        // Bottom pipe rect: from gap bottom to ground top
-        let bottomY = p.gapY + PIPE_GAP;
-        let bottomH = CANVAS_HEIGHT - GROUND_HEIGHT - bottomY;
+        // Check top pipe: from canvas top (0) down to gap top
         if (circleRectCollision(bird.x, bird.y, bird.radius,
-            p.x, bottomY, PIPE_WIDTH, bottomH)) return true;
+            pipe.x, 0, PIPE_WIDTH, pipe.gapY)) {
+            return true;
+        }
+
+        // Check bottom pipe: from gap bottom down to ground level
+        const bottomPipeY = pipe.gapY + PIPE_GAP;
+        const bottomPipeH = (CANVAS_HEIGHT - GROUND_HEIGHT) - bottomPipeY;
+        if (circleRectCollision(bird.x, bird.y, bird.radius,
+            pipe.x, bottomPipeY, PIPE_WIDTH, bottomPipeH)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Run all collision checks and transition to GAME_OVER if any collision detected.
+ * Called during STATE_PLAYING after bird physics and pipe updates.
+ */
+function checkCollisions() {
+    if (checkGroundCollision()) {
+        // Clamp bird to ground surface (prevents sinking through visually)
+        bird.y = CANVAS_HEIGHT - GROUND_HEIGHT - bird.radius;
+        gameState = STATE_GAME_OVER;
+        return;
     }
 
-    return false;
+    if (checkPipeCollisions()) {
+        gameState = STATE_GAME_OVER;
+        return;
+    }
 }
 
 // ===== SCORING =====
@@ -350,23 +394,17 @@ function update(dt) {
             // 1. Bird physics (gravity, velocity cap, position, rotation)
             updateBird(dt);
 
-            // 2. Ground scrolling continues during play
-            groundOffset = (groundOffset + PIPE_SPEED * dt) % 24;
-
-            // 3. Pipe spawning, movement & cleanup
+            // 2. Pipe spawning, movement & cleanup
             updatePipes(dt);
+
+            // 3. Collision detection → GAME_OVER transition
+            checkCollisions();
 
             // 4. Scoring — check if bird passed pipe center
             updateScore();
 
-            // 5. Collision detection → GAME_OVER transition
-            if (checkCollision()) {
-                gameState = STATE_GAME_OVER;
-                // Clamp bird to ground if it hit ground (prevents sinking through)
-                if (bird.y + bird.radius >= CANVAS_HEIGHT - GROUND_HEIGHT) {
-                    bird.y = CANVAS_HEIGHT - GROUND_HEIGHT - bird.radius;
-                }
-            }
+            // 5. Ground scrolling continues during play
+            groundOffset = (groundOffset + PIPE_SPEED * dt) % 24;
             break;
 
         case STATE_GAME_OVER:
