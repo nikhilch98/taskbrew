@@ -183,6 +183,17 @@ canvas.addEventListener('touchstart', function(e) {
 // ===== PIPE FUNCTIONS =====
 
 /**
+ * Determine if a new pipe should be spawned based on the rightmost pipe position.
+ * Returns true if pipes array is empty or if rightmost pipe has moved far enough left.
+ * @returns {boolean} True if a new pipe should spawn
+ */
+function shouldSpawnPipe() {
+    if (pipes.length === 0) return true;
+    const lastPipe = pipes[pipes.length - 1];
+    return lastPipe.x <= CANVAS_WIDTH - PIPE_SPACING;
+}
+
+/**
  * Create a new pipe pair at the right edge of the canvas
  * with a randomized gap position within safe bounds.
  */
