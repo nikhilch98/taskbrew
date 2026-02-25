@@ -390,7 +390,7 @@ Spawn logic is embedded inside `updatePipes()` (see below). The first pipe is co
 distanceSinceLastPipe = PIPE_SPACING - FIRST_PIPE_DELAY;
 ```
 
-**Rationale:** Accumulator preserves fractional remainder for drift-free spacing and is decoupled from pipe array state. Unlike the previous `shouldSpawnPipe()` approach that inspected the pipe array's last element, the accumulator is independent of array mutations and cleanly handles the first-pipe delay via seeding.
+**Rationale:** Accumulator preserves fractional remainder for drift-free spacing and is decoupled from pipe array state. The accumulator approach is independent of array mutations and cleanly handles the first-pipe delay via seeding.
 
 ### Spawn Algorithm
 
