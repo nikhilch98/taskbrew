@@ -460,7 +460,7 @@ function renderGround(ctx) {
     const startX = -(groundOffset % GROUND_HASH_SPACING);
     for (let x = startX; x < CANVAS_WIDTH; x += GROUND_HASH_SPACING) {
         ctx.beginPath();
-        ctx.moveTo(x, groundY + 10);
+        ctx.moveTo(x, groundY);
         ctx.lineTo(x, groundY + GROUND_HEIGHT);
         ctx.stroke();
     }
