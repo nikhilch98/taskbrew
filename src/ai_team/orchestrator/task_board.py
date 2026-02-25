@@ -265,7 +265,7 @@ class TaskBoard:
         return row
 
     async def fail_task(self, task_id: str) -> dict:
-        """Mark a task as failed."""
+        """Mark a task as failed and cascade failure to blocked dependents."""
         row = await self._db.execute_fetchone(
             "UPDATE tasks SET status = 'failed' "
             "WHERE id = ? RETURNING *",
@@ -273,7 +273,39 @@ class TaskBoard:
         )
         assert row is not None, f"Task {task_id!r} not found"
         await self._db._conn.commit()  # type: ignore[union-attr]
+        await self._cascade_failure(task_id)
         return row
+
+    async def _cascade_failure(self, failed_task_id: str) -> None:
+        """When a task fails, fail all blocked tasks that depend on it.
+
+        This prevents downstream tasks from being stuck in 'blocked' forever.
+        Cascades recursively so the entire dependency chain is failed.
+        """
+        dependents = await self._db.execute_fetchall(
+            "SELECT task_id FROM task_dependencies "
+            "WHERE blocked_by = ? AND resolved = 0",
+            (failed_task_id,),
+        )
+        for dep in dependents:
+            tid = dep["task_id"]
+            task = await self._db.execute_fetchone(
+                "SELECT status FROM tasks WHERE id = ?", (tid,)
+            )
+            if task and task["status"] == "blocked":
+                await self._db.execute(
+                    "UPDATE tasks SET status = 'failed' WHERE id = ?",
+                    (tid,),
+                )
+                # Mark this dependency as resolved so it doesn't block cleanup
+                await self._db.execute(
+                    "UPDATE task_dependencies SET resolved = 1 "
+                    "WHERE task_id = ? AND blocked_by = ?",
+                    (tid, failed_task_id),
+                )
+                # Cascade further down the chain
+                await self._cascade_failure(tid)
+        await self._db._conn.commit()  # type: ignore[union-attr]
 
     # ------------------------------------------------------------------
     # Dependency resolution
@@ -417,3 +449,76 @@ class TaskBoard:
         if rows:
             await self._db._conn.commit()
         return rows
+
+    async def recover_stuck_blocked_tasks(self) -> list[dict]:
+        """Recover blocked tasks whose dependencies are all in terminal states.
+
+        A blocked task should be failed if any of its unresolved dependencies
+        failed, or moved to pending if all dependencies completed but the
+        resolution was missed (e.g. crash).
+        """
+        # Find blocked tasks with unresolved deps pointing to terminal tasks
+        stuck = await self._db.execute_fetchall(
+            "SELECT DISTINCT d.task_id, d.blocked_by, t2.status AS blocker_status "
+            "FROM task_dependencies d "
+            "JOIN tasks t ON t.id = d.task_id AND t.status = 'blocked' "
+            "JOIN tasks t2 ON t2.id = d.blocked_by "
+            "WHERE d.resolved = 0 "
+            "  AND t2.status IN ('completed', 'failed')"
+        )
+        if not stuck:
+            return []
+
+        repaired: list[dict] = []
+        seen: set[str] = set()
+
+        for row in stuck:
+            tid = row["task_id"]
+            blocker_status = row["blocker_status"]
+
+            # Resolve this dependency
+            await self._db.execute(
+                "UPDATE task_dependencies SET resolved = 1 "
+                "WHERE task_id = ? AND blocked_by = ?",
+                (tid, row["blocked_by"]),
+            )
+
+            # If blocker failed, cascade failure to this task
+            if blocker_status == "failed" and tid not in seen:
+                await self._db.execute(
+                    "UPDATE tasks SET status = 'failed' WHERE id = ? AND status = 'blocked'",
+                    (tid,),
+                )
+                seen.add(tid)
+                task = await self._db.execute_fetchone(
+                    "SELECT * FROM tasks WHERE id = ?", (tid,)
+                )
+                if task:
+                    repaired.append(task)
+                    # Cascade further
+                    await self._cascade_failure(tid)
+
+        # Check for tasks now fully unblocked (all deps resolved successfully)
+        newly_free = await self._db.execute_fetchall(
+            "SELECT t.id FROM tasks t "
+            "WHERE t.status = 'blocked' "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM task_dependencies d "
+            "    WHERE d.task_id = t.id AND d.resolved = 0"
+            "  )",
+        )
+        for row in newly_free:
+            await self._db.execute(
+                "UPDATE tasks SET status = 'pending' WHERE id = ?",
+                (row["id"],),
+            )
+            task = await self._db.execute_fetchone(
+                "SELECT * FROM tasks WHERE id = ?", (row["id"],)
+            )
+            if task:
+                repaired.append(task)
+
+        if repaired:
+            await self._db._conn.commit()  # type: ignore[union-attr]
+
+        return repaired

@@ -325,3 +325,108 @@ async def test_cycle_detection_no_cycle(board: TaskBoard):
     # C -> B (B is blocked by A already).  No cycle since C is not
     # upstream of B in any way.
     assert await board.has_cycle(task_c["id"], task_b["id"]) is False
+
+
+# ------------------------------------------------------------------
+# Failure cascade
+# ------------------------------------------------------------------
+
+
+async def test_fail_task_cascades_to_blocked_dependents(board: TaskBoard):
+    """When a task fails, blocked tasks depending on it should also fail."""
+    group = await board.create_group(title="Cascade", created_by="pm")
+    task_a = await board.create_task(
+        group_id=group["id"], title="QA test", task_type="qa",
+        assigned_to="tester",
+    )
+    task_b = await board.create_task(
+        group_id=group["id"], title="Code review", task_type="review",
+        assigned_to="reviewer", blocked_by=[task_a["id"]],
+    )
+    assert task_b["status"] == "blocked"
+
+    # Claim and fail task A
+    await board.claim_task(role="tester", instance_id="tester-1")
+    await board.fail_task(task_a["id"])
+
+    # Task B should now be failed too
+    task_b_after = await board.get_task(task_b["id"])
+    assert task_b_after["status"] == "failed"
+
+
+async def test_fail_task_cascades_recursively(board: TaskBoard):
+    """Failure should cascade through multi-level dependency chains."""
+    group = await board.create_group(title="Deep cascade", created_by="pm")
+    t1 = await board.create_task(
+        group_id=group["id"], title="T1", task_type="impl",
+        assigned_to="coder",
+    )
+    t2 = await board.create_task(
+        group_id=group["id"], title="T2", task_type="test",
+        assigned_to="tester", blocked_by=[t1["id"]],
+    )
+    t3 = await board.create_task(
+        group_id=group["id"], title="T3", task_type="review",
+        assigned_to="reviewer", blocked_by=[t2["id"]],
+    )
+    assert t2["status"] == "blocked"
+    assert t3["status"] == "blocked"
+
+    await board.claim_task(role="coder", instance_id="coder-1")
+    await board.fail_task(t1["id"])
+
+    assert (await board.get_task(t2["id"]))["status"] == "failed"
+    assert (await board.get_task(t3["id"]))["status"] == "failed"
+
+
+async def test_recover_stuck_blocked_tasks(board: TaskBoard):
+    """recover_stuck_blocked_tasks should fix blocked tasks with terminal deps."""
+    group = await board.create_group(title="Stuck", created_by="pm")
+    t1 = await board.create_task(
+        group_id=group["id"], title="Dep", task_type="impl",
+        assigned_to="coder",
+    )
+    t2 = await board.create_task(
+        group_id=group["id"], title="Blocked", task_type="review",
+        assigned_to="reviewer", blocked_by=[t1["id"]],
+    )
+    assert t2["status"] == "blocked"
+
+    # Simulate old bug: fail t1 without cascade (direct SQL)
+    await board._db.execute(
+        "UPDATE tasks SET status = 'failed' WHERE id = ?", (t1["id"],)
+    )
+    await board._db._conn.commit()
+
+    # t2 is still blocked
+    assert (await board.get_task(t2["id"]))["status"] == "blocked"
+
+    # Recovery should fix it
+    repaired = await board.recover_stuck_blocked_tasks()
+    assert len(repaired) >= 1
+    assert (await board.get_task(t2["id"]))["status"] == "failed"
+
+
+async def test_recover_unblocks_when_dep_completed(board: TaskBoard):
+    """If blocker completed but resolution was missed, recovery should unblock."""
+    group = await board.create_group(title="Missed", created_by="pm")
+    t1 = await board.create_task(
+        group_id=group["id"], title="Dep", task_type="impl",
+        assigned_to="coder",
+    )
+    t2 = await board.create_task(
+        group_id=group["id"], title="Blocked", task_type="review",
+        assigned_to="reviewer", blocked_by=[t1["id"]],
+    )
+
+    # Simulate completed but dependency not resolved (crash scenario)
+    await board._db.execute(
+        "UPDATE tasks SET status = 'completed' WHERE id = ?", (t1["id"],)
+    )
+    await board._db._conn.commit()
+
+    assert (await board.get_task(t2["id"]))["status"] == "blocked"
+
+    repaired = await board.recover_stuck_blocked_tasks()
+    assert len(repaired) >= 1
+    assert (await board.get_task(t2["id"]))["status"] == "pending"

@@ -123,6 +123,13 @@ async def run_server(orch: Orchestrator):
         for t in recovered:
             await orch.event_bus.emit("task.recovered", {"task_id": t["id"]})
 
+    # Recover blocked tasks whose dependencies are all terminal
+    stuck = await orch.task_board.recover_stuck_blocked_tasks()
+    if stuck:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Recovered %d stuck blocked tasks", len(stuck))
+
     # Spawn agent loops
     # Map bind host to connect host (0.0.0.0 binds all interfaces but can't be connected to)
     connect_host = "127.0.0.1" if orch.team_config.dashboard_host in ("0.0.0.0", "::") else orch.team_config.dashboard_host
