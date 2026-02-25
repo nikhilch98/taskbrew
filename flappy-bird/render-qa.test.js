@@ -145,6 +145,8 @@ function createMockCtx() {
             calls.push({ method: 'rotate', args: [angle] });
         },
         ellipse: function(...args) { calls.push({ method: 'ellipse', args }); },
+        strokeText: function(...args) { calls.push({ method: 'strokeText', args, strokeStyle: state.strokeStyle }); },
+        fillText: function(...args) { calls.push({ method: 'fillText', args, fillStyle: state.fillStyle }); },
     };
 
     return ctx;
@@ -174,6 +176,8 @@ const domStub = `
                 translate: () => {},
                 rotate: () => {},
                 ellipse: () => {},
+                strokeText: () => {},
+                fillText: () => {},
             }),
             addEventListener: (type, fn, opts) => {
                 _listeners['canvas_' + type] = { fn, opts };
@@ -181,6 +185,11 @@ const domStub = `
         }),
         addEventListener: (type, fn) => {
             _listeners['doc_' + type] = { fn };
+        }
+    };
+    const window = {
+        addEventListener: (type, fn) => {
+            _listeners['window_' + type] = { fn };
         }
     };
     let _rafCallback = null;
