@@ -144,4 +144,3 @@ Texture lines:    #7A5232 → #c8a040  // Differs from CD-097's #c9a044
 
 **Architect Decision:** ✅ APPROVED FOR IMPLEMENTATION
 **Reason:** CD-099's architecture is superior; spacing change is spec-corrected; color updates are spec-aligned.
-
