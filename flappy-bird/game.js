@@ -589,8 +589,10 @@ function render(ctx) {
     ctx.fillStyle = '#70c5ce';  // Light sky blue
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-    // 2. Pipes (behind ground and bird)
-    renderPipes(ctx);
+    // 2. Pipes (behind ground and bird) — only in PLAYING/GAME_OVER states
+    if (gameState === STATE_PLAYING || gameState === STATE_GAME_OVER) {
+        renderPipes(ctx);
+    }
 
     // 3. Ground (covers pipe bottoms)
     renderGround(ctx);
