@@ -264,8 +264,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="No team config loaded")
         if "name" in body:
             team_config.team_name = body["name"]
-        if "default_model" in body:
-            team_config.default_model = body["default_model"]
+
+        # Persist to YAML file
+        if project_dir:
+            yaml_path = Path(project_dir) / "config" / "team.yaml"
+            if yaml_path.exists():
+                with open(yaml_path) as f:
+                    data = yaml.safe_load(f) or {}
+                if "name" in body:
+                    data["team_name"] = body["name"]
+                with open(yaml_path, "w") as f:
+                    yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
         return {"status": "ok"}
 
     @app.get("/api/settings/roles")
@@ -298,6 +308,19 @@ def create_app(
             rc.model = body["model"]
         if "tools" in body:
             rc.tools = body["tools"]
+
+        # Persist to YAML file
+        if project_dir:
+            yaml_path = Path(project_dir) / "config" / "roles" / f"{role_name}.yaml"
+            if yaml_path.exists():
+                with open(yaml_path) as f:
+                    data = yaml.safe_load(f) or {}
+                for key in ("system_prompt", "model", "tools"):
+                    if key in body:
+                        data[key] = body[key]
+                with open(yaml_path, "w") as f:
+                    yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
         return {"status": "ok", "role": role_name}
 
     # ------------------------------------------------------------------
