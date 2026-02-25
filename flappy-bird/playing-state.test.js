@@ -571,6 +571,8 @@ section('10. checkCollisions() — GAME_OVER Transition');
 // ═══════════════════════════════════════════════════════
 // 11. Ceiling Collision — Acceptance Criteria #9
 // ═══════════════════════════════════════════════════════
+// Per AR-011 §1.5 and CD-038: Ceiling collision uses clamp behavior (bird bounces)
+// not GAME_OVER transition, matching the game's intentional physics design
 
 section('11. Ceiling Collision Check (AC #9)');
 
