@@ -6,7 +6,7 @@ const CANVAS_HEIGHT   = 600;    // px
 
 // Ground
 const GROUND_HEIGHT       = 60;  // px — height of ground strip at bottom
-const GROUND_HASH_SPACING = 24;  // px — distance between vertical hash lines in ground texture
+const GROUND_HASH_SPACING = 20;  // px — distance between vertical hash lines in ground texture
 
 // Bird
 const BIRD_X          = 100;    // px — fixed horizontal position (25% of canvas width)
@@ -376,6 +376,18 @@ function updateScore() {
     }
 }
 
+// ===== GROUND =====
+
+/**
+ * Update ground scroll offset at pipe speed for visual consistency.
+ * Wraps offset at CANVAS_WIDTH to prevent floating-point overflow.
+ * @param {number} dt - Delta time in seconds
+ */
+function updateGround(dt) {
+    groundOffset += PIPE_SPEED * dt;
+    groundOffset = groundOffset % CANVAS_WIDTH;
+}
+
 // ===== UPDATE LOGIC =====
 
 function update(dt) {
@@ -385,7 +397,7 @@ function update(dt) {
             bobTimer += dt;
             bird.y = BIRD_START_Y + Math.sin(bobTimer * BOB_FREQUENCY * Math.PI * 2) * BOB_AMPLITUDE;
             // Ground scrolling (matches pipe speed for visual consistency)
-            groundOffset = (groundOffset + PIPE_SPEED * dt) % 24;
+            updateGround(dt);
             break;
 
         case STATE_PLAYING:
@@ -403,7 +415,7 @@ function update(dt) {
             updateScore();
 
             // 5. Ground scrolling continues during play
-            groundOffset = (groundOffset + PIPE_SPEED * dt) % 24;
+            updateGround(dt);
             break;
 
         case STATE_GAME_OVER:
@@ -425,22 +437,31 @@ function renderBackground(ctx) {
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 }
 
+/**
+ * Render the ground strip (Layer 2).
+ * Sandy brown fill with green grass top edge and scrolling texture lines.
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context
+ */
 function renderGround(ctx) {
-    // Brown dirt strip
-    ctx.fillStyle = '#8B5E3C';
-    ctx.fillRect(0, CANVAS_HEIGHT - GROUND_HEIGHT, CANVAS_WIDTH, GROUND_HEIGHT);
+    const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
 
-    // Green grass accent at top edge of ground (~4px tall)
-    ctx.fillStyle = '#5CBF2A';
-    ctx.fillRect(0, CANVAS_HEIGHT - GROUND_HEIGHT, CANVAS_WIDTH, 4);
+    // Main ground fill
+    ctx.fillStyle = '#deb050';  // Sandy brown
+    ctx.fillRect(0, groundY, CANVAS_WIDTH, GROUND_HEIGHT);
 
-    // Scrolling vertical hash lines for ground texture
-    ctx.strokeStyle = '#7A5232';
+    // Top edge (grass line)
+    ctx.fillStyle = '#5cb85c';  // Green grass
+    ctx.fillRect(0, groundY, CANVAS_WIDTH, 4);
+
+    // Ground texture: scrolling vertical lines for movement illusion
+    // Uses modular offset to create infinite scroll effect
+    ctx.strokeStyle = '#c8a040';
     ctx.lineWidth = 1;
-    for (var x = -groundOffset % 24; x < CANVAS_WIDTH; x += 24) {
+    const startX = -(groundOffset % GROUND_HASH_SPACING);
+    for (let x = startX; x < CANVAS_WIDTH; x += GROUND_HASH_SPACING) {
         ctx.beginPath();
-        ctx.moveTo(x, CANVAS_HEIGHT - GROUND_HEIGHT + 10);
-        ctx.lineTo(x, CANVAS_HEIGHT - 5);
+        ctx.moveTo(x, groundY + 10);
+        ctx.lineTo(x, groundY + GROUND_HEIGHT);
         ctx.stroke();
     }
 }
