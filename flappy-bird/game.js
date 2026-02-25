@@ -236,7 +236,7 @@ function renderPipes(ctx) {
         const bottomPipeTop = pipe.gapY + PIPE_GAP;
 
         // Pipe body color
-        ctx.fillStyle = '#3cb043';  // Green
+        ctx.fillStyle = '#2ECC71';  // Green
 
         // Top pipe: from top of canvas down to gap
         ctx.fillRect(pipe.x, 0, PIPE_WIDTH, pipe.gapY);
@@ -245,7 +245,7 @@ function renderPipes(ctx) {
         ctx.fillRect(pipe.x, bottomPipeTop, PIPE_WIDTH, groundY - bottomPipeTop);
 
         // Pipe caps (darker green, slightly wider) for visual polish
-        ctx.fillStyle = '#2d8a34'; // Darker green
+        ctx.fillStyle = '#27AE60'; // Darker green
 
         // Top pipe cap (at bottom of top pipe)
         ctx.fillRect(
@@ -427,17 +427,6 @@ function update(dt) {
 // ===== RENDER LOGIC =====
 
 /**
- * Render the sky background (Layer 0).
- * Fills the entire canvas with light sky blue, serving as both
- * the background and the canvas clear (every pixel is overwritten).
- * @param {CanvasRenderingContext2D} ctx - Canvas rendering context
- */
-function renderBackground(ctx) {
-    ctx.fillStyle = '#70c5ce';  // Light sky blue
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-}
-
-/**
  * Render the ground strip (Layer 2).
  * Sandy brown fill with green grass top edge and scrolling texture lines.
  * @param {CanvasRenderingContext2D} ctx - Canvas rendering context
@@ -586,7 +575,8 @@ function renderGameOverOverlay(ctx) {
 
 function render(ctx) {
     // 1. Sky background (Layer 0 — canvas clear)
-    renderBackground(ctx);
+    ctx.fillStyle = '#70c5ce';  // Light sky blue
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
     // 2. Pipes (behind ground and bird)
     renderPipes(ctx);
