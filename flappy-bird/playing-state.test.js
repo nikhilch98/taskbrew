@@ -1385,6 +1385,80 @@ section('37. Pipe Collision — Horizontal Optimization');
 })();
 
 // ═══════════════════════════════════════════════════════
+// 38. BUG-001 Regression — Score on Death Frame
+// ═══════════════════════════════════════════════════════
+
+section('38. BUG-001 Regression — Score on Death Frame');
+
+// Test 1: Ground collision with a passed (scoreable) pipe — exact bug report steps
+(() => {
+    const sb = createSandbox();
+
+    // Repro: bird near ground (will trigger ground collision),
+    // with a pipe whose center has passed bird.x (scoreable).
+    // pipe.x=20 → center = 20 + 26 = 46 < 100 → scoreable
+    sb.gameState = 'PLAYING';
+    sb.bird.y = 530;           // near ground (540 - 15 = 525 < 530 + 15 = 545 → collision)
+    sb.bird.velocity = 200;    // falling
+    sb.pipes.length = 0;
+    sb.pipes.push({ x: 20, gapY: 200, scored: false });
+    sb.score = 0;
+    sb.distanceSinceLastPipe = 0;
+
+    sb.update(0.016);
+
+    assertEqual(sb.gameState, 'GAME_OVER', 'Ground collision → GAME_OVER');
+    assertEqual(sb.score, 0, 'Score stays 0 after ground collision (early exit prevents scoring)');
+})();
+
+// Test 2: Pipe collision with two passed (scoreable) pipes
+(() => {
+    const sb = createSandbox();
+
+    // Bird collides with pipe while two other pipes have passed center (scoreable)
+    // pipe1: x=20, center=46 < 100 → scoreable
+    // pipe2: x=40, center=66 < 100 → scoreable
+    // pipe3: x=90, gapY=200 → bird at y=180 hits top pipe (collision)
+    sb.gameState = 'PLAYING';
+    sb.bird.y = 180;           // hits top pipe at gapY=200
+    sb.bird.velocity = 0;
+    sb.pipes.length = 0;
+    sb.pipes.push({ x: 20, gapY: 300, scored: false });   // passed, scoreable
+    sb.pipes.push({ x: 40, gapY: 300, scored: false });   // passed, scoreable
+    sb.pipes.push({ x: 90, gapY: 200, scored: false });   // collision pipe
+    sb.score = 0;
+    sb.distanceSinceLastPipe = 0;
+
+    sb.update(0.016);
+
+    assertEqual(sb.gameState, 'GAME_OVER', 'Pipe collision → GAME_OVER');
+    assertEqual(sb.score, 0, 'Score stays 0 with two scoreable pipes (early exit prevents scoring)');
+})();
+
+// Test 3: Verify the early exit guard exists in source code
+(() => {
+    // Extract the update() function body, then find its PLAYING case
+    const updateStart = src.indexOf('function update(dt)');
+    const updateSrc = src.slice(updateStart, src.indexOf('\nfunction', updateStart + 1));
+    const playingStart = updateSrc.indexOf('case STATE_PLAYING:');
+    const playingEnd = updateSrc.indexOf('case STATE_GAME_OVER:');
+    const playingCase = updateSrc.slice(playingStart, playingEnd);
+
+    // Verify checkCollisions is followed by state guard before updateScore
+    const collisionIdx = playingCase.indexOf('checkCollisions()');
+    const guardIdx = playingCase.indexOf('if (gameState !== STATE_PLAYING) break');
+    const scoreIdx = playingCase.indexOf('updateScore()');
+
+    assert(collisionIdx > -1, 'checkCollisions() present in PLAYING case');
+    assert(guardIdx > -1, 'Early exit guard present after checkCollisions()');
+    assert(scoreIdx > -1, 'updateScore() present in PLAYING case');
+    assert(
+        collisionIdx < guardIdx && guardIdx < scoreIdx,
+        'Order: checkCollisions → state guard → updateScore (dead bird cannot score)'
+    );
+})();
+
+// ═══════════════════════════════════════════════════════
 // SUMMARY & BUG REPORT
 // ═══════════════════════════════════════════════════════
 
