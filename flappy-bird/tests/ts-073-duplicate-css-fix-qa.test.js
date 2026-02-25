@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { JSDOM } = require('jsdom');
 
 const STYLE_PATH = path.join(__dirname, '..', 'style.css');
 const INDEX_PATH = path.join(__dirname, '..', 'index.html');
@@ -379,13 +380,56 @@ test('index.html viewport disables user scaling', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GROUP 8: Pre-existing Known Issue
+// GROUP 8: DOM-based Canvas Rendering (BUG-CD017-001)
 // ═══════════════════════════════════════════════════════════════════════════
 console.log('');
-console.log('── Group 8: Known Issues ──────────────────────────────');
+console.log('── Group 8: DOM-based Canvas Rendering (BUG-CD017-001) ─');
 
-skip('DOM-based canvas rendering test (BUG-CD017-001)',
-  'window is not defined — requires browser/JSDOM environment, pre-existing and unrelated to CD-067');
+test('DOM-based canvas rendering test (BUG-CD017-001)', () => {
+  // Load HTML with CSS in JSDOM environment
+  const htmlPath = path.join(__dirname, '..', 'index.html');
+  const cssPath = path.join(__dirname, '..', 'style.css');
+
+  const htmlContent = fs.readFileSync(htmlPath, 'utf8');
+  const cssContent = fs.readFileSync(cssPath, 'utf8');
+
+  // Create JSDOM instance with CSS loaded
+  const dom = new JSDOM(htmlContent, {
+    resources: 'usable',
+    url: 'http://localhost/'
+  });
+
+  const { window } = dom;
+  const { document } = window;
+
+  // Inject CSS into the document
+  const styleElement = document.createElement('style');
+  styleElement.textContent = cssContent;
+  document.head.appendChild(styleElement);
+
+  // Verify canvas element exists
+  const canvas = document.getElementById('gameCanvas');
+  assert(canvas, 'Canvas element not found in DOM');
+
+  // Verify canvas attributes
+  assertEqual(canvas.tagName, 'CANVAS', 'Element is not a canvas');
+  assertEqual(canvas.getAttribute('width'), '400', 'Canvas width attribute mismatch');
+  assertEqual(canvas.getAttribute('height'), '600', 'Canvas height attribute mismatch');
+
+  // Verify canvas computed styles
+  const computedStyle = window.getComputedStyle(canvas);
+
+  // Verify display property is applied
+  assert(computedStyle.display !== '', 'Canvas display property not set');
+
+  // Verify canvas is rendered in DOM context
+  const body = document.body;
+  assert(body.contains(canvas), 'Canvas not in DOM body');
+
+  // Verify CSS rules are applied to canvas
+  const displayValue = computedStyle.getPropertyValue('display');
+  assert(displayValue, 'Display property not computed');
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SUMMARY
