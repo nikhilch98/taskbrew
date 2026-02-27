@@ -6,7 +6,7 @@ get started with development, testing, and submitting changes.
 ## Development Setup
 
 ```bash
-git clone https://github.com/nikhilchatragadda/taskbrew.git
+git clone https://github.com/nikhilch98/taskbrew.git
 cd taskbrew
 python -m venv .venv
 source .venv/bin/activate
@@ -72,7 +72,7 @@ Before opening a PR, make sure:
 
 ## Extension Points
 
-ai-team is designed to be extended in several ways. Here are the main places
+TaskBrew is designed to be extended in several ways. Here are the main places
 where contributions are most welcome:
 
 ### New Roles
@@ -101,9 +101,9 @@ details.
 
 ## Reporting Issues
 
-Open an issue on [GitHub Issues](https://github.com/nikhilchatragadda/ai-team/issues)
+Open an issue on [GitHub Issues](https://github.com/nikhilch98/taskbrew/issues)
 with a clear description of the problem, steps to reproduce, and your
-environment details (Python version, OS, ai-team version).
+environment details (Python version, OS, taskbrew version).
 
 ## License
 

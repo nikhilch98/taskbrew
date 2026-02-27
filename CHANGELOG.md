@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web dashboard with real-time task monitoring
 - Multi-project support with per-project database isolation
 - `taskbrew init` command for project scaffolding
-- `ai-team doctor` command for system diagnostics
+- `taskbrew doctor` command for system diagnostics
 - Fail-fast startup validation with actionable error messages
 - MIT license for open-source distribution
 

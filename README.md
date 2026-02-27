@@ -31,26 +31,26 @@ Each agent runs as an independent loop that polls for work matching its role, ex
   You submit a goal
        |
        v
-  +----+-----+     decomposes into      +----------+
-  |    PM     | ───────────────────────> | Architect|
-  | (Claude)  |     architecture tasks   | (Claude) |
-  +----------+                           +----+-----+
-                                              |
-                                    creates coder tasks
-                                              |
-                    +-------------------------+-------------------------+
-                    |                         |                         |
-              +-----+-----+           +------+----+            +------+----+
-              |  Coder-1   |           |  Coder-2  |            |  Coder-3  |
-              | (Sonnet)   |           | (Sonnet)  |            | (Sonnet)  |
-              |  worktree  |           |  worktree |            |  worktree |
-              +-----+------+          +-----+-----+            +-----+-----+
-                    |                        |                        |
-                    +----------+-------------+------------------------+
+  +----+-----+     decomposes into      +--------------+
+  |    PM     | ───────────────────────> |   Architect   |
+  |Opus 4.6   |     architecture tasks  |Gemini 3.1 Pro |
+  +----------+                           +------+-------+
+                                                |
+                                      creates coder tasks
+                                                |
+                    +---------------------------+---------------------------+
+                    |                           |                           |
+              +-----+-----+           +--------+----+            +--------+----+
+              |  Coder-1   |           |  Coder-2   |            |  Coder-3   |
+              |Sonnet 4.6  |           |Sonnet 4.6  |            |Sonnet 4.6  |
+              |  worktree  |           |  worktree  |            |  worktree  |
+              +-----+------+          +------+------+            +------+-----+
+                    |                        |                          |
+                    +----------+-------------+--------------------------+
                                |
                          +-----+------+       rejection
                          |  Verifier  | ─ ─ ─ ─ ─ ─ ─> back to Coder
-                         |  (Claude)  |
+                         | Opus 4.6   |
                          +-----+------+
                                |
                            approval
@@ -147,20 +147,22 @@ TaskBrew ships with 33 built-in intelligence modules that enhance agent behavior
 ### Prerequisites
 
 - Python 3.10+
-- At least one CLI agent: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Gemini CLI](https://github.com/google-gemini/gemini-cli)
-- An API key (`ANTHROPIC_API_KEY` or `GOOGLE_API_KEY`)
+- At least one CLI agent installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Gemini CLI](https://github.com/google-gemini/gemini-cli)
+
+> **Note:** No API keys are needed in your environment -- the CLI tools handle authentication themselves.
 
 ### Install and run
 
 ```bash
-# Install from PyPI
-pip install taskbrew
+# Clone the repository
+git clone https://github.com/nikhilch98/taskbrew.git
+cd taskbrew
+
+# Install in editable mode
+pip install -e .
 
 # Initialize a new project
 taskbrew init --name my-project
-
-# Set your API key
-export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Check your setup
 taskbrew doctor
@@ -217,7 +219,7 @@ taskbrew status
               |         |               |         |
         +-----+---+  +-+-------+  +----+----+  +-+-------+
         |   PM    |  |Architect|  | Coder x3|  |Verifier |
-        | Opus    |  | Opus    |  | Sonnet  |  | Opus    |
+        |Opus 4.6 |  |Gemini   |  |Sonnet4.6|  |Opus 4.6 |
         +---------+  +---------+  +---------+  +---------+
               |         |               |         |
         +-----+---------+---------------+---------+-----+
@@ -252,7 +254,6 @@ All configuration lives in `config/`:
 | `config/roles/*.yaml` | Agent role definitions: system prompt, tools, model, routing |
 | `config/providers/*.yaml` | CLI provider definitions: binary, flags, output parser |
 | `plugins/` | Python plugins for lifecycle hooks and custom API routes |
-| `.env` | API keys and environment overrides (see `.env.example`) |
 
 ### team.yaml
 
@@ -403,16 +404,13 @@ Plugins can also register API routes and custom tools. See [docs/extending.md](d
 | `taskbrew serve --project-dir <path>` | Start with explicit project directory |
 | `taskbrew goal "<title>" --description "<desc>"` | Submit a new goal for the PM to decompose |
 | `taskbrew status` | Show agent status, active groups, and task counts |
-| `taskbrew doctor` | Verify Python version, CLI binaries, API keys, and config files |
+| `taskbrew doctor` | Verify Python version, CLI binaries, and config files |
 
 ---
 
 ## Docker Deployment
 
 ```bash
-# Copy and fill in your API key
-cp .env.example .env
-
 # Start with Docker Compose
 docker compose up -d
 ```
@@ -430,8 +428,6 @@ services:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
       - ./config:/app/config
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 ```
 
 ---
@@ -460,7 +456,7 @@ Key endpoint groups:
 ## Development
 
 ```bash
-git clone https://github.com/nikhilchatragadda/taskbrew.git
+git clone https://github.com/nikhilch98/taskbrew.git
 cd taskbrew
 pip install -e ".[dev]"
 
@@ -528,6 +524,35 @@ await event_bus.emit("my_plugin.alert", {"severity": "warning", "message": "..."
 ```
 
 Key events: `task.completed`, `task.failed`, `task.claimed`, `agent.status_changed`, `agent.result`, `tool.pre_use`, `tool.post_use`.
+
+---
+
+## Publishing to PyPI
+
+Once published, users will be able to install with `pip install taskbrew`.
+
+```bash
+# Install build tools
+pip install build twine
+
+# Build the package
+python -m build
+
+# Upload to PyPI (requires a PyPI account and API token)
+twine upload dist/*
+```
+
+To create a PyPI API token:
+1. Register at [pypi.org](https://pypi.org/account/register/)
+2. Go to Account Settings > API tokens
+3. Create a token scoped to the `taskbrew` project (or all projects for the first upload)
+4. Use the token as your password when `twine upload` prompts for credentials
+
+After the first upload, users can install with:
+
+```bash
+pip install taskbrew
+```
 
 ---
 

@@ -9,22 +9,15 @@ and submitting your first task.
 - **At least one CLI agent installed**:
   - Claude Code: `npm install -g @anthropic-ai/claude-code`
   - Gemini CLI: `npm install -g @google/gemini-cli`
-- **An API key** for your chosen provider:
-  - Claude: `ANTHROPIC_API_KEY`
-  - Gemini: `GOOGLE_API_KEY`
+
+> **Note:** No API keys are needed in your environment -- the CLI tools handle authentication themselves.
 
 ## Installation
 
-### From PyPI
+### From source
 
 ```bash
-pip install taskbrew
-```
-
-### Development install
-
-```bash
-git clone https://github.com/nikhilchatragadda/taskbrew.git
+git clone https://github.com/nikhilch98/taskbrew.git
 cd taskbrew
 pip install -e ".[dev]"
 ```
@@ -93,21 +86,6 @@ creates a default PM role. A typical team has four roles:
 
 See [configuration.md](configuration.md) for a full reference of role fields.
 
-### Set your API key
-
-Copy `.env.example` to `.env` and fill in your key:
-
-```bash
-cp .env.example .env
-# Edit .env and set ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Or export directly:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
-
 ## System diagnostics
 
 Before starting, verify your setup with the built-in doctor command:
@@ -119,15 +97,13 @@ taskbrew doctor
 Example output:
 
 ```
-AI Team Doctor
+TaskBrew Doctor
 
 Checking system requirements...
 
   [OK] Python 3.12.0
   [OK] Claude CLI found: /usr/local/bin/claude
   [WARN] Gemini CLI not found (install: npm install -g @google/gemini-cli)
-  [OK] ANTHROPIC_API_KEY is set
-  [WARN] GOOGLE_API_KEY not set
   [OK] config/team.yaml found
   [OK] 4 role(s) found in config/roles/
 
@@ -138,7 +114,6 @@ The doctor checks:
 
 - Python version (3.10+ required)
 - CLI binaries on PATH (claude, gemini)
-- API keys in environment
 - Configuration files in the current directory
 
 ## Start the server
