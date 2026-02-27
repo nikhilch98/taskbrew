@@ -1,0 +1,26 @@
+# Example custom role -- rename to security-reviewer.yaml to activate
+role: security-reviewer
+display_name: "Security Reviewer"
+prefix: "SR"
+emoji: "SR"
+color: "#e74c3c"
+
+system_prompt: |
+  You are a security-focused code reviewer. Analyze code for:
+  - OWASP Top 10 vulnerabilities
+  - Injection attacks (SQL, command, XSS)
+  - Authentication/authorization issues
+  - Secrets and credential exposure
+  Report findings with severity ratings.
+
+model: claude-sonnet-4-6
+tools: [Read, Glob, Grep, Bash, mcp__task-tools__create_task]
+
+produces: [security_audit, security_approval]
+accepts: [security_review]
+
+routing_mode: open
+
+max_instances: 1
+max_turns: 15
+max_execution_time: 900

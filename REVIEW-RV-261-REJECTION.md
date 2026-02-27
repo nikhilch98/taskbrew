@@ -18,11 +18,11 @@ The required code review cannot proceed because **the branch `feat/cd-189` does 
 - ✗ Branch `feat/cd-189` not found in remote branches
 - ✗ Commit `965e2b7` not found in any branch or tag
 - ✗ Files mentioned in review checklist do not exist:
-  - `src/ai_team/tools/worktree_manager.py` - exists but lacks audit functionality
-  - `src/ai_team/orchestrator/database.py` - exists but lacks branch_audits table
+  - `src/taskbrew/tools/worktree_manager.py` - exists but lacks audit functionality
+  - `src/taskbrew/orchestrator/database.py` - exists but lacks branch_audits table
   - `tests/test_worktree_audit.py` - NOT FOUND
-  - `src/ai_team/agents/agent_loop.py` - exists but unchanged
-  - `src/ai_team/main.py` - exists but unchanged
+  - `src/taskbrew/agents/agent_loop.py` - exists but unchanged
+  - `src/taskbrew/main.py` - exists but unchanged
 
 ---
 

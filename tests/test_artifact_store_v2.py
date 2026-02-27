@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai_team.orchestrator.artifact_store import ArtifactStore
+from taskbrew.orchestrator.artifact_store import ArtifactStore
 
 
 # ------------------------------------------------------------------

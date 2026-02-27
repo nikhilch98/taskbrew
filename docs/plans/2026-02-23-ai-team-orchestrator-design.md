@@ -156,7 +156,7 @@ Reviewer (review existing PR)
 ai-team/
   pyproject.toml
   src/
-    ai_team/
+    taskbrew/
       __init__.py
       main.py                 # Entry point
       config.py               # Agent configs, pipeline defs, settings

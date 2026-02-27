@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from ai_team.dashboard.chat_manager import ChatManager, ChatSession, ChatMessage
-from ai_team.config import AgentConfig
+from taskbrew.dashboard.chat_manager import ChatManager
+from taskbrew.config import AgentConfig
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def chat_manager():
     return ChatManager(cli_path="/usr/bin/claude", project_dir="/tmp/test")
 
 
-@patch("ai_team.dashboard.chat_manager.ClaudeSDKClient")
+@patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
 async def test_start_session_creates_client(mock_client_cls, chat_manager, agent_config):
     mock_client = AsyncMock()
     mock_client_cls.return_value = mock_client
@@ -30,7 +30,7 @@ async def test_start_session_creates_client(mock_client_cls, chat_manager, agent
     mock_client.connect.assert_awaited_once()
 
 
-@patch("ai_team.dashboard.chat_manager.ClaudeSDKClient")
+@patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
 async def test_start_duplicate_session_raises(mock_client_cls, chat_manager, agent_config):
     mock_client_cls.return_value = AsyncMock()
     await chat_manager.start_session("coder", agent_config)
@@ -38,7 +38,7 @@ async def test_start_duplicate_session_raises(mock_client_cls, chat_manager, age
         await chat_manager.start_session("coder", agent_config)
 
 
-@patch("ai_team.dashboard.chat_manager.ClaudeSDKClient")
+@patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
 async def test_stop_session_disconnects(mock_client_cls, chat_manager, agent_config):
     mock_client = AsyncMock()
     mock_client_cls.return_value = mock_client
@@ -52,7 +52,7 @@ async def test_stop_nonexistent_is_noop(chat_manager):
     await chat_manager.stop_session("nonexistent")  # Should not raise
 
 
-@patch("ai_team.dashboard.chat_manager.ClaudeSDKClient")
+@patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
 async def test_send_message_records_history(mock_client_cls, chat_manager, agent_config):
     mock_client = AsyncMock()
     mock_client_cls.return_value = mock_client
@@ -69,7 +69,7 @@ async def test_send_message_records_history(mock_client_cls, chat_manager, agent
     mock_client.receive_response = mock_receive_response
 
     await chat_manager.start_session("coder", agent_config)
-    result = await chat_manager.send_message("coder", "Help me with X")
+    await chat_manager.send_message("coder", "Help me with X")
 
     history = chat_manager.get_history("coder")
     assert len(history) == 2
@@ -78,7 +78,7 @@ async def test_send_message_records_history(mock_client_cls, chat_manager, agent
     assert history[1].role == "assistant"
 
 
-@patch("ai_team.dashboard.chat_manager.ClaudeSDKClient")
+@patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
 async def test_send_while_responding_raises(mock_client_cls, chat_manager, agent_config):
     mock_client_cls.return_value = AsyncMock()
     await chat_manager.start_session("coder", agent_config)
@@ -92,7 +92,7 @@ async def test_send_to_nonexistent_raises(chat_manager):
         await chat_manager.send_message("coder", "Hello")
 
 
-@patch("ai_team.dashboard.chat_manager.ClaudeSDKClient")
+@patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
 async def test_stop_all_cleans_up(mock_client_cls, chat_manager):
     mock_client_cls.return_value = AsyncMock()
     config1 = AgentConfig(name="coder", role="coder", system_prompt="coder")

@@ -1,4 +1,4 @@
-"""Tests for ai_team.config_loader — team config, role loading, and routing validation."""
+"""Tests for taskbrew.config_loader — team config, role loading, and routing validation."""
 
 from __future__ import annotations
 
@@ -7,12 +7,13 @@ from textwrap import dedent
 
 import pytest
 
-from ai_team.config_loader import (
+from taskbrew.config_loader import (
     AutoScaleConfig,
     AutoScaleDefaults,
     RoleConfig,
     RouteTarget,
     TeamConfig,
+    _parse_role,
     load_roles,
     load_team_config,
     validate_routing,
@@ -45,8 +46,6 @@ TEAM_YAML = dedent("""\
         scale_up_threshold: 5
         scale_down_idle: 20
 
-    approval_required: [prd]
-
     group_prefixes:
       pm: "FEAT"
 """)
@@ -70,7 +69,6 @@ PM_YAML = dedent("""\
     can_create_groups: true
     group_type: "FEAT"
     max_instances: 1
-    requires_approval: [prd]
     context_includes:
       - parent_artifact
 """)
@@ -96,7 +94,6 @@ ARCHITECT_YAML = dedent("""\
       enabled: true
       scale_up_threshold: 4
       scale_down_idle: 20
-    requires_approval: []
     context_includes: []
 """)
 
@@ -115,7 +112,6 @@ CODER_YAML = dedent("""\
     routes_to: []
     can_create_groups: false
     max_instances: 3
-    requires_approval: []
     context_includes: []
 """)
 
@@ -150,7 +146,6 @@ class TestLoadTeamConfig:
         assert cfg.default_auto_scale.scale_up_threshold == 5
         assert cfg.default_auto_scale.scale_down_idle == 20
 
-        assert cfg.approval_required == ["prd"]
         assert cfg.group_prefixes == {"pm": "FEAT"}
 
     def test_load_missing_file_raises(self, tmp_path: Path) -> None:
@@ -193,7 +188,6 @@ class TestLoadRoles:
         assert pm.group_type == "FEAT"
         assert pm.max_instances == 1
         assert pm.auto_scale is None
-        assert pm.requires_approval == ["prd"]
         assert pm.context_includes == ["parent_artifact"]
 
     def test_load_role_with_auto_scale(self, tmp_path: Path) -> None:
@@ -317,3 +311,263 @@ class TestValidateRouting:
         """An empty roles dict should produce no errors."""
         errors = validate_routing({})
         assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# cli_provider support in TeamConfig
+# ---------------------------------------------------------------------------
+
+
+class TestCliProvider:
+    """Tests for cli_provider field in TeamConfig."""
+
+    TEAM_YAML_WITH_PROVIDER = dedent("""\
+        team_name: "Gemini Team"
+        cli_provider: "gemini"
+
+        database:
+          path: "data/gemini.db"
+
+        dashboard:
+          host: "0.0.0.0"
+          port: 8420
+
+        artifacts:
+          base_dir: "artifacts"
+
+        defaults:
+          max_instances: 1
+          poll_interval_seconds: 5
+          idle_timeout_minutes: 30
+          auto_scale:
+            enabled: false
+    """)
+
+    def test_cli_provider_parsed(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "team.yaml"
+        cfg_file.write_text(self.TEAM_YAML_WITH_PROVIDER)
+        cfg = load_team_config(cfg_file)
+        assert cfg.cli_provider == "gemini"
+
+    def test_cli_provider_defaults_to_claude(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "team.yaml"
+        cfg_file.write_text(TEAM_YAML)
+        cfg = load_team_config(cfg_file)
+        assert cfg.cli_provider == "claude"
+
+
+# ---------------------------------------------------------------------------
+# Tilde expansion in DB path
+# ---------------------------------------------------------------------------
+
+
+def test_load_team_config_parses_mcp_servers(tmp_path):
+    """MCP servers defined in team.yaml should be parsed into MCPServerConfig."""
+    team_yaml = tmp_path / "team.yaml"
+    team_yaml.write_text(
+        'team_name: test\n'
+        'database:\n  path: "~/.taskbrew/data/test.db"\n'
+        'dashboard:\n  host: "0.0.0.0"\n  port: 8420\n'
+        'artifacts:\n  base_dir: "artifacts"\n'
+        'mcp_servers:\n'
+        '  task-tools:\n'
+        '    builtin: true\n'
+        '  my-custom-tool:\n'
+        '    command: "python"\n'
+        '    args: ["-m", "my_tool"]\n'
+        '    env:\n'
+        '      MY_VAR: "hello"\n'
+        '    transport: stdio\n'
+    )
+    from taskbrew.config_loader import load_team_config
+    cfg = load_team_config(team_yaml)
+    assert len(cfg.mcp_servers) >= 2
+    assert cfg.mcp_servers["task-tools"].builtin is True
+    assert cfg.mcp_servers["my-custom-tool"].command == "python"
+    assert cfg.mcp_servers["my-custom-tool"].args == ["-m", "my_tool"]
+    assert cfg.mcp_servers["my-custom-tool"].env == {"MY_VAR": "hello"}
+
+
+def test_load_team_config_default_mcp_servers(tmp_path):
+    """If no mcp_servers in YAML, defaults should include built-in servers."""
+    team_yaml = tmp_path / "team.yaml"
+    team_yaml.write_text(
+        'team_name: test\n'
+        'database:\n  path: "~/.taskbrew/data/test.db"\n'
+        'dashboard:\n  host: "0.0.0.0"\n  port: 8420\n'
+        'artifacts:\n  base_dir: "artifacts"\n'
+    )
+    from taskbrew.config_loader import load_team_config
+    cfg = load_team_config(team_yaml)
+    assert "task-tools" in cfg.mcp_servers
+    assert "intelligence-tools" in cfg.mcp_servers
+    assert cfg.mcp_servers["task-tools"].builtin is True
+    assert cfg.mcp_servers["intelligence-tools"].builtin is True
+
+
+def test_load_team_config_expands_tilde(tmp_path):
+    """DB path with ~ should be expanded to full home directory."""
+    team_yaml = tmp_path / "team.yaml"
+    team_yaml.write_text(
+        'team_name: test\n'
+        'database:\n  path: "~/.taskbrew/data/test.db"\n'
+        'dashboard:\n  host: "0.0.0.0"\n  port: 8420\n'
+        'artifacts:\n  base_dir: "artifacts"\n'
+    )
+    from taskbrew.config_loader import load_team_config
+    cfg = load_team_config(team_yaml)
+    assert "~" not in cfg.db_path
+    assert cfg.db_path.startswith("/")
+
+
+# ---------------------------------------------------------------------------
+# routing_mode field on RoleConfig
+# ---------------------------------------------------------------------------
+
+
+def test_parse_role_routing_mode_open():
+    """routing_mode should default to 'open'."""
+    from taskbrew.config_loader import _parse_role
+    data = {
+        "role": "test", "display_name": "Test", "prefix": "TS",
+        "color": "#000", "emoji": "T", "system_prompt": "test",
+        "routing_mode": "open",
+    }
+    cfg = _parse_role(data)
+    assert cfg.routing_mode == "open"
+
+
+def test_parse_role_routing_mode_restricted():
+    """routing_mode can be set to 'restricted'."""
+    from taskbrew.config_loader import _parse_role
+    data = {
+        "role": "test", "display_name": "Test", "prefix": "TS",
+        "color": "#000", "emoji": "T", "system_prompt": "test",
+        "routing_mode": "restricted",
+    }
+    cfg = _parse_role(data)
+    assert cfg.routing_mode == "restricted"
+
+
+def test_parse_role_routing_mode_default():
+    """If routing_mode not specified, defaults to 'open'."""
+    from taskbrew.config_loader import _parse_role
+    data = {
+        "role": "test", "display_name": "Test", "prefix": "TS",
+        "color": "#000", "emoji": "T", "system_prompt": "test",
+    }
+    cfg = _parse_role(data)
+    assert cfg.routing_mode == "open"
+
+
+# ---------------------------------------------------------------------------
+# Robustness fixes — required field validation
+# ---------------------------------------------------------------------------
+
+
+def test_load_team_config_missing_required_key(tmp_path):
+    """Missing required key should raise ValueError with clear message."""
+    team_yaml = tmp_path / "team.yaml"
+    team_yaml.write_text('team_name: test\n')  # missing database section
+    with pytest.raises(ValueError, match="Missing required key"):
+        load_team_config(team_yaml)
+
+
+def test_parse_role_missing_required_key():
+    """Missing required role key should raise ValueError."""
+    data = {"role": "test", "display_name": "Test"}  # missing system_prompt etc.
+    with pytest.raises(ValueError, match="missing required key"):
+        _parse_role(data)
+
+
+# ---------------------------------------------------------------------------
+# Robustness fixes — numeric bounds validation
+# ---------------------------------------------------------------------------
+
+
+def test_port_out_of_range(tmp_path):
+    """Port out of valid range should raise ValueError."""
+    team_yaml = tmp_path / "team.yaml"
+    team_yaml.write_text(
+        'team_name: test\n'
+        'database:\n  path: "~/.taskbrew/data/test.db"\n'
+        'dashboard:\n  host: "0.0.0.0"\n  port: 99999\n'
+        'artifacts:\n  base_dir: "artifacts"\n'
+    )
+    with pytest.raises(ValueError, match="dashboard.port"):
+        load_team_config(team_yaml)
+
+
+# ---------------------------------------------------------------------------
+# Robustness fixes — warn on skipped role files
+# ---------------------------------------------------------------------------
+
+
+def test_load_roles_skips_empty_file(tmp_path, caplog):
+    """Empty role YAML files should be skipped with a warning."""
+    roles_dir = tmp_path / "roles"
+    roles_dir.mkdir()
+    (roles_dir / "empty.yaml").write_text("")
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        roles = load_roles(roles_dir)
+
+    assert roles == {}
+    assert any("Skipping empty role file" in msg for msg in caplog.messages)
+
+
+def test_load_roles_skips_invalid_file(tmp_path, caplog):
+    """Invalid role YAML files should be skipped with a warning."""
+    roles_dir = tmp_path / "roles"
+    roles_dir.mkdir()
+    # Missing required keys
+    (roles_dir / "broken.yaml").write_text('role: broken\n')
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        roles = load_roles(roles_dir)
+
+    assert roles == {}
+    assert any("Skipping invalid role file" in msg for msg in caplog.messages)
+
+
+# ---------------------------------------------------------------------------
+# Robustness fixes — cycle detection
+# ---------------------------------------------------------------------------
+
+
+def test_validate_routing_allows_cycles():
+    """Routing cycles (feedback loops) should be allowed."""
+    roles = {
+        "a": RoleConfig(
+            role="a", display_name="A", prefix="AA", color="#000",
+            emoji="A", system_prompt="test", accepts=["x"],
+            routes_to=[RouteTarget(role="b", task_types=["x"])],
+        ),
+        "b": RoleConfig(
+            role="b", display_name="B", prefix="BB", color="#000",
+            emoji="B", system_prompt="test", accepts=["x"],
+            routes_to=[RouteTarget(role="a", task_types=["x"])],
+        ),
+    }
+    errors = validate_routing(roles)
+    assert not any("cycle" in e.lower() for e in errors)
+
+
+def test_validate_routing_no_cycle():
+    """Linear routing should not produce cycle errors."""
+    roles = {
+        "a": RoleConfig(
+            role="a", display_name="A", prefix="AA", color="#000",
+            emoji="A", system_prompt="test", accepts=["x"],
+            routes_to=[RouteTarget(role="b", task_types=["x"])],
+        ),
+        "b": RoleConfig(
+            role="b", display_name="B", prefix="BB", color="#000",
+            emoji="B", system_prompt="test", accepts=["x"],
+            routes_to=[],
+        ),
+    }
+    errors = validate_routing(roles)
+    assert not any("cycle" in e.lower() for e in errors)

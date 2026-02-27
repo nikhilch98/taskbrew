@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TaskBrew - Cost Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/costs.css">
+</head>
+<body>
+    <div class="top-bar">
+        <h1>Cost Dashboard</h1>
+        <div style="display:flex;gap:12px;align-items:center;">
+            <button class="refresh-btn" onclick="loadAll()">&#x21BB; Refresh</button>
+            <a href="/">Back to Dashboard</a>
+        </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="card">
+        <div class="card-title">Budget Utilization</div>
+        <div id="summaryContainer"><div class="empty">Loading...</div></div>
+    </div>
+
+    <!-- Trend -->
+    <div class="card">
+        <div class="card-title">Cost Trend (Last 30 Days)</div>
+        <div style="position:relative;width:100%;height:280px;">
+            <canvas id="trendCanvas" style="width:100%;height:100%;"></canvas>
+        </div>
+    </div>
+
+    <!-- Breakdowns -->
+    <div class="grid">
+        <div class="card">
+            <div class="card-title">Cost by Role</div>
+            <div id="roleContainer"><div class="empty">Loading...</div></div>
+        </div>
+        <div class="card">
+            <div class="card-title">Cost by Group</div>
+            <div id="groupContainer"><div class="empty">Loading...</div></div>
+        </div>
+    </div>
+
+    <script defer src="/static/js/costs.js"></script>
+</body>
+</html>

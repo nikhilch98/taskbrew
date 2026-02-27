@@ -1,0 +1,88 @@
+# =============================================================================
+# TaskBrew — Production Docker Compose
+# =============================================================================
+# Usage:
+#   cp .env.example .env   # fill in secrets
+#   docker compose up -d
+# =============================================================================
+
+name: taskbrew
+
+services:
+  taskbrew:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taskbrew
+    ports:
+      - "8420:8420"
+
+    # --- Restart & health ------------------------------------------------
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8420/api/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    # --- Resource limits -------------------------------------------------
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+    # --- Logging ---------------------------------------------------------
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # --- Volumes ---------------------------------------------------------
+    volumes:
+      - ./data:/app/data            # persistent task database
+      - ./artifacts:/app/artifacts   # build / task artifacts
+      - ./config:/app/config         # team.yaml and other config
+      - taskbrew-logs:/app/logs      # application log files
+
+    # --- Environment -----------------------------------------------------
+    environment:
+      # LLM provider (required)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+
+      # Application settings
+      - AI_TEAM_API_URL=${AI_TEAM_API_URL:-http://127.0.0.1:8420}   # internal API base URL
+      - AI_TEAM_DB_PATH=${AI_TEAM_DB_PATH:-data/tasks.db}           # SQLite database path
+
+      # Dashboard / CORS
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8000,http://localhost:3000}
+
+      # Authentication
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+
+      # Python runtime
+      - PYTHONUNBUFFERED=1          # flush stdout/stderr immediately
+      - PYTHONDONTWRITEBYTECODE=1   # skip .pyc files in container
+
+    # --- Networking ------------------------------------------------------
+    networks:
+      - taskbrew-net
+
+# =============================================================================
+# Named volumes
+# =============================================================================
+volumes:
+  taskbrew-logs:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  taskbrew-net:
+    driver: bridge

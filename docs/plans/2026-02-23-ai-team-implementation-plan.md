@@ -16,8 +16,8 @@
 
 **Files:**
 - Create: `pyproject.toml`
-- Create: `src/ai_team/__init__.py`
-- Create: `src/ai_team/config.py`
+- Create: `src/taskbrew/__init__.py`
+- Create: `src/taskbrew/config.py`
 - Create: `tests/__init__.py`
 - Create: `tests/conftest.py`
 
@@ -53,7 +53,7 @@ dev = [
 ]
 
 [project.scripts]
-ai-team = "ai_team.main:cli_main"
+ai-team = "taskbrew.main:cli_main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -64,7 +64,7 @@ target-version = "py310"
 line-length = 100
 ```
 
-**Step 2: Create src/ai_team/__init__.py**
+**Step 2: Create src/taskbrew/__init__.py**
 
 ```python
 """AI Team Orchestrator - multi-agent development automation."""
@@ -72,7 +72,7 @@ line-length = 100
 __version__ = "0.1.0"
 ```
 
-**Step 3: Create src/ai_team/config.py**
+**Step 3: Create src/taskbrew/config.py**
 
 ```python
 """Configuration for the AI Team Orchestrator."""
@@ -149,8 +149,8 @@ git commit -m "feat: project scaffolding with pyproject.toml and config"
 ## Task 2: Event Bus
 
 **Files:**
-- Create: `src/ai_team/orchestrator/__init__.py`
-- Create: `src/ai_team/orchestrator/event_bus.py`
+- Create: `src/taskbrew/orchestrator/__init__.py`
+- Create: `src/taskbrew/orchestrator/event_bus.py`
 - Create: `tests/test_event_bus.py`
 
 **Step 1: Write the failing tests**
@@ -159,7 +159,7 @@ git commit -m "feat: project scaffolding with pyproject.toml and config"
 # tests/test_event_bus.py
 import asyncio
 import pytest
-from ai_team.orchestrator.event_bus import EventBus
+from taskbrew.orchestrator.event_bus import EventBus
 
 
 async def test_subscribe_and_emit():
@@ -235,10 +235,10 @@ Expected: FAIL (module not found)
 **Step 3: Implement EventBus**
 
 ```python
-# src/ai_team/orchestrator/__init__.py
+# src/taskbrew/orchestrator/__init__.py
 """Orchestrator components."""
 
-# src/ai_team/orchestrator/event_bus.py
+# src/taskbrew/orchestrator/event_bus.py
 """Async event bus for inter-component communication."""
 
 import asyncio
@@ -288,7 +288,7 @@ Expected: All 5 tests PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/orchestrator/ tests/test_event_bus.py
+git add src/taskbrew/orchestrator/ tests/test_event_bus.py
 git commit -m "feat: asyncio event bus with subscribe/emit/wildcard"
 ```
 
@@ -297,7 +297,7 @@ git commit -m "feat: asyncio event bus with subscribe/emit/wildcard"
 ## Task 3: Task Queue (SQLite)
 
 **Files:**
-- Create: `src/ai_team/orchestrator/task_queue.py`
+- Create: `src/taskbrew/orchestrator/task_queue.py`
 - Create: `tests/test_task_queue.py`
 
 **Step 1: Write the failing tests**
@@ -306,7 +306,7 @@ git commit -m "feat: asyncio event bus with subscribe/emit/wildcard"
 # tests/test_task_queue.py
 import pytest
 from pathlib import Path
-from ai_team.orchestrator.task_queue import TaskQueue, TaskStatus
+from taskbrew.orchestrator.task_queue import TaskQueue, TaskStatus
 
 
 @pytest.fixture
@@ -399,7 +399,7 @@ Expected: FAIL (module not found)
 **Step 3: Implement TaskQueue**
 
 ```python
-# src/ai_team/orchestrator/task_queue.py
+# src/taskbrew/orchestrator/task_queue.py
 """SQLite-backed task queue for agent coordination."""
 
 import uuid
@@ -538,7 +538,7 @@ Expected: All 7 tests PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/orchestrator/task_queue.py tests/test_task_queue.py
+git add src/taskbrew/orchestrator/task_queue.py tests/test_task_queue.py
 git commit -m "feat: SQLite-backed async task queue with status lifecycle"
 ```
 
@@ -547,8 +547,8 @@ git commit -m "feat: SQLite-backed async task queue with status lifecycle"
 ## Task 4: Base Agent Wrapper
 
 **Files:**
-- Create: `src/ai_team/agents/__init__.py`
-- Create: `src/ai_team/agents/base.py`
+- Create: `src/taskbrew/agents/__init__.py`
+- Create: `src/taskbrew/agents/base.py`
 - Create: `tests/test_agent_base.py`
 
 **Step 1: Write the failing tests**
@@ -556,8 +556,8 @@ git commit -m "feat: SQLite-backed async task queue with status lifecycle"
 ```python
 # tests/test_agent_base.py
 import pytest
-from ai_team.agents.base import AgentRunner, AgentStatus
-from ai_team.config import AgentConfig
+from taskbrew.agents.base import AgentRunner, AgentStatus
+from taskbrew.config import AgentConfig
 
 
 def test_agent_config_creation():
@@ -605,10 +605,10 @@ Expected: FAIL (module not found)
 **Step 3: Implement AgentRunner**
 
 ```python
-# src/ai_team/agents/__init__.py
+# src/taskbrew/agents/__init__.py
 """Agent definitions and runners."""
 
-# src/ai_team/agents/base.py
+# src/taskbrew/agents/base.py
 """Base agent runner wrapping ClaudeSDKClient."""
 
 from dataclasses import dataclass, field
@@ -617,7 +617,7 @@ from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, AssistantMessage, ResultMessage, TextBlock
 
-from ai_team.config import AgentConfig
+from taskbrew.config import AgentConfig
 
 
 class AgentStatus(StrEnum):
@@ -716,7 +716,7 @@ Expected: All 3 tests PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/agents/ tests/test_agent_base.py
+git add src/taskbrew/agents/ tests/test_agent_base.py
 git commit -m "feat: base AgentRunner wrapping ClaudeSDKClient with status tracking"
 ```
 
@@ -725,7 +725,7 @@ git commit -m "feat: base AgentRunner wrapping ClaudeSDKClient with status track
 ## Task 5: Agent Role Definitions
 
 **Files:**
-- Create: `src/ai_team/agents/roles.py`
+- Create: `src/taskbrew/agents/roles.py`
 - Create: `tests/test_agent_roles.py`
 
 **Step 1: Write the failing tests**
@@ -733,7 +733,7 @@ git commit -m "feat: base AgentRunner wrapping ClaudeSDKClient with status track
 ```python
 # tests/test_agent_roles.py
 import pytest
-from ai_team.agents.roles import get_agent_config, AGENT_ROLES
+from taskbrew.agents.roles import get_agent_config, AGENT_ROLES
 
 
 def test_all_roles_defined():
@@ -775,10 +775,10 @@ Expected: FAIL
 **Step 3: Implement role definitions**
 
 ```python
-# src/ai_team/agents/roles.py
+# src/taskbrew/agents/roles.py
 """Predefined agent role configurations."""
 
-from ai_team.config import AgentConfig
+from taskbrew.config import AgentConfig
 
 AGENT_ROLES: dict[str, dict] = {
     "pm": {
@@ -894,7 +894,7 @@ Expected: All 5 tests PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/agents/roles.py tests/test_agent_roles.py
+git add src/taskbrew/agents/roles.py tests/test_agent_roles.py
 git commit -m "feat: agent role definitions for PM/Researcher/Architect/Coder/Tester/Reviewer"
 ```
 
@@ -903,7 +903,7 @@ git commit -m "feat: agent role definitions for PM/Researcher/Architect/Coder/Te
 ## Task 6: Team Manager
 
 **Files:**
-- Create: `src/ai_team/orchestrator/team_manager.py`
+- Create: `src/taskbrew/orchestrator/team_manager.py`
 - Create: `tests/test_team_manager.py`
 
 **Step 1: Write the failing tests**
@@ -911,9 +911,9 @@ git commit -m "feat: agent role definitions for PM/Researcher/Architect/Coder/Te
 ```python
 # tests/test_team_manager.py
 import pytest
-from ai_team.orchestrator.team_manager import TeamManager
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.agents.base import AgentStatus
+from taskbrew.orchestrator.team_manager import TeamManager
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.agents.base import AgentStatus
 
 
 @pytest.fixture
@@ -973,12 +973,12 @@ Expected: FAIL
 **Step 3: Implement TeamManager**
 
 ```python
-# src/ai_team/orchestrator/team_manager.py
+# src/taskbrew/orchestrator/team_manager.py
 """Manages the lifecycle of agent instances."""
 
-from ai_team.agents.base import AgentRunner, AgentStatus
-from ai_team.agents.roles import get_agent_config, AGENT_ROLES
-from ai_team.orchestrator.event_bus import EventBus
+from taskbrew.agents.base import AgentRunner, AgentStatus
+from taskbrew.agents.roles import get_agent_config, AGENT_ROLES
+from taskbrew.orchestrator.event_bus import EventBus
 
 
 class TeamManager:
@@ -1045,7 +1045,7 @@ Expected: All 6 tests PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/orchestrator/team_manager.py tests/test_team_manager.py
+git add src/taskbrew/orchestrator/team_manager.py tests/test_team_manager.py
 git commit -m "feat: team manager for spawning/stopping/monitoring agents"
 ```
 
@@ -1054,9 +1054,9 @@ git commit -m "feat: team manager for spawning/stopping/monitoring agents"
 ## Task 7: Custom MCP Tools (Task & Git)
 
 **Files:**
-- Create: `src/ai_team/tools/__init__.py`
-- Create: `src/ai_team/tools/task_tools.py`
-- Create: `src/ai_team/tools/git_tools.py`
+- Create: `src/taskbrew/tools/__init__.py`
+- Create: `src/taskbrew/tools/task_tools.py`
+- Create: `src/taskbrew/tools/git_tools.py`
 - Create: `tests/test_tools.py`
 
 **Step 1: Write the failing tests**
@@ -1064,8 +1064,8 @@ git commit -m "feat: team manager for spawning/stopping/monitoring agents"
 ```python
 # tests/test_tools.py
 import pytest
-from ai_team.tools.task_tools import build_task_tools_server
-from ai_team.tools.git_tools import build_git_tools_server
+from taskbrew.tools.task_tools import build_task_tools_server
+from taskbrew.tools.git_tools import build_git_tools_server
 
 
 def test_task_tools_server_created():
@@ -1086,10 +1086,10 @@ Expected: FAIL
 **Step 3: Implement custom MCP tools**
 
 ```python
-# src/ai_team/tools/__init__.py
+# src/taskbrew/tools/__init__.py
 """Custom MCP tools for agents."""
 
-# src/ai_team/tools/task_tools.py
+# src/taskbrew/tools/task_tools.py
 """MCP tools for task queue operations - agents can claim/complete tasks."""
 
 from claude_agent_sdk import tool, create_sdk_mcp_server
@@ -1152,7 +1152,7 @@ def build_task_tools_server(db_path: str = "data/tasks.db"):
     )
 
 
-# src/ai_team/tools/git_tools.py
+# src/taskbrew/tools/git_tools.py
 """MCP tools for git operations."""
 
 from claude_agent_sdk import tool, create_sdk_mcp_server
@@ -1210,7 +1210,7 @@ Expected: All 2 tests PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/tools/ tests/test_tools.py
+git add src/taskbrew/tools/ tests/test_tools.py
 git commit -m "feat: custom MCP tools for task queue and git operations"
 ```
 
@@ -1219,7 +1219,7 @@ git commit -m "feat: custom MCP tools for task queue and git operations"
 ## Task 8: Workflow Engine
 
 **Files:**
-- Create: `src/ai_team/orchestrator/workflow.py`
+- Create: `src/taskbrew/orchestrator/workflow.py`
 - Create: `tests/test_workflow.py`
 - Create: `pipelines/feature_dev.yaml`
 
@@ -1228,7 +1228,7 @@ git commit -m "feat: custom MCP tools for task queue and git operations"
 ```python
 # tests/test_workflow.py
 import pytest
-from ai_team.orchestrator.workflow import Pipeline, PipelineStep, WorkflowEngine
+from taskbrew.orchestrator.workflow import Pipeline, PipelineStep, WorkflowEngine
 
 
 def test_pipeline_from_dict():
@@ -1314,7 +1314,7 @@ Expected: FAIL
 **Step 3: Implement workflow engine**
 
 ```python
-# src/ai_team/orchestrator/workflow.py
+# src/taskbrew/orchestrator/workflow.py
 """Pipeline-based workflow engine for orchestrating agent tasks."""
 
 from dataclasses import dataclass, field
@@ -1464,7 +1464,7 @@ Expected: All 5 tests PASS
 **Step 6: Commit**
 
 ```bash
-git add src/ai_team/orchestrator/workflow.py tests/test_workflow.py pipelines/
+git add src/taskbrew/orchestrator/workflow.py tests/test_workflow.py pipelines/
 git commit -m "feat: YAML-based workflow engine with pipeline steps and run tracking"
 ```
 
@@ -1473,8 +1473,8 @@ git commit -m "feat: YAML-based workflow engine with pipeline steps and run trac
 ## Task 9: Dashboard Backend (FastAPI + WebSocket)
 
 **Files:**
-- Create: `src/ai_team/dashboard/__init__.py`
-- Create: `src/ai_team/dashboard/app.py`
+- Create: `src/taskbrew/dashboard/__init__.py`
+- Create: `src/taskbrew/dashboard/app.py`
 - Create: `tests/test_dashboard.py`
 
 **Step 1: Write the failing tests**
@@ -1483,11 +1483,11 @@ git commit -m "feat: YAML-based workflow engine with pipeline steps and run trac
 # tests/test_dashboard.py
 import pytest
 from httpx import AsyncClient, ASGITransport
-from ai_team.dashboard.app import create_app
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.orchestrator.team_manager import TeamManager
-from ai_team.orchestrator.task_queue import TaskQueue
-from ai_team.orchestrator.workflow import WorkflowEngine
+from taskbrew.dashboard.app import create_app
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.orchestrator.team_manager import TeamManager
+from taskbrew.orchestrator.task_queue import TaskQueue
+from taskbrew.orchestrator.workflow import WorkflowEngine
 
 
 @pytest.fixture
@@ -1564,10 +1564,10 @@ dev = [
 **Step 3: Implement dashboard**
 
 ```python
-# src/ai_team/dashboard/__init__.py
+# src/taskbrew/dashboard/__init__.py
 """Dashboard for monitoring AI team."""
 
-# src/ai_team/dashboard/app.py
+# src/taskbrew/dashboard/app.py
 """FastAPI dashboard backend with WebSocket support."""
 
 import asyncio
@@ -1577,10 +1577,10 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.orchestrator.team_manager import TeamManager
-from ai_team.orchestrator.task_queue import TaskQueue
-from ai_team.orchestrator.workflow import WorkflowEngine
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.orchestrator.team_manager import TeamManager
+from taskbrew.orchestrator.task_queue import TaskQueue
+from taskbrew.orchestrator.workflow import WorkflowEngine
 
 
 class ConnectionManager:
@@ -1747,7 +1747,7 @@ Expected: All 4 tests PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/dashboard/ tests/test_dashboard.py pyproject.toml
+git add src/taskbrew/dashboard/ tests/test_dashboard.py pyproject.toml
 git commit -m "feat: FastAPI dashboard with WebSocket real-time events and REST API"
 ```
 
@@ -1756,7 +1756,7 @@ git commit -m "feat: FastAPI dashboard with WebSocket real-time events and REST 
 ## Task 10: Main Entry Point & CLI
 
 **Files:**
-- Create: `src/ai_team/main.py`
+- Create: `src/taskbrew/main.py`
 - Create: `tests/test_main.py`
 
 **Step 1: Write the failing test**
@@ -1764,7 +1764,7 @@ git commit -m "feat: FastAPI dashboard with WebSocket real-time events and REST 
 ```python
 # tests/test_main.py
 import pytest
-from ai_team.main import build_orchestrator
+from taskbrew.main import build_orchestrator
 
 
 async def test_build_orchestrator(tmp_path):
@@ -1784,7 +1784,7 @@ Expected: FAIL
 **Step 3: Implement main entry point**
 
 ```python
-# src/ai_team/main.py
+# src/taskbrew/main.py
 """Main entry point for the AI Team Orchestrator."""
 
 import asyncio
@@ -1793,12 +1793,12 @@ from pathlib import Path
 
 import uvicorn
 
-from ai_team.config import OrchestratorConfig
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.orchestrator.task_queue import TaskQueue
-from ai_team.orchestrator.team_manager import TeamManager
-from ai_team.orchestrator.workflow import WorkflowEngine
-from ai_team.dashboard.app import create_app
+from taskbrew.config import OrchestratorConfig
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.orchestrator.task_queue import TaskQueue
+from taskbrew.orchestrator.team_manager import TeamManager
+from taskbrew.orchestrator.workflow import WorkflowEngine
+from taskbrew.dashboard.app import create_app
 
 
 class Orchestrator:
@@ -1960,7 +1960,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/main.py tests/test_main.py
+git add src/taskbrew/main.py tests/test_main.py
 git commit -m "feat: main entry point with serve/run/status CLI commands"
 ```
 
@@ -2034,8 +2034,8 @@ git commit -m "feat: bugfix and code_review pipeline definitions"
 import pytest
 from pathlib import Path
 
-from ai_team.main import build_orchestrator
-from ai_team.orchestrator.task_queue import TaskStatus
+from taskbrew.main import build_orchestrator
+from taskbrew.orchestrator.task_queue import TaskStatus
 
 
 @pytest.fixture
@@ -2137,17 +2137,17 @@ git commit -m "feat: integration tests verifying full orchestrator wiring"
 
 **Step 1: Run full test suite with coverage**
 
-Run: `python -m pytest tests/ -v --cov=ai_team --cov-report=term-missing`
+Run: `python -m pytest tests/ -v --cov=taskbrew --cov-report=term-missing`
 Expected: All tests pass, coverage report generated
 
 **Step 2: Test the CLI entry point**
 
-Run: `cd "/Users/nikhilchatragadda/Personal Projects/ai-team" && python -m ai_team.main status`
+Run: `cd "/Users/nikhilchatragadda/Personal Projects/ai-team" && python -m taskbrew.main status`
 Expected: Lists 6 agents, all idle
 
 **Step 3: Test the dashboard starts**
 
-Run: `python -m ai_team.main serve &` (then curl http://127.0.0.1:8420/api/health)
+Run: `python -m taskbrew.main serve &` (then curl http://127.0.0.1:8420/api/health)
 Expected: `{"status": "ok"}`
 
 **Step 4: Final commit**

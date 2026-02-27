@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from ai_team.orchestrator.database import Database
-from ai_team.orchestrator.task_board import TaskBoard
+from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.task_board import TaskBoard
 
 
 # ------------------------------------------------------------------
@@ -136,6 +136,8 @@ async def test_complete_task(board: TaskBoard):
         task_type="implementation",
         assigned_to="coder",
     )
+    # Must claim before completing (task needs to be in_progress).
+    await board.claim_task("coder", "coder-1")
     result = await board.complete_task(task["id"])
     assert result["status"] == "completed"
     assert result["completed_at"] is not None
@@ -170,7 +172,8 @@ async def test_get_board(board: TaskBoard):
         task_type="implementation",
         assigned_to="coder",
     )
-    # Complete one task.
+    # Claim then complete one task.
+    await board.claim_task("coder", "coder-1")
     await board.complete_task(t1["id"])
 
     result = await board.get_board()
@@ -227,7 +230,8 @@ async def test_blocked_task_unblocks_when_dependency_completes(board: TaskBoard)
     )
     assert blocked["status"] == "blocked"
 
-    # Complete the dependency.
+    # Claim then complete the dependency.
+    await board.claim_task("coder", "coder-1")
     await board.complete_task(dep["id"])
 
     # The blocked task should now be pending.
@@ -262,13 +266,15 @@ async def test_task_with_multiple_deps_stays_blocked_until_all_complete(
     )
     assert blocked["status"] == "blocked"
 
-    # Complete only the first dependency.
+    # Claim and complete only the first dependency.
+    await board.claim_task("coder", "coder-1")
     await board.complete_task(dep1["id"])
     still_blocked = await board.get_task(blocked["id"])
     assert still_blocked is not None
     assert still_blocked["status"] == "blocked"
 
-    # Complete the second dependency.
+    # Claim and complete the second dependency.
+    await board.claim_task("coder", "coder-2")
     await board.complete_task(dep2["id"])
     now_free = await board.get_task(blocked["id"])
     assert now_free is not None
@@ -430,3 +436,159 @@ async def test_recover_unblocks_when_dep_completed(board: TaskBoard):
     repaired = await board.recover_stuck_blocked_tasks()
     assert len(repaired) >= 1
     assert (await board.get_task(t2["id"]))["status"] == "pending"
+
+
+# ------------------------------------------------------------------
+# Regression: claim_task transaction prevents double-claim
+# ------------------------------------------------------------------
+
+
+async def test_claim_task_no_double_claim(board: TaskBoard):
+    """Two sequential claims for the same role should not claim the same task."""
+    group = await board.create_group(title="Double claim test", created_by="pm")
+    await board.create_task(
+        group_id=group["id"],
+        title="Only task",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+
+    # First claim should succeed
+    first = await board.claim_task("coder", "coder-instance-1")
+    assert first is not None
+    assert first["claimed_by"] == "coder-instance-1"
+    assert first["status"] == "in_progress"
+
+    # Second claim should get None (no more pending tasks)
+    second = await board.claim_task("coder", "coder-instance-2")
+    assert second is None
+
+
+async def test_claim_task_priority_ordering(board: TaskBoard):
+    """claim_task should claim the highest-priority task first within a transaction."""
+    group = await board.create_group(title="Priority test", created_by="pm")
+    await board.create_task(
+        group_id=group["id"],
+        title="Low priority task",
+        task_type="implementation",
+        assigned_to="coder",
+        priority="low",
+    )
+    await board.create_task(
+        group_id=group["id"],
+        title="Critical task",
+        task_type="implementation",
+        assigned_to="coder",
+        priority="critical",
+    )
+    await board.create_task(
+        group_id=group["id"],
+        title="High priority task",
+        task_type="implementation",
+        assigned_to="coder",
+        priority="high",
+    )
+
+    # Should claim critical first
+    first = await board.claim_task("coder", "coder-1")
+    assert first is not None
+    assert first["title"] == "Critical task"
+
+    # Then high
+    second = await board.claim_task("coder", "coder-2")
+    assert second is not None
+    assert second["title"] == "High priority task"
+
+    # Then low
+    third = await board.claim_task("coder", "coder-3")
+    assert third is not None
+    assert third["title"] == "Low priority task"
+
+    # No more
+    fourth = await board.claim_task("coder", "coder-4")
+    assert fourth is None
+
+
+async def test_claim_task_returns_correct_fields(board: TaskBoard):
+    """claim_task should return a dict with all expected task fields after transaction."""
+    group = await board.create_group(title="Fields test", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Check fields",
+        task_type="implementation",
+        assigned_to="coder",
+        priority="medium",
+    )
+
+    claimed = await board.claim_task("coder", "coder-instance-1")
+    assert claimed is not None
+    assert claimed["id"] == task["id"]
+    assert claimed["status"] == "in_progress"
+    assert claimed["claimed_by"] == "coder-instance-1"
+    assert claimed["started_at"] is not None
+    assert claimed["title"] == "Check fields"
+    assert claimed["group_id"] == group["id"]
+
+
+# ------------------------------------------------------------------
+# Fix 5: Cycle detection in create_task
+# ------------------------------------------------------------------
+
+
+async def test_create_task_blocked_by_valid(board: TaskBoard):
+    """Creating a task with valid blocked_by should succeed without raising."""
+    group = await board.create_group(title="Valid dep", created_by="pm")
+    task_a = await board.create_task(
+        group_id=group["id"],
+        title="Task A",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    # B blocked_by A is a valid linear chain -- no cycle.
+    task_b = await board.create_task(
+        group_id=group["id"],
+        title="Task B",
+        task_type="implementation",
+        assigned_to="coder",
+        blocked_by=[task_a["id"]],
+    )
+    assert task_b["status"] == "blocked"
+
+
+async def test_create_task_self_dependency_raises(board: TaskBoard):
+    """A task cannot depend on itself (trivial cycle)."""
+    group = await board.create_group(title="Self dep", created_by="pm")
+    # We need to pre-create a task, then try to create another blocked_by it
+    # where an artificial cycle exists. The simplest testable scenario:
+    # Create task A. Then manually make task A blocked_by itself via SQL.
+    # Then test has_cycle(A, A) -> True.
+    task_a = await board.create_task(
+        group_id=group["id"],
+        title="Task A",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    assert await board.has_cycle(task_a["id"], task_a["id"]) is True
+
+
+async def test_create_task_transitive_cycle_detected(board: TaskBoard):
+    """has_cycle detects transitive cycles via blocked_by edges."""
+    group = await board.create_group(title="Trans cycle", created_by="pm")
+    task_a = await board.create_task(
+        group_id=group["id"], title="A", task_type="implementation",
+        assigned_to="coder",
+    )
+    task_b = await board.create_task(
+        group_id=group["id"], title="B", task_type="implementation",
+        assigned_to="coder", blocked_by=[task_a["id"]],
+    )
+    task_c = await board.create_task(
+        group_id=group["id"], title="C", task_type="implementation",
+        assigned_to="coder", blocked_by=[task_b["id"]],
+    )
+    # A -> B -> C (C blocked_by B blocked_by A)
+    # Adding A blocked_by C would create cycle: C -> B -> A -> C
+    assert await board.has_cycle(task_a["id"], task_c["id"]) is True
+    # Adding C blocked_by A is already there, but asking has_cycle for a
+    # new dep D blocked_by C should NOT be a cycle
+    assert await board.has_cycle("D-999", task_c["id"]) is False

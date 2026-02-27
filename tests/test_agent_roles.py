@@ -1,6 +1,6 @@
 # tests/test_agent_roles.py
 import pytest
-from ai_team.agents.roles import get_agent_config, AGENT_ROLES
+from taskbrew.agents.roles import get_agent_config, AGENT_ROLES
 
 
 def test_all_roles_defined():

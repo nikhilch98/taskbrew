@@ -1,0 +1,17 @@
+name: gemini
+display_name: "Gemini CLI"
+binary: gemini
+detect_models: ["gemini-*"]
+command_template:
+  prompt_flag: "-p"
+  output_format_flag: "--output-format"
+  output_format_value: "stream-json"
+  model_flag: "-m"
+  auto_approve_flag: "-y"
+output_parser: "stream-json"
+system_prompt_mode: "xml-inject"
+models:
+  - id: "gemini-3.1-pro-preview"
+    tier: flagship
+  - id: "gemini-3-flash-preview"
+    tier: balanced

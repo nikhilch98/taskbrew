@@ -9,11 +9,10 @@ but are NOT wired into ClaudeAgentOptions.
 
 import asyncio
 
-import pytest
 
-from ai_team.agents.base import AgentRunner, AgentStatus
-from ai_team.config import AgentConfig
-from ai_team.orchestrator.event_bus import EventBus
+from taskbrew.agents.base import AgentRunner
+from taskbrew.config import AgentConfig
+from taskbrew.orchestrator.event_bus import EventBus
 
 
 def _make_config(name: str = "test-agent") -> AgentConfig:
@@ -66,11 +65,11 @@ def test_build_options_sets_empty_setting_sources():
     assert opts.setting_sources == []
 
 
-def test_build_options_sets_bypass_permissions():
-    """build_options should use bypassPermissions mode."""
+def test_build_options_sets_default_permissions():
+    """build_options should use default permission mode."""
     runner = AgentRunner(_make_config())
     opts = runner.build_options()
-    assert opts.permission_mode == "bypassPermissions"
+    assert opts.permission_mode == "default"
 
 
 def test_build_options_unsets_claudecode_env():

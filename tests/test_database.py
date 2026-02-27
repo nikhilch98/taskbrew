@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai_team.orchestrator.database import Database
+from taskbrew.orchestrator.database import Database
 
 
 @pytest.fixture

@@ -1,6 +1,5 @@
 import asyncio
-import pytest
-from ai_team.orchestrator.event_bus import EventBus
+from taskbrew.orchestrator.event_bus import EventBus
 
 
 async def test_subscribe_and_emit():

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from ai_team.config_loader import RoleConfig
-from ai_team.orchestrator.database import Database
-from ai_team.orchestrator.task_board import TaskBoard
-from ai_team.agents.instance_manager import InstanceManager
+from taskbrew.config_loader import RoleConfig
+from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.task_board import TaskBoard
+from taskbrew.agents.instance_manager import InstanceManager
 
 
 # ------------------------------------------------------------------

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from ai_team.agents.agent_loop import AgentLoop
-from ai_team.agents.instance_manager import InstanceManager
-from ai_team.config_loader import RoleConfig, RouteTarget
-from ai_team.orchestrator.database import Database
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.orchestrator.task_board import TaskBoard
+from taskbrew.agents.agent_loop import AgentLoop
+from taskbrew.agents.instance_manager import InstanceManager
+from taskbrew.config_loader import RoleConfig, RouteTarget
+from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.orchestrator.task_board import TaskBoard
 
 
 # ------------------------------------------------------------------
@@ -152,7 +154,7 @@ async def test_build_context(
     )
 
     role_config = _make_role(
-        routes_to=[RouteTarget(role="tester", task_types=["qa_verification"])],
+        routes_to=[RouteTarget(role="verifier", task_types=["verification"])],
         context_includes=["parent_artifact"],
     )
     loop = _make_loop(board, event_bus, instance_mgr, role_config=role_config)
@@ -171,6 +173,110 @@ async def test_build_context(
     # Parent info
     assert parent["id"] in context
     assert "Design API schema" in context
-    # Routing info
-    assert "tester" in context
-    assert "qa_verification" in context
+    # Coder role does NOT get routing hints (D4: conditional routing)
+    assert "When Complete" not in context
+
+
+async def test_build_context_memory_recall_failure(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager
+):
+    """build_context should still succeed when memory recall raises an exception."""
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Implement endpoint",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+
+    # Create a mock memory manager that raises on recall
+    mock_memory = AsyncMock()
+    mock_memory.recall = AsyncMock(side_effect=RuntimeError("Memory DB unavailable"))
+
+    role_config = _make_role(context_includes=["agent_memory"])
+    loop = AgentLoop(
+        instance_id="coder-1",
+        role_config=role_config,
+        board=board,
+        event_bus=event_bus,
+        instance_manager=instance_mgr,
+        all_roles={role_config.role: role_config},
+        memory_manager=mock_memory,
+    )
+
+    # Should NOT raise -- error is caught and logged
+    context = await loop.build_context(task)
+
+    # Basic context should still be present
+    assert "Coder" in context
+    assert task["id"] in context
+    # Memory section should NOT be present since recall failed
+    assert "Past Lessons" not in context
+
+
+async def test_build_context_context_provider_failure(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager
+):
+    """build_context should still succeed when context provider raises an exception."""
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Implement endpoint",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+
+    # Create a mock context registry that raises
+    mock_registry = MagicMock()
+    mock_registry.get_available_providers.side_effect = RuntimeError("Provider crash")
+
+    role_config = _make_role(context_includes=["git_status"])
+    loop = AgentLoop(
+        instance_id="coder-1",
+        role_config=role_config,
+        board=board,
+        event_bus=event_bus,
+        instance_manager=instance_mgr,
+        all_roles={role_config.role: role_config},
+        context_registry=mock_registry,
+    )
+
+    # Should NOT raise -- error is caught and logged
+    context = await loop.build_context(task)
+
+    # Basic context should still be present
+    assert "Coder" in context
+    assert task["id"] in context
+
+
+async def test_build_context_provider_get_context_failure(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager
+):
+    """build_context should handle failure in get_context (not just get_available_providers)."""
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Implement endpoint",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+
+    # get_available_providers succeeds but get_context fails
+    mock_registry = MagicMock()
+    mock_registry.get_available_providers.return_value = ["git_status"]
+    mock_registry.get_context = AsyncMock(side_effect=RuntimeError("Context fetch failed"))
+
+    role_config = _make_role(context_includes=["git_status"])
+    loop = AgentLoop(
+        instance_id="coder-1",
+        role_config=role_config,
+        board=board,
+        event_bus=event_bus,
+        instance_manager=instance_mgr,
+        all_roles={role_config.role: role_config},
+        context_registry=mock_registry,
+    )
+
+    # Should NOT raise
+    context = await loop.build_context(task)
+    assert task["id"] in context

@@ -16,9 +16,9 @@
 
 **Files:**
 - Create: `config/team.yaml`
-- Create: `src/ai_team/config_loader.py`
+- Create: `src/taskbrew/config_loader.py`
 - Test: `tests/test_config_loader.py`
-- Modify: `src/ai_team/config.py:19-31` (add new fields to OrchestratorConfig)
+- Modify: `src/taskbrew/config.py:19-31` (add new fields to OrchestratorConfig)
 
 **Step 1: Write failing test for team config loading**
 
@@ -26,7 +26,7 @@
 # tests/test_config_loader.py
 import pytest
 from pathlib import Path
-from ai_team.config_loader import load_team_config, TeamConfig
+from taskbrew.config_loader import load_team_config, TeamConfig
 
 def test_load_team_config(tmp_path):
     config_dir = tmp_path / "config"
@@ -34,7 +34,7 @@ def test_load_team_config(tmp_path):
     (config_dir / "team.yaml").write_text("""
 team_name: "Test Team"
 database:
-  path: "data/ai_team.db"
+  path: "data/taskbrew.db"
 dashboard:
   host: "127.0.0.1"
   port: 8420
@@ -62,7 +62,7 @@ def test_load_team_config_missing_file(tmp_path):
 **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_config_loader.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'ai_team.config_loader'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'taskbrew.config_loader'`
 
 **Step 3: Create team.yaml config file**
 
@@ -71,7 +71,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'ai_team.config_loader'
 team_name: "AI Development Team"
 
 database:
-  path: "data/ai_team.db"
+  path: "data/taskbrew.db"
 
 dashboard:
   host: "127.0.0.1"
@@ -99,7 +99,7 @@ group_prefixes:
 **Step 4: Implement config_loader.py**
 
 ```python
-# src/ai_team/config_loader.py
+# src/taskbrew/config_loader.py
 from dataclasses import dataclass, field
 from pathlib import Path
 import yaml
@@ -161,7 +161,7 @@ Expected: PASS
 **Step 6: Commit**
 
 ```bash
-git add config/team.yaml src/ai_team/config_loader.py tests/test_config_loader.py
+git add config/team.yaml src/taskbrew/config_loader.py tests/test_config_loader.py
 git commit -m "feat: add team config YAML and loader"
 ```
 
@@ -175,14 +175,14 @@ git commit -m "feat: add team config YAML and loader"
 - Create: `config/roles/coder.yaml`
 - Create: `config/roles/tester.yaml`
 - Create: `config/roles/reviewer.yaml`
-- Modify: `src/ai_team/config_loader.py` (add RoleConfig and load_roles)
+- Modify: `src/taskbrew/config_loader.py` (add RoleConfig and load_roles)
 - Test: `tests/test_config_loader.py` (add role loading tests)
 
 **Step 1: Write failing test for role loading**
 
 ```python
 # tests/test_config_loader.py (append)
-from ai_team.config_loader import load_roles, RoleConfig
+from taskbrew.config_loader import load_roles, RoleConfig
 
 def test_load_roles(tmp_path):
     roles_dir = tmp_path / "roles"
@@ -467,7 +467,7 @@ context_includes:
 **Step 4: Add RoleConfig and load_roles to config_loader.py**
 
 ```python
-# Add to src/ai_team/config_loader.py
+# Add to src/taskbrew/config_loader.py
 
 @dataclass
 class RouteTarget:
@@ -548,7 +548,7 @@ Expected: ALL PASS
 **Step 6: Commit**
 
 ```bash
-git add config/roles/ src/ai_team/config_loader.py tests/test_config_loader.py
+git add config/roles/ src/taskbrew/config_loader.py tests/test_config_loader.py
 git commit -m "feat: add role YAML definitions and role loader"
 ```
 
@@ -557,14 +557,14 @@ git commit -m "feat: add role YAML definitions and role loader"
 ## Task 3: Routing Validation
 
 **Files:**
-- Modify: `src/ai_team/config_loader.py` (add validate_routing)
+- Modify: `src/taskbrew/config_loader.py` (add validate_routing)
 - Test: `tests/test_config_loader.py` (add validation tests)
 
 **Step 1: Write failing tests for routing validation**
 
 ```python
 # tests/test_config_loader.py (append)
-from ai_team.config_loader import validate_routing
+from taskbrew.config_loader import validate_routing
 
 def test_validate_routing_valid(tmp_path):
     """Valid routing: pm -> architect -> coder, no errors."""
@@ -604,7 +604,7 @@ def test_validate_routing_duplicate_prefix():
 
 def _make_roles(specs: dict) -> dict:
     """Helper to build minimal RoleConfig dicts for testing."""
-    from ai_team.config_loader import RoleConfig, RouteTarget
+    from taskbrew.config_loader import RoleConfig, RouteTarget
     roles = {}
     for name, spec in specs.items():
         roles[name] = RoleConfig(
@@ -631,7 +631,7 @@ Expected: FAIL — `ImportError: cannot import name 'validate_routing'`
 **Step 3: Implement validate_routing**
 
 ```python
-# Add to src/ai_team/config_loader.py
+# Add to src/taskbrew/config_loader.py
 
 def validate_routing(roles: dict[str, RoleConfig]) -> list[str]:
     errors = []
@@ -678,7 +678,7 @@ Expected: ALL PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/config_loader.py tests/test_config_loader.py
+git add src/taskbrew/config_loader.py tests/test_config_loader.py
 git commit -m "feat: add routing validation for role configs"
 ```
 
@@ -687,7 +687,7 @@ git commit -m "feat: add routing validation for role configs"
 ## Task 4: New Database Schema
 
 **Files:**
-- Create: `src/ai_team/orchestrator/database.py`
+- Create: `src/taskbrew/orchestrator/database.py`
 - Test: `tests/test_database.py`
 
 **Step 1: Write failing tests for database initialization and task ID generation**
@@ -695,7 +695,7 @@ git commit -m "feat: add routing validation for role configs"
 ```python
 # tests/test_database.py
 import pytest
-from ai_team.orchestrator.database import Database
+from taskbrew.orchestrator.database import Database
 
 @pytest.fixture
 async def db(tmp_path):
@@ -735,12 +735,12 @@ async def test_generate_task_id_unregistered_prefix(db):
 **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_database.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'ai_team.orchestrator.database'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'taskbrew.orchestrator.database'`
 
 **Step 3: Implement database.py with full schema**
 
 ```python
-# src/ai_team/orchestrator/database.py
+# src/taskbrew/orchestrator/database.py
 import aiosqlite
 from datetime import datetime, timezone
 
@@ -897,7 +897,7 @@ Expected: ALL PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/orchestrator/database.py tests/test_database.py
+git add src/taskbrew/orchestrator/database.py tests/test_database.py
 git commit -m "feat: add new database schema with groups, tasks, dependencies"
 ```
 
@@ -906,7 +906,7 @@ git commit -m "feat: add new database schema with groups, tasks, dependencies"
 ## Task 5: Group & Task CRUD Operations
 
 **Files:**
-- Create: `src/ai_team/orchestrator/task_board.py`
+- Create: `src/taskbrew/orchestrator/task_board.py`
 - Test: `tests/test_task_board.py`
 
 **Step 1: Write failing tests for group and task creation**
@@ -914,8 +914,8 @@ git commit -m "feat: add new database schema with groups, tasks, dependencies"
 ```python
 # tests/test_task_board.py
 import pytest
-from ai_team.orchestrator.database import Database
-from ai_team.orchestrator.task_board import TaskBoard
+from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.task_board import TaskBoard
 
 @pytest.fixture
 async def board(tmp_path):
@@ -1035,14 +1035,14 @@ async def test_get_board_filtered_by_group(board):
 **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_task_board.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'ai_team.orchestrator.task_board'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'taskbrew.orchestrator.task_board'`
 
 **Step 3: Implement TaskBoard class**
 
 ```python
-# src/ai_team/orchestrator/task_board.py
+# src/taskbrew/orchestrator/task_board.py
 from datetime import datetime, timezone
-from ai_team.orchestrator.database import Database
+from taskbrew.orchestrator.database import Database
 
 STATUSES = ["blocked", "pending", "in_progress", "completed", "failed", "rejected"]
 
@@ -1292,7 +1292,7 @@ Expected: ALL PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/orchestrator/task_board.py tests/test_task_board.py
+git add src/taskbrew/orchestrator/task_board.py tests/test_task_board.py
 git commit -m "feat: add TaskBoard with CRUD, claiming, dependencies, filtering"
 ```
 
@@ -1302,7 +1302,7 @@ git commit -m "feat: add TaskBoard with CRUD, claiming, dependencies, filtering"
 
 **Files:**
 - Modify: `tests/test_task_board.py` (add dependency tests)
-- Modify: `src/ai_team/orchestrator/task_board.py` (if fixes needed)
+- Modify: `src/taskbrew/orchestrator/task_board.py` (if fixes needed)
 
 **Step 1: Write failing tests for dependency flows**
 
@@ -1408,7 +1408,7 @@ git commit -m "test: add dependency resolution and cycle detection tests"
 ## Task 7: Agent Instance Manager
 
 **Files:**
-- Create: `src/ai_team/agents/instance_manager.py`
+- Create: `src/taskbrew/agents/instance_manager.py`
 - Test: `tests/test_instance_manager.py`
 
 **Step 1: Write failing tests**
@@ -1416,9 +1416,9 @@ git commit -m "test: add dependency resolution and cycle detection tests"
 ```python
 # tests/test_instance_manager.py
 import pytest
-from ai_team.orchestrator.database import Database
-from ai_team.agents.instance_manager import InstanceManager
-from ai_team.config_loader import RoleConfig, RouteTarget
+from taskbrew.orchestrator.database import Database
+from taskbrew.agents.instance_manager import InstanceManager
+from taskbrew.config_loader import RoleConfig, RouteTarget
 
 @pytest.fixture
 def coder_role():
@@ -1481,10 +1481,10 @@ Expected: FAIL — `ModuleNotFoundError`
 **Step 3: Implement InstanceManager**
 
 ```python
-# src/ai_team/agents/instance_manager.py
+# src/taskbrew/agents/instance_manager.py
 from datetime import datetime, timezone
-from ai_team.orchestrator.database import Database
-from ai_team.config_loader import RoleConfig
+from taskbrew.orchestrator.database import Database
+from taskbrew.config_loader import RoleConfig
 
 
 class InstanceManager:
@@ -1553,7 +1553,7 @@ Expected: ALL PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/agents/instance_manager.py tests/test_instance_manager.py
+git add src/taskbrew/agents/instance_manager.py tests/test_instance_manager.py
 git commit -m "feat: add agent InstanceManager for tracking agent instances"
 ```
 
@@ -1562,9 +1562,9 @@ git commit -m "feat: add agent InstanceManager for tracking agent instances"
 ## Task 8: Agent Loop — Poll/Claim/Execute/Handoff/Complete
 
 **Files:**
-- Create: `src/ai_team/agents/agent_loop.py`
+- Create: `src/taskbrew/agents/agent_loop.py`
 - Test: `tests/test_agent_loop.py`
-- Modify: `src/ai_team/agents/base.py` (keep AgentRunner, used by loop)
+- Modify: `src/taskbrew/agents/base.py` (keep AgentRunner, used by loop)
 
 **Step 1: Write failing test for the agent loop claiming and completing a task**
 
@@ -1573,12 +1573,12 @@ git commit -m "feat: add agent InstanceManager for tracking agent instances"
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from ai_team.agents.agent_loop import AgentLoop
-from ai_team.orchestrator.database import Database
-from ai_team.orchestrator.task_board import TaskBoard
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.agents.instance_manager import InstanceManager
-from ai_team.config_loader import RoleConfig, RouteTarget
+from taskbrew.agents.agent_loop import AgentLoop
+from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.task_board import TaskBoard
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.agents.instance_manager import InstanceManager
+from taskbrew.config_loader import RoleConfig, RouteTarget
 
 @pytest.fixture
 def coder_role():
@@ -1647,13 +1647,13 @@ Expected: FAIL — `ModuleNotFoundError`
 **Step 3: Implement AgentLoop**
 
 ```python
-# src/ai_team/agents/agent_loop.py
+# src/taskbrew/agents/agent_loop.py
 import asyncio
 import logging
-from ai_team.orchestrator.task_board import TaskBoard
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.agents.instance_manager import InstanceManager
-from ai_team.config_loader import RoleConfig
+from taskbrew.orchestrator.task_board import TaskBoard
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.agents.instance_manager import InstanceManager
+from taskbrew.config_loader import RoleConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1715,8 +1715,8 @@ class AgentLoop:
 
     async def execute_task(self, task: dict) -> str:
         """Run the Claude SDK agent on the task. Returns output text."""
-        from ai_team.agents.base import AgentRunner
-        from ai_team.config import AgentConfig
+        from taskbrew.agents.base import AgentRunner
+        from taskbrew.config import AgentConfig
 
         agent_config = AgentConfig(
             name=self.instance_id,
@@ -1800,7 +1800,7 @@ Expected: ALL PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/agents/agent_loop.py tests/test_agent_loop.py
+git add src/taskbrew/agents/agent_loop.py tests/test_agent_loop.py
 git commit -m "feat: add AgentLoop with poll/claim/execute/handoff cycle"
 ```
 
@@ -1809,7 +1809,7 @@ git commit -m "feat: add AgentLoop with poll/claim/execute/handoff cycle"
 ## Task 9: Updated Artifact Store
 
 **Files:**
-- Modify: `src/ai_team/orchestrator/artifact_store.py` (reorganize by group_id/task_id)
+- Modify: `src/taskbrew/orchestrator/artifact_store.py` (reorganize by group_id/task_id)
 - Test: `tests/test_artifact_store.py` (update tests)
 
 **Step 1: Write failing test for new artifact structure**
@@ -1817,7 +1817,7 @@ git commit -m "feat: add AgentLoop with poll/claim/execute/handoff cycle"
 ```python
 # tests/test_artifact_store_v2.py
 import pytest
-from ai_team.orchestrator.artifact_store import ArtifactStore
+from taskbrew.orchestrator.artifact_store import ArtifactStore
 
 @pytest.fixture
 def store(tmp_path):
@@ -1853,7 +1853,7 @@ Expected: FAIL — signature mismatch (current uses run_id/step_index/agent_name
 **Step 3: Rewrite artifact_store.py with new API**
 
 ```python
-# src/ai_team/orchestrator/artifact_store.py
+# src/taskbrew/orchestrator/artifact_store.py
 import os
 from pathlib import Path
 
@@ -1917,7 +1917,7 @@ Expected: ALL PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/orchestrator/artifact_store.py tests/test_artifact_store_v2.py
+git add src/taskbrew/orchestrator/artifact_store.py tests/test_artifact_store_v2.py
 git commit -m "refactor: reorganize artifact store by group_id/task_id"
 ```
 
@@ -1926,7 +1926,7 @@ git commit -m "refactor: reorganize artifact store by group_id/task_id"
 ## Task 10: Updated Dashboard API Endpoints
 
 **Files:**
-- Modify: `src/ai_team/dashboard/app.py` (replace old endpoints with new task board API)
+- Modify: `src/taskbrew/dashboard/app.py` (replace old endpoints with new task board API)
 - Test: `tests/test_dashboard_api.py`
 
 This is a large task. The key new endpoints:
@@ -1944,10 +1944,10 @@ This is a large task. The key new endpoints:
 # tests/test_dashboard_api.py
 import pytest
 from httpx import AsyncClient, ASGITransport
-from ai_team.orchestrator.database import Database
-from ai_team.orchestrator.task_board import TaskBoard
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.agents.instance_manager import InstanceManager
+from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.task_board import TaskBoard
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.agents.instance_manager import InstanceManager
 
 @pytest.fixture
 async def app_client(tmp_path):
@@ -1958,7 +1958,7 @@ async def app_client(tmp_path):
     event_bus = EventBus()
     instance_mgr = InstanceManager(db)
 
-    from ai_team.dashboard.app import create_app
+    from taskbrew.dashboard.app import create_app
     app = create_app(
         event_bus=event_bus,
         task_board=board,
@@ -2060,7 +2060,7 @@ Expected: ALL PASS
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/dashboard/app.py tests/test_dashboard_api.py
+git add src/taskbrew/dashboard/app.py tests/test_dashboard_api.py
 git commit -m "feat: rewrite dashboard API for task board, groups, and goals"
 ```
 
@@ -2069,7 +2069,7 @@ git commit -m "feat: rewrite dashboard API for task board, groups, and goals"
 ## Task 11: Dashboard UI — Board View with Filters
 
 **Files:**
-- Modify: `src/ai_team/dashboard/templates/index.html` (major rewrite of main content area)
+- Modify: `src/taskbrew/dashboard/templates/index.html` (major rewrite of main content area)
 
 This is the largest UI task. Replace the current agents grid + kanban + pipeline runs with:
 1. Filter bar (Group, Assignee, Type, Priority, Status dropdowns + View toggle: Board/List/Graph)
@@ -2105,7 +2105,7 @@ Run: `ai-team serve` and verify the board renders, filters work, cards appear in
 **Step 5: Commit**
 
 ```bash
-git add src/ai_team/dashboard/templates/index.html
+git add src/taskbrew/dashboard/templates/index.html
 git commit -m "feat: rewrite dashboard UI with task board, filters, and agent sidebar"
 ```
 
@@ -2114,7 +2114,7 @@ git commit -m "feat: rewrite dashboard UI with task board, filters, and agent si
 ## Task 12: Dashboard UI — List View
 
 **Files:**
-- Modify: `src/ai_team/dashboard/templates/index.html`
+- Modify: `src/taskbrew/dashboard/templates/index.html`
 
 **Step 1: Add list view HTML**
 
@@ -2128,7 +2128,7 @@ A `<table>` element hidden by default, shown when "List" view is selected. Colum
 **Step 3: Test manually and commit**
 
 ```bash
-git add src/ai_team/dashboard/templates/index.html
+git add src/taskbrew/dashboard/templates/index.html
 git commit -m "feat: add list view to dashboard task board"
 ```
 
@@ -2137,7 +2137,7 @@ git commit -m "feat: add list view to dashboard task board"
 ## Task 13: Dashboard UI — Graph View
 
 **Files:**
-- Modify: `src/ai_team/dashboard/templates/index.html`
+- Modify: `src/taskbrew/dashboard/templates/index.html`
 
 **Step 1: Add graph view container**
 
@@ -2155,7 +2155,7 @@ Use a simple layout algorithm:
 **Step 3: Test manually and commit**
 
 ```bash
-git add src/ai_team/dashboard/templates/index.html
+git add src/taskbrew/dashboard/templates/index.html
 git commit -m "feat: add graph view for group DAG visualization"
 ```
 
@@ -2164,8 +2164,8 @@ git commit -m "feat: add graph view for group DAG visualization"
 ## Task 14: Updated Main Entry Point
 
 **Files:**
-- Modify: `src/ai_team/main.py` (rewrite to use new components)
-- Modify: `src/ai_team/orchestrator/__init__.py`
+- Modify: `src/taskbrew/main.py` (rewrite to use new components)
+- Modify: `src/taskbrew/orchestrator/__init__.py`
 
 **Step 1: Rewrite main.py**
 
@@ -2197,7 +2197,7 @@ Verify: dashboard starts, agents spawn, submitting a goal creates a group and PM
 **Step 4: Commit**
 
 ```bash
-git add src/ai_team/main.py
+git add src/taskbrew/main.py
 git commit -m "feat: rewrite main entry point for independent agent system"
 ```
 
@@ -2206,17 +2206,17 @@ git commit -m "feat: rewrite main entry point for independent agent system"
 ## Task 15: Remove Deprecated Code
 
 **Files:**
-- Delete: `src/ai_team/orchestrator/workflow.py` (pipeline engine — replaced by task board routing)
-- Delete: `src/ai_team/orchestrator/task_queue.py` (old task queue — replaced by task_board.py)
+- Delete: `src/taskbrew/orchestrator/workflow.py` (pipeline engine — replaced by task board routing)
+- Delete: `src/taskbrew/orchestrator/task_queue.py` (old task queue — replaced by task_board.py)
 - Delete: `pipelines/` directory (YAML pipelines — replaced by role routing)
-- Modify: `src/ai_team/agents/roles.py` (keep as fallback or delete if fully replaced by YAML configs)
+- Modify: `src/taskbrew/agents/roles.py` (keep as fallback or delete if fully replaced by YAML configs)
 - Update: `tests/` (remove tests for deleted modules, update imports)
 
 **Step 1: Remove deprecated files**
 
 ```bash
-git rm src/ai_team/orchestrator/workflow.py
-git rm src/ai_team/orchestrator/task_queue.py
+git rm src/taskbrew/orchestrator/workflow.py
+git rm src/taskbrew/orchestrator/task_queue.py
 git rm -r pipelines/
 ```
 
@@ -2248,10 +2248,10 @@ git commit -m "refactor: remove deprecated pipeline engine and old task queue"
 ```python
 # tests/test_integration_v2.py
 import pytest
-from ai_team.orchestrator.database import Database
-from ai_team.orchestrator.task_board import TaskBoard
-from ai_team.orchestrator.event_bus import EventBus
-from ai_team.agents.instance_manager import InstanceManager
+from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.task_board import TaskBoard
+from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.agents.instance_manager import InstanceManager
 
 @pytest.fixture
 async def system(tmp_path):
@@ -2380,7 +2380,7 @@ git commit -m "test: add end-to-end integration tests for full task lifecycle"
 ## Task 17: Update FAQ with New System Information
 
 **Files:**
-- Modify: `src/ai_team/dashboard/templates/index.html` (FAQ modal content)
+- Modify: `src/taskbrew/dashboard/templates/index.html` (FAQ modal content)
 
 **Step 1: Update FAQ sections to reflect the new system**
 
@@ -2395,7 +2395,7 @@ Replace the current FAQ content with:
 **Step 2: Commit**
 
 ```bash
-git add src/ai_team/dashboard/templates/index.html
+git add src/taskbrew/dashboard/templates/index.html
 git commit -m "docs: update FAQ for new independent agents system"
 ```
 

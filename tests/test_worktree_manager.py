@@ -1,7 +1,7 @@
 import pytest
 import subprocess
 import os
-from ai_team.tools.worktree_manager import WorktreeManager
+from taskbrew.tools.worktree_manager import WorktreeManager
 
 
 @pytest.fixture

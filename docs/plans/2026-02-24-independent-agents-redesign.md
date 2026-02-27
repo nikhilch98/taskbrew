@@ -472,8 +472,8 @@ ai-team/
 |       +-- reviewer.yaml
 +-- artifacts/                   # Organized by group_id/task_id
 +-- data/
-|   +-- ai_team.db
-+-- src/ai_team/
+|   +-- taskbrew.db
++-- src/taskbrew/
     +-- ...
 ```
 

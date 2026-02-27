@@ -1,7 +1,6 @@
 # tests/test_agent_base.py
-import pytest
-from ai_team.agents.base import AgentRunner, AgentStatus
-from ai_team.config import AgentConfig
+from taskbrew.agents.base import AgentRunner, AgentStatus
+from taskbrew.config import AgentConfig
 
 
 def test_agent_config_creation():
@@ -38,6 +37,7 @@ def test_agent_runner_builds_options():
     options = runner.build_options()
     assert options.system_prompt == "You are a coding agent."
     assert "Read" in options.allowed_tools
-    assert options.permission_mode == "bypassPermissions"
+    assert options.permission_mode == "default"
+    # MCP servers are now config-driven; when none are passed, the dict is empty.
+    # Task 7 will thread MCPServerConfig through AgentRunner.
     assert options.mcp_servers is not None
-    assert "task-tools" in options.mcp_servers

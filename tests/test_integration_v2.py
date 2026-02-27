@@ -1,7 +1,7 @@
 import pytest
-from ai_team.orchestrator.database import Database
-from ai_team.orchestrator.task_board import TaskBoard
-from ai_team.orchestrator.event_bus import EventBus
+from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.task_board import TaskBoard
+from taskbrew.orchestrator.event_bus import EventBus
 
 @pytest.fixture
 async def system(tmp_path):
@@ -118,8 +118,8 @@ async def test_parallel_groups(system):
     g1 = await board.create_group(title="Feature A", origin="pm", created_by="human")
     g2 = await board.create_group(title="Tech Debt B", origin="architect", created_by="architect-1")
 
-    t1 = await board.create_task(group_id=g1["id"], title="PRD A", task_type="goal", assigned_to="pm", created_by="human")
-    t2 = await board.create_task(group_id=g2["id"], title="Fix B", task_type="tech_debt", assigned_to="coder", created_by="architect-1")
+    await board.create_task(group_id=g1["id"], title="PRD A", task_type="goal", assigned_to="pm", created_by="human")
+    await board.create_task(group_id=g2["id"], title="Fix B", task_type="tech_debt", assigned_to="coder", created_by="architect-1")
 
     # Verify independent groups
     g1_tasks = await board.get_group_tasks(g1["id"])
