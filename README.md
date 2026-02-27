@@ -16,7 +16,7 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshots/dashboard-active.png" alt="TaskBrew Dashboard - tasks flowing through the pipeline with agents working in parallel" width="100%">
+  <img src="docs/screenshots/dashboard.png" alt="TaskBrew Dashboard" width="100%">
 </p>
 
 ## What is TaskBrew?
