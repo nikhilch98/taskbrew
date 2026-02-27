@@ -5,6 +5,7 @@
     Coordinate Claude Code, Gemini CLI, and custom AI agents into collaborative development workflows.
   </p>
   <p align="center">
+    <a href="https://pypi.org/project/taskbrew/"><img src="https://img.shields.io/pypi/v/taskbrew.svg" alt="PyPI"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
     <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.10%2B-green.svg" alt="Python 3.10+"></a>
     <img src="https://img.shields.io/badge/Tests-1300%2B_passing-brightgreen.svg" alt="Tests: 1300+">
@@ -154,12 +155,8 @@ TaskBrew ships with 33 built-in intelligence modules that enhance agent behavior
 ### Install and run
 
 ```bash
-# Clone the repository
-git clone https://github.com/nikhilch98/taskbrew.git
-cd taskbrew
-
-# Install in editable mode
-pip install -e .
+# Install from PyPI
+pip install taskbrew
 
 # Initialize a new project
 taskbrew init --name my-project
@@ -529,29 +526,17 @@ Key events: `task.completed`, `task.failed`, `task.claimed`, `agent.status_chang
 
 ## Publishing to PyPI
 
-Once published, users will be able to install with `pip install taskbrew`.
+TaskBrew is available on [PyPI](https://pypi.org/project/taskbrew/). To publish a new version:
 
 ```bash
 # Install build tools
 pip install build twine
 
-# Build the package
+# Update the version in pyproject.toml, then build
 python -m build
 
-# Upload to PyPI (requires a PyPI account and API token)
+# Upload to PyPI
 twine upload dist/*
-```
-
-To create a PyPI API token:
-1. Register at [pypi.org](https://pypi.org/account/register/)
-2. Go to Account Settings > API tokens
-3. Create a token scoped to the `taskbrew` project (or all projects for the first upload)
-4. Use the token as your password when `twine upload` prompts for credentials
-
-After the first upload, users can install with:
-
-```bash
-pip install taskbrew
 ```
 
 ---

@@ -14,7 +14,13 @@ and submitting your first task.
 
 ## Installation
 
-### From source
+### From PyPI
+
+```bash
+pip install taskbrew
+```
+
+### From source (development)
 
 ```bash
 git clone https://github.com/nikhilch98/taskbrew.git
