@@ -155,8 +155,10 @@ TaskBrew ships with 33 built-in intelligence modules that enhance agent behavior
 ### Install and run
 
 ```bash
-# Install from PyPI
+# Install from PyPI (pick one)
 pip install taskbrew
+# — or, to keep it isolated from your system Python —
+pipx install taskbrew
 
 # Initialize a new project
 taskbrew init --name my-project

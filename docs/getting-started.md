@@ -20,6 +20,12 @@ and submitting your first task.
 pip install taskbrew
 ```
 
+Or use [pipx](https://pipx.pypa.io/) to install in an isolated environment (recommended):
+
+```bash
+pipx install taskbrew
+```
+
 ### From source (development)
 
 ```bash
