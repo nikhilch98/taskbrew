@@ -4,7 +4,7 @@ Usage (as subprocess):
     python -m taskbrew.tools.task_tools
 
 Environment:
-    AI_TEAM_API_URL  Base URL of the dashboard API (default: http://127.0.0.1:8420)
+    TASKBREW_API_URL  Base URL of the dashboard API (default: http://127.0.0.1:8420)
 """
 
 from __future__ import annotations
@@ -280,6 +280,6 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
 
 
 if __name__ == "__main__":
-    api_url = os.environ.get("AI_TEAM_API_URL", "http://127.0.0.1:8420")
+    api_url = os.environ.get("TASKBREW_API_URL", "http://127.0.0.1:8420")
     server = build_task_tools_server(api_url=api_url)
     server.run(transport="stdio")

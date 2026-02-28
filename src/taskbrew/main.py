@@ -24,18 +24,6 @@ def _validate_startup(project_dir: Path, team_config, roles: dict, cli_provider:
 
     errors = []
 
-    # Check API key based on provider
-    if cli_provider == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
-        errors.append(
-            f"ANTHROPIC_API_KEY not set (provider: '{cli_provider}').\n"
-            "  -> Set it in your environment or .env file."
-        )
-    if cli_provider == "gemini" and not os.environ.get("GOOGLE_API_KEY"):
-        errors.append(
-            f"GOOGLE_API_KEY not set (provider: '{cli_provider}').\n"
-            "  -> Set it in your environment or .env file."
-        )
-
     # Check CLI binary exists
     if cli_provider == "claude" and not shutil.which("claude"):
         errors.append(
@@ -743,20 +731,16 @@ def _cmd_init(args):
     # Create .env.example if not present
     env_example = project_dir / ".env.example"
     if not env_example.exists():
-        provider_key = "ANTHROPIC_API_KEY" if args.provider == "claude" else "GOOGLE_API_KEY"
         env_example.write_text(
-            f'# Required\n'
-            f'{provider_key}=your-api-key-here\n\n'
-            f'# Optional\n'
-            f'AI_TEAM_API_URL=http://127.0.0.1:8420\n'
-            f'LOG_LEVEL=INFO\n'
+            '# Optional\n'
+            'TASKBREW_API_URL=http://127.0.0.1:8420\n'
+            'LOG_LEVEL=INFO\n'
         )
         print("  Created .env.example")
 
     print("\nProject initialized! Next steps:")
-    print("  1. Add your API key to .env or environment")
-    print("  2. Add more roles in config/roles/")
-    print("  3. Run: taskbrew start")
+    print("  1. Add more roles in config/roles/")
+    print("  2. Run: taskbrew start")
 
 
 def _cmd_doctor(args):
@@ -790,17 +774,6 @@ def _cmd_doctor(args):
         print(f"  [OK] Gemini CLI found: {gemini_path}")
     else:
         print("  [WARN] Gemini CLI not found (install: npm install -g @google/gemini-cli)")
-
-    # API keys
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        print("  [OK] ANTHROPIC_API_KEY is set")
-    else:
-        print("  [WARN] ANTHROPIC_API_KEY not set")
-
-    if os.environ.get("GOOGLE_API_KEY"):
-        print("  [OK] GOOGLE_API_KEY is set")
-    else:
-        print("  [WARN] GOOGLE_API_KEY not set")
 
     # Config files
     config_dir = Path(".") / "config"

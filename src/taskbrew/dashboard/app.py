@@ -299,19 +299,19 @@ def create_app(
 
     @app.get("/")
     async def index(request: Request):
-        return templates.TemplateResponse("index.html", {"request": request})
+        return templates.TemplateResponse(request, "index.html")
 
     @app.get("/metrics")
     async def metrics_page(request: Request):
-        return templates.TemplateResponse("metrics.html", {"request": request})
+        return templates.TemplateResponse(request, "metrics.html")
 
     @app.get("/settings")
     async def settings_page(request: Request):
-        return templates.TemplateResponse("settings.html", {"request": request})
+        return templates.TemplateResponse(request, "settings.html")
 
     @app.get("/costs")
     async def costs_page(request: Request):
-        return templates.TemplateResponse("costs.html", {"request": request})
+        return templates.TemplateResponse(request, "costs.html")
 
 
 

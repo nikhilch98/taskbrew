@@ -4,7 +4,7 @@ Usage (as subprocess):
     python -m taskbrew.tools.intelligence_tools
 
 Environment:
-    AI_TEAM_DB_PATH  Path to the SQLite database (default: data/tasks.db)
+    TASKBREW_DB_PATH  Path to the SQLite database (default: data/tasks.db)
 """
 
 from __future__ import annotations
@@ -213,6 +213,6 @@ def build_intelligence_tools_server(db_path: str = "data/tasks.db"):
 
 if __name__ == "__main__":
     import os
-    db_path = os.environ.get("AI_TEAM_DB_PATH", "data/tasks.db")
+    db_path = os.environ.get("TASKBREW_DB_PATH", "data/tasks.db")
     server = build_intelligence_tools_server(db_path=db_path)
     server.run(transport="stdio")

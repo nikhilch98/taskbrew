@@ -30,9 +30,9 @@ def test_cmd_init_creates_structure(tmp_path):
     assert "can_create_groups" in pm_content
     assert "group_type" in pm_content
 
-    # Verify .env.example has correct key for provider
+    # Verify .env.example exists with optional config
     env_content = (tmp_path / ".env.example").read_text()
-    assert "ANTHROPIC_API_KEY" in env_content
+    assert "TASKBREW_API_URL" in env_content
 
 
 def test_cmd_init_gemini_provider(tmp_path):
@@ -44,7 +44,7 @@ def test_cmd_init_gemini_provider(tmp_path):
     assert 'cli_provider: "gemini"' in team_content
 
     env_content = (tmp_path / ".env.example").read_text()
-    assert "GOOGLE_API_KEY" in env_content
+    assert "TASKBREW_API_URL" in env_content
 
 
 def test_cmd_init_doesnt_overwrite(tmp_path):

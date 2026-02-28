@@ -321,9 +321,8 @@ tools:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | When using Claude | Anthropic API key |
-| `GOOGLE_API_KEY` | When using Gemini | Google API key |
-| `AI_TEAM_API_URL` | No | Override the dashboard API URL (default: `http://127.0.0.1:8420`) |
+| `TASKBREW_API_URL` | No | Override the dashboard API URL (default: `http://127.0.0.1:8420`) |
+| `TASKBREW_DB_PATH` | No | Override the SQLite database path (default: `data/tasks.db`) |
 | `LOG_LEVEL` | No | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 Additional environment variables can be set for MCP servers via the `env`

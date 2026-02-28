@@ -45,12 +45,12 @@ def _interpolate_env(env: dict[str, str]) -> dict[str, str]:
 _BUILTIN_MCP_SERVERS = {
     "task-tools": {
         "module": "taskbrew.tools.task_tools",
-        "env_key": "AI_TEAM_API_URL",
+        "env_key": "TASKBREW_API_URL",
         "env_source": "api_url",
     },
     "intelligence-tools": {
         "module": "taskbrew.tools.intelligence_tools",
-        "env_key": "AI_TEAM_DB_PATH",
+        "env_key": "TASKBREW_DB_PATH",
         "env_source": "db_path",
     },
 }
