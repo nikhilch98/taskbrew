@@ -533,8 +533,14 @@ async def run_server(project_manager):
     """Start the dashboard server. Agents are started separately via start_agents()."""
     import uvicorn
     from taskbrew.dashboard.app import create_app
+    from taskbrew.dashboard.chat_manager import ChatManager
 
-    app = create_app(project_manager=project_manager)
+    orch = project_manager.orchestrator
+    chat_manager = ChatManager(
+        project_dir=orch.project_dir if orch else None,
+    )
+
+    app = create_app(project_manager=project_manager, chat_manager=chat_manager)
 
     # If there's an active project, start its agents
     if project_manager.orchestrator:

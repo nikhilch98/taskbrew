@@ -34,16 +34,16 @@ class MentionBody(BaseModel):
 # Table initialisation (idempotent)
 # ---------------------------------------------------------------------------
 
-_tables_created = False
+_tables_created_for_db: object | None = None
 
 
 async def _ensure_tables():
     """Create collaboration tables if they do not exist yet."""
-    global _tables_created
-    if _tables_created:
-        return
+    global _tables_created_for_db
     orch = get_orch()
     db = orch.task_board._db
+    if _tables_created_for_db is db:
+        return
     await db.executescript("""
         CREATE TABLE IF NOT EXISTS collab_comments (
             id         TEXT PRIMARY KEY,
@@ -84,7 +84,7 @@ async def _ensure_tables():
         CREATE INDEX IF NOT EXISTS idx_collab_mentions_user
             ON collab_mentions(mentioned_user, read);
     """)
-    _tables_created = True
+    _tables_created_for_db = db
 
 
 def _utcnow() -> str:

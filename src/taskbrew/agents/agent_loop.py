@@ -244,12 +244,12 @@ class AgentLoop:
         # --- Learned Conventions Context ---
         try:
             conventions = await self.board._db.execute_fetchall(
-                "SELECT convention_type, pattern, example FROM codebase_conventions LIMIT 10"
+                "SELECT convention_type, pattern, examples FROM codebase_conventions LIMIT 10"
             )
             if conventions:
                 parts.append("\n## Code Conventions (Learned)")
                 for c in conventions:
-                    example = f" (e.g., {c['example']})" if c.get('example') else ""
+                    example = f" (e.g., {c['examples']})" if c.get('examples') else ""
                     parts.append(f"- {c['convention_type']}: {c['pattern']}{example}")
         except Exception as e:
             logger.warning("Context provider failed: %s", e)
