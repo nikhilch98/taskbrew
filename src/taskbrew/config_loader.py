@@ -327,6 +327,67 @@ def save_pipeline(team_yaml_path: Path, pipeline: PipelineConfig) -> None:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
+def migrate_routes_to_pipeline(roles: dict[str, RoleConfig]) -> PipelineConfig:
+    """Auto-generate a PipelineConfig from per-role routes_to fields.
+
+    Used on first load when team.yaml has no ``pipeline`` section but
+    roles have ``routes_to`` entries.
+
+    Parameters
+    ----------
+    roles:
+        Mapping of role name to RoleConfig (as returned by :func:`load_roles`).
+
+    Returns
+    -------
+    PipelineConfig
+        A new pipeline with edges derived from all roles' ``routes_to``.
+    """
+    edges: list[PipelineEdge] = []
+    edge_counter = 0
+
+    for role_name, rc in roles.items():
+        for rt in rc.routes_to:
+            # Skip routes to non-existent roles
+            if rt.role not in roles:
+                logger.warning(
+                    "Migration: skipping route from '%s' to unknown role '%s'",
+                    role_name, rt.role,
+                )
+                continue
+            edge_counter += 1
+            edges.append(PipelineEdge(
+                id=f"migrated-edge-{edge_counter}",
+                from_agent=role_name,
+                to_agent=rt.role,
+                task_types=rt.task_types,
+                on_failure="block",
+            ))
+
+    # Detect start agent: role with no inbound edges (and at least one
+    # outbound edge, or at least one edge exists).
+    if edges:
+        all_roles = set(roles.keys())
+        routed_to = {e.to_agent for e in edges}
+        entry_points = all_roles - routed_to
+        # Among entry points, prefer those with outbound edges
+        entry_with_outbound = [
+            r for r in entry_points
+            if any(e.from_agent == r for e in edges)
+        ]
+        start_agent = entry_with_outbound[0] if entry_with_outbound else None
+    else:
+        start_agent = None
+
+    return PipelineConfig(
+        id="default-pipeline",
+        name="Default Pipeline",
+        start_agent=start_agent,
+        edges=edges,
+        node_config={},
+    )
+
+
 @dataclass
 class AutoScaleConfig:
     """Per-role auto-scaling configuration."""
