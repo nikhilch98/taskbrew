@@ -1251,6 +1251,82 @@
             color: var(--accent-indigo);
         }
 
+        /* ========== Add Agent Modal Tabs ========== */
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            margin-top: 16px;
+            border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+        }
+        .tab-btn {
+            padding: 8px 20px;
+            background: none;
+            border: none;
+            color: var(--text-muted, #94a3b8);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .tab-btn.active {
+            color: var(--text-primary, #f1f5f9);
+            border-bottom-color: var(--accent-indigo, #6366f1);
+        }
+        .tab-btn:hover {
+            color: var(--text-primary, #f1f5f9);
+        }
+        /* ========== Preset Grid ========== */
+        .preset-category-tabs {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+        .preset-cat-btn {
+            padding: 4px 12px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+            background: transparent;
+            color: var(--text-muted, #94a3b8);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .preset-cat-btn.active {
+            background: var(--accent-indigo, #6366f1);
+            color: white;
+            border-color: var(--accent-indigo, #6366f1);
+        }
+        .preset-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+        }
+        .preset-card {
+            padding: 16px;
+            border-radius: var(--radius-lg, 12px);
+            border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+            background: var(--bg-card, rgba(255,255,255,0.03));
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .preset-card:hover, .preset-card.selected {
+            border-color: var(--accent-indigo, #6366f1);
+            background: rgba(99, 102, 241, 0.08);
+        }
+        .preset-card-icon { font-size: 24px; margin-bottom: 8px; }
+        .preset-card-name { font-weight: 600; font-size: 14px; color: var(--text-primary, #f1f5f9); margin-bottom: 4px; }
+        .preset-card-desc { font-size: 12px; color: var(--text-muted, #94a3b8); line-height: 1.4; }
+        .preset-detail { padding: 16px 0; }
+        .preset-detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .preset-detail-icon { font-size: 32px; }
+        .preset-detail-name { font-size: 20px; font-weight: 700; color: var(--text-primary, #f1f5f9); }
+        .preset-detail-section { margin-bottom: 16px; }
+        .preset-detail-section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted, #94a3b8); margin-bottom: 8px; }
+        .preset-detail-section pre { background: var(--bg-primary, #05070e); border-radius: 8px; padding: 12px; font-size: 12px; max-height: 200px; overflow-y: auto; color: var(--text-secondary, #cbd5e1); white-space: pre-wrap; }
+        .preset-detail-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
         /* ========== Team Settings Section ========== */
         .team-section {
             background: var(--bg-card);
@@ -3307,7 +3383,7 @@
             if (allPresets.length > 0) return;
             try {
                 var res = await fetch('/api/presets');
-                if (res.ok) { allPresets = await res.json(); }
+                if (res.ok) { var data = await res.json(); allPresets = data.presets || []; }
             } catch (e) {
                 console.error('Failed to load presets:', e);
             }
@@ -3381,10 +3457,10 @@
 
             html += '<div class="preset-grid">';
             filtered.forEach(function(p) {
-                var sel = selectedPreset && selectedPreset.id === p.id ? ' selected' : '';
-                html += '<div class="preset-card' + sel + '" onclick="selectPreset(\'' + escapeHtml(p.id) + '\')">';
+                var sel = selectedPreset && selectedPreset.preset_id === p.preset_id ? ' selected' : '';
+                html += '<div class="preset-card' + sel + '" onclick="selectPreset(\'' + escapeHtml(p.preset_id) + '\')">';
                 html += '<div class="preset-card-icon">' + escapeHtml(p.icon_emoji || p.emoji || '') + '</div>';
-                html += '<div class="preset-card-name">' + escapeHtml(p.display_name || p.id) + '</div>';
+                html += '<div class="preset-card-name">' + escapeHtml(p.display_name || p.preset_id) + '</div>';
                 html += '<div class="preset-card-desc">' + escapeHtml(p.description || '') + '</div>';
                 html += '</div>';
             });
@@ -3398,7 +3474,7 @@
         }
 
         function selectPreset(presetId) {
-            selectedPreset = allPresets.find(function(p) { return p.id === presetId; }) || null;
+            selectedPreset = allPresets.find(function(p) { return p.preset_id === presetId; }) || null;
             renderAddAgent();
         }
 
@@ -3409,7 +3485,7 @@
             var html = '<div class="preset-detail">';
             html += '<div class="preset-detail-header">';
             html += '<span class="preset-detail-icon">' + escapeHtml(p.icon_emoji || p.emoji || '') + '</span>';
-            html += '<span class="preset-detail-name">' + escapeHtml(p.display_name || p.id) + '</span>';
+            html += '<span class="preset-detail-name">' + escapeHtml(p.display_name || p.preset_id) + '</span>';
             html += '</div>';
 
             if (p.capabilities && p.capabilities.length > 0) {
@@ -3571,7 +3647,7 @@
                 if (addAgentStep === 0) {
                     if (!selectedPreset) { showToast('Select a preset first', 'error'); return; }
                     addAgentStep = 1;
-                    fetch('/api/presets/' + encodeURIComponent(selectedPreset.id))
+                    fetch('/api/presets/' + encodeURIComponent(selectedPreset.preset_id))
                         .then(function(res) { return res.json(); })
                         .then(function(data) { selectedPreset = data; renderAddAgent(); })
                         .catch(function() { renderAddAgent(); });
@@ -3583,7 +3659,7 @@
                 } else {
                     var modelEl = document.getElementById('preset-model-pick');
                     var model = modelEl ? modelEl.value : (selectedPreset.default_model || '');
-                    var roleId = selectedPreset.role || selectedPreset.id;
+                    var roleId = selectedPreset.role || selectedPreset.preset_id;
                     var existingIds = settingsData.roles.map(function(r) { return r.role; });
                     var baseId = roleId;
                     var suffix = 2;
@@ -3591,7 +3667,7 @@
                         roleId = baseId + '_' + suffix;
                         suffix++;
                     }
-                    var payload = { role: roleId, preset_id: selectedPreset.id, model: model };
+                    var payload = { role: roleId, preset_id: selectedPreset.preset_id, model: model };
                     fetch('/api/settings/roles', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },

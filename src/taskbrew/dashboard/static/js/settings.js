@@ -1266,7 +1266,7 @@ async function loadPresetsIfNeeded() {
     if (allPresets.length > 0) return;
     try {
         var res = await fetch('/api/presets');
-        if (res.ok) { allPresets = await res.json(); }
+        if (res.ok) { var data = await res.json(); allPresets = data.presets || []; }
     } catch (e) {
         console.error('Failed to load presets:', e);
     }
