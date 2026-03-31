@@ -281,3 +281,113 @@ class TestInteractionsAPI:
         resp = await client.post(f"/api/interactions/{req['id']}/skip")
         assert resp.status_code == 200
         assert resp.json()["status"] == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# Revision chain tracking tests (Task 7)
+# ---------------------------------------------------------------------------
+
+
+class TestRevisionTracking:
+    """Test revision chain tracking."""
+
+    @pytest.mark.asyncio
+    async def test_chain_insert_and_query(self, db_with_group_and_task):
+        db = db_with_group_and_task
+        # Insert a second task for the chain
+        await db.execute(
+            "INSERT INTO tasks (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+            ("task-2", "Revised Task", "pending"),
+        )
+        # Insert two revisions in the same chain
+        await db.execute(
+            "INSERT INTO task_chains (id, original_task_id, current_task_id, agent_role, revision_count, max_revision_cycles, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+            ("chain-100", "task-1", "task-1", "coder_be", 0, 5),
+        )
+        await db.execute(
+            "INSERT INTO task_chains (id, original_task_id, current_task_id, agent_role, revision_count, max_revision_cycles, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+            ("chain-101", "task-1", "task-2", "coder_be", 1, 5),
+        )
+        rows = await db.execute_fetchall(
+            "SELECT * FROM task_chains WHERE original_task_id = ? ORDER BY revision_count",
+            ("task-1",),
+        )
+        assert len(rows) == 2
+        assert rows[0]["revision_count"] == 0
+        assert rows[1]["revision_count"] == 1
+        assert rows[0]["max_revision_cycles"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (Task 8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def db_for_integration(db):
+    """Database pre-seeded for integration tests (groups + tasks + first_run groups)."""
+    for gid in ("g-int", "g-fr", "g-other"):
+        await db.execute(
+            "INSERT OR IGNORE INTO groups (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+            (gid, f"Group {gid}", "active"),
+        )
+    for tid in ("t-int-1", "t-int-2"):
+        await db.execute(
+            "INSERT OR IGNORE INTO tasks (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+            (tid, f"Task {tid}", "pending"),
+        )
+    return db
+
+
+class TestHILIntegration:
+    """End-to-end human-in-the-loop flow tests."""
+
+    @pytest.mark.asyncio
+    async def test_full_approval_flow(self, db_for_integration):
+        """Agent creates request -> user approves -> agent gets response."""
+        mgr = InteractionManager(db_for_integration)
+        # Agent creates approval request
+        req = await mgr.create_request(
+            task_id="t-int-1", group_id="g-int", agent_role="designer_web",
+            instance_token="tok-int-1", req_type="approval",
+            request_data={"summary": "Homepage mockup ready", "artifact_paths": ["/mockup.html"]},
+        )
+        assert req["status"] == "pending"
+
+        # User approves via dashboard
+        resolved = await mgr.resolve(req["id"], "approved", {"notes": "Looks great!"})
+        assert resolved["status"] == "approved"
+
+        # Agent polls and gets response
+        status = await mgr.check_status(req["id"])
+        assert status["status"] == "approved"
+        assert status["response_data"]["notes"] == "Looks great!"
+
+    @pytest.mark.asyncio
+    async def test_clarification_flow(self, db_for_integration):
+        """Agent asks question -> user responds -> agent gets answer."""
+        mgr = InteractionManager(db_for_integration)
+        req = await mgr.create_request(
+            task_id="t-int-2", group_id="g-int", agent_role="coder_be",
+            instance_token="tok-int-2", req_type="clarification",
+            request_data={"question": "REST or GraphQL?", "suggested_options": ["REST", "GraphQL"]},
+        )
+        resolved = await mgr.resolve(req["id"], "responded", {"response": "REST"})
+        status = await mgr.check_status(req["id"])
+        assert status["status"] == "responded"
+        assert status["response_data"]["response"] == "REST"
+
+    @pytest.mark.asyncio
+    async def test_first_run_unlock_all_instances(self, db_for_integration):
+        """Approving one instance's first_run unlocks all instances of that role."""
+        mgr = InteractionManager(db_for_integration)
+        # Not approved yet
+        assert await mgr.check_first_run("g-fr", "architect") is False
+        # Approve
+        await mgr.record_first_run("g-fr", "architect")
+        # All instances should see it as approved
+        assert await mgr.check_first_run("g-fr", "architect") is True
+        # Different group is NOT approved
+        assert await mgr.check_first_run("g-other", "architect") is False

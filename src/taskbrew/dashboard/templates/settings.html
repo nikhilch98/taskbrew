@@ -1908,6 +1908,16 @@
             <svg id="pipelineSvg" class="pipeline-svg" xmlns="http://www.w3.org/2000/svg"></svg>
         </section>
 
+        <!-- Action Required Panel -->
+        <section id="actionRequiredSection" class="action-required-section" style="display:none;">
+            <div class="section-header" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <span style="font-size:20px;">🔔</span>
+                <h2 style="margin:0;font-size:18px;color:var(--text-primary,#f1f5f9);">Action Required</h2>
+                <span id="actionRequiredBadge" style="background:var(--accent-rose,#f43f5e);color:white;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;"></span>
+            </div>
+            <div id="actionRequiredCards"></div>
+        </section>
+
         <!-- Agent Cards Grid -->
         <section role="region" aria-label="Agent roles configuration">
             <div class="section-title">
@@ -4017,12 +4027,138 @@
         document.head.appendChild(spinStyle);
 
         // ================================================================
+        // Action Required — Human Interaction Notifications
+        // ================================================================
+        var pendingInteractions = [];
+
+        async function loadPendingInteractions() {
+            try {
+                var resp = await fetch('/api/interactions/pending');
+                if (resp.ok) {
+                    var data = await resp.json();
+                    pendingInteractions = data.interactions || [];
+                    renderActionRequired();
+                }
+            } catch (e) { console.error('Failed to load interactions:', e); }
+        }
+
+        function renderActionRequired() {
+            var section = document.getElementById('actionRequiredSection');
+            var cards = document.getElementById('actionRequiredCards');
+            var badge = document.getElementById('actionRequiredBadge');
+            if (!section || !cards) return;
+
+            if (pendingInteractions.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+
+            section.style.display = 'block';
+            badge.textContent = pendingInteractions.length;
+
+            var html = '';
+            pendingInteractions.forEach(function(req) {
+                var isApproval = req.type === 'approval';
+                var borderColor = isApproval ? 'var(--accent-amber,#f59e0b)' : 'var(--accent-cyan,#06b6d4)';
+                var icon = isApproval ? '⏸' : '🤔';
+                var reqData = req.request_data || {};
+
+                html += '<div style="border:1px solid ' + borderColor + ';border-radius:12px;padding:16px;margin-bottom:12px;background:rgba(255,255,255,0.02);">';
+                html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">';
+                html += '<span style="font-size:18px;">' + icon + '</span>';
+                html += '<strong style="color:var(--text-primary,#f1f5f9);font-size:14px;">' + escapeHtml(req.agent_role || 'Agent') + '</strong>';
+                html += '<span style="color:var(--text-muted,#94a3b8);font-size:12px;">' + (isApproval ? 'awaiting approval' : 'needs clarification') + '</span>';
+                html += '</div>';
+
+                if (isApproval) {
+                    html += '<p style="color:var(--text-secondary,#cbd5e1);font-size:13px;margin:0 0 12px;">' + escapeHtml(reqData.summary || 'Task completed, awaiting review') + '</p>';
+                    html += '<div style="display:flex;gap:8px;align-items:center;">';
+                    html += '<textarea id="feedback-' + req.id + '" placeholder="Feedback (optional for approve, required for reject)" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border-subtle,rgba(255,255,255,0.08));background:var(--bg-primary,#05070e);color:var(--text-primary,#f1f5f9);font-size:12px;resize:none;height:36px;"></textarea>';
+                    html += '<button onclick="approveInteraction(\'' + req.id + '\')" style="padding:8px 16px;border-radius:6px;border:none;background:#22c55e;color:white;cursor:pointer;font-size:12px;font-weight:600;">Approve</button>';
+                    html += '<button onclick="rejectInteraction(\'' + req.id + '\')" style="padding:8px 16px;border-radius:6px;border:none;background:#f43f5e;color:white;cursor:pointer;font-size:12px;font-weight:600;">Reject</button>';
+                    html += '</div>';
+                } else {
+                    html += '<p style="color:var(--text-secondary,#cbd5e1);font-size:13px;margin:0 0 8px;">"' + escapeHtml(reqData.question || '') + '"</p>';
+                    if (reqData.suggested_options && reqData.suggested_options.length > 0) {
+                        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">';
+                        reqData.suggested_options.forEach(function(opt) {
+                            html += '<button onclick="respondInteraction(\'' + req.id + '\',\'' + escapeHtml(opt) + '\')" style="padding:4px 12px;border-radius:999px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:12px;">' + escapeHtml(opt) + '</button>';
+                        });
+                        html += '</div>';
+                    }
+                    html += '<div style="display:flex;gap:8px;align-items:center;">';
+                    html += '<input id="response-' + req.id + '" placeholder="Type your response..." style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border-subtle,rgba(255,255,255,0.08));background:var(--bg-primary,#05070e);color:var(--text-primary,#f1f5f9);font-size:12px;">';
+                    html += '<button onclick="respondInteraction(\'' + req.id + '\')" style="padding:8px 16px;border-radius:6px;border:none;background:var(--accent-indigo,#6366f1);color:white;cursor:pointer;font-size:12px;font-weight:600;">Respond</button>';
+                    html += '<button onclick="skipInteraction(\'' + req.id + '\')" style="padding:8px 12px;border-radius:6px;border:none;background:var(--bg-card);color:var(--text-muted);cursor:pointer;font-size:12px;">Skip</button>';
+                    html += '</div>';
+                }
+                html += '</div>';
+            });
+
+            cards.innerHTML = html;
+        }
+
+        async function approveInteraction(reqId) {
+            var feedbackEl = document.getElementById('feedback-' + reqId);
+            var notes = feedbackEl ? feedbackEl.value.trim() : '';
+            try {
+                var resp = await fetch('/api/interactions/' + reqId + '/approve', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({notes: notes || null}),
+                });
+                if (resp.ok) { showToast('Approved', 'success'); loadPendingInteractions(); }
+                else { showToast('Failed to approve', 'error'); }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        async function rejectInteraction(reqId) {
+            var feedbackEl = document.getElementById('feedback-' + reqId);
+            var feedback = feedbackEl ? feedbackEl.value.trim() : '';
+            if (!feedback) { showToast('Feedback is required for rejection', 'error'); return; }
+            try {
+                var resp = await fetch('/api/interactions/' + reqId + '/reject', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({feedback: feedback}),
+                });
+                if (resp.ok) { showToast('Rejected', 'success'); loadPendingInteractions(); }
+                else { showToast('Failed to reject', 'error'); }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        async function respondInteraction(reqId, quickResponse) {
+            var responseEl = document.getElementById('response-' + reqId);
+            var response = quickResponse || (responseEl ? responseEl.value.trim() : '');
+            if (!response) { showToast('Response is required', 'error'); return; }
+            try {
+                var resp = await fetch('/api/interactions/' + reqId + '/respond', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({response: response}),
+                });
+                if (resp.ok) { showToast('Response sent', 'success'); loadPendingInteractions(); }
+                else { showToast('Failed to respond', 'error'); }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        async function skipInteraction(reqId) {
+            try {
+                var resp = await fetch('/api/interactions/' + reqId + '/skip', { method: 'POST' });
+                if (resp.ok) { showToast('Skipped', 'success'); loadPendingInteractions(); }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        // ================================================================
         // Init
         // ================================================================
         (async function init() {
             const hasProject = await checkProjectOrRedirect();
             if (hasProject) {
                 await loadSettings();
+                loadPendingInteractions();
+                // Poll for pending interactions every 10 seconds
+                setInterval(loadPendingInteractions, 10000);
             }
         })();
     </script>
