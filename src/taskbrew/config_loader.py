@@ -199,6 +199,134 @@ class RouteTarget:
     task_types: list[str] = field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Pipeline configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PipelineEdge:
+    """A single directed edge in the pipeline graph."""
+
+    id: str
+    from_agent: str
+    to_agent: str
+    task_types: list[str] = field(default_factory=list)
+    on_failure: str = "block"  # "block", "continue_partial", "cancel_pipeline"
+
+
+@dataclass
+class PipelineNodeConfig:
+    """Per-node configuration in the pipeline (receiving-side settings)."""
+
+    join_strategy: str = "wait_all"  # "wait_all" or "stream"
+
+
+@dataclass
+class PipelineConfig:
+    """Top-level pipeline topology stored in team.yaml."""
+
+    id: str = "default-pipeline"
+    name: str = "Default Pipeline"
+    start_agent: str | None = None
+    edges: list[PipelineEdge] = field(default_factory=list)
+    node_config: dict[str, PipelineNodeConfig] = field(default_factory=dict)
+
+
+def load_pipeline(team_yaml_path: Path) -> PipelineConfig:
+    """Load pipeline topology from team.yaml.
+
+    Parameters
+    ----------
+    team_yaml_path:
+        Path to the team YAML file (e.g. ``config/team.yaml``).
+
+    Returns
+    -------
+    PipelineConfig
+        Parsed pipeline configuration. Returns a default empty pipeline
+        if the ``pipeline`` key is missing from the YAML.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *team_yaml_path* does not exist.
+    """
+    if not team_yaml_path.exists():
+        raise FileNotFoundError(f"Team config not found: {team_yaml_path}")
+
+    with open(team_yaml_path) as f:
+        data = yaml.safe_load(f) or {}
+
+    pipeline_raw = data.get("pipeline")
+    if not pipeline_raw:
+        return PipelineConfig()
+
+    edges = []
+    for e in pipeline_raw.get("edges", []):
+        edges.append(PipelineEdge(
+            id=e["id"],
+            from_agent=e["from"],
+            to_agent=e["to"],
+            task_types=e.get("task_types", []),
+            on_failure=e.get("on_failure", "block"),
+        ))
+
+    node_config: dict[str, PipelineNodeConfig] = {}
+    for role_name, nc_raw in pipeline_raw.get("node_config", {}).items():
+        node_config[role_name] = PipelineNodeConfig(
+            join_strategy=nc_raw.get("join_strategy", "wait_all"),
+        )
+
+    return PipelineConfig(
+        id=pipeline_raw.get("id", "default-pipeline"),
+        name=pipeline_raw.get("name", "Default Pipeline"),
+        start_agent=pipeline_raw.get("start_agent"),
+        edges=edges,
+        node_config=node_config,
+    )
+
+
+def save_pipeline(team_yaml_path: Path, pipeline: PipelineConfig) -> None:
+    """Persist pipeline topology to team.yaml.
+
+    Reads the existing file, updates the ``pipeline`` key, and writes back.
+    All other top-level keys are preserved.
+
+    Parameters
+    ----------
+    team_yaml_path:
+        Path to the team YAML file.
+    pipeline:
+        The pipeline config to save.
+    """
+    with open(team_yaml_path) as f:
+        data = yaml.safe_load(f) or {}
+
+    data["pipeline"] = {
+        "id": pipeline.id,
+        "name": pipeline.name,
+        "start_agent": pipeline.start_agent,
+        "edges": [
+            {
+                "id": e.id,
+                "from": e.from_agent,
+                "to": e.to_agent,
+                "task_types": e.task_types,
+                "on_failure": e.on_failure,
+            }
+            for e in pipeline.edges
+        ],
+        "node_config": {
+            role: {"join_strategy": nc.join_strategy}
+            for role, nc in pipeline.node_config.items()
+        },
+    }
+
+    with open(team_yaml_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
 @dataclass
 class AutoScaleConfig:
     """Per-role auto-scaling configuration."""
