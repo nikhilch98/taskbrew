@@ -64,10 +64,17 @@ class UpdateRoleSettingsBody(BaseModel):
     group_type: Optional[str] = None
     routes_to: Optional[list[dict[str, Any]]] = None
     auto_scale: Optional[dict[str, Any]] = None
+    # --- New fields (v2) ---
+    approval_mode: Optional[str] = None
+    max_revision_cycles: Optional[int] = None
+    max_clarification_requests: Optional[int] = None
+    max_route_tasks: Optional[int] = None
+    uses_worktree: Optional[bool] = None
 
 
 class CreateRoleBody(BaseModel):
     role: str
+    preset_id: Optional[str] = None  # If set, copy config from preset
     display_name: Optional[str] = None
     prefix: Optional[str] = None
     color: Optional[str] = None
@@ -85,6 +92,12 @@ class CreateRoleBody(BaseModel):
     context_includes: Optional[list[str]] = None
     max_execution_time: Optional[int] = None
     auto_scale: Optional[dict[str, Any]] = None
+    # --- New fields (v2) ---
+    approval_mode: Optional[str] = None
+    max_revision_cycles: Optional[int] = None
+    max_clarification_requests: Optional[int] = None
+    max_route_tasks: Optional[int] = None
+    uses_worktree: Optional[bool] = None
 
 
 class CancelTaskBody(BaseModel):

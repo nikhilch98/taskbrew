@@ -468,6 +468,26 @@ async def create_role(body: CreateRoleBody):
     if _roles and role_name in _roles:
         raise HTTPException(status_code=409, detail=f"Role '{role_name}' already exists")
 
+    # --- Preset merging ---
+    preset_id = body.pop("preset_id", None)
+    if preset_id:
+        from taskbrew.dashboard.routers.presets import _get_presets
+        presets = _get_presets()
+        if preset_id not in presets:
+            raise HTTPException(status_code=404, detail=f"Preset not found: {preset_id}")
+        preset = dict(presets[preset_id])  # copy to avoid mutating cache
+        # Use preset's default_model as model if not overridden
+        if "model" not in body and "default_model" in preset:
+            body["model"] = preset.pop("default_model")
+        else:
+            preset.pop("default_model", None)
+        # Remove preset-only metadata fields
+        for key in ("preset_id", "category", "description", "capabilities", "icon_emoji"):
+            preset.pop(key, None)
+        # Merge: preset provides defaults, explicit body fields override
+        merged = {**preset, **body}
+        body = merged
+
     # Build YAML data with defaults for missing fields
     yaml_data: dict[str, Any] = {
         "role": role_name,
@@ -485,6 +505,12 @@ async def create_role(body: CreateRoleBody):
         "max_instances": body.get("max_instances", 1),
         "context_includes": body.get("context_includes", []),
         "max_execution_time": body.get("max_execution_time", 1800),
+        "approval_mode": body.get("approval_mode", "auto"),
+        "max_revision_cycles": body.get("max_revision_cycles", 0),
+        "max_clarification_requests": body.get("max_clarification_requests", 10),
+        "max_route_tasks": body.get("max_route_tasks", 100),
+        "uses_worktree": body.get("uses_worktree", False),
+        "artifact_exclude_patterns": body.get("artifact_exclude_patterns", []),
     }
     if body.get("group_type"):
         yaml_data["group_type"] = body["group_type"]
