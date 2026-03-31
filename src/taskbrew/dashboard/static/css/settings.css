@@ -1696,3 +1696,119 @@ body::before {
         transition: none !important;
     }
 }
+
+/* ========== Add Agent Modal Tabs ========== */
+.tab-bar {
+    display: flex;
+    gap: 0;
+    margin-top: 16px;
+    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+}
+.tab-btn {
+    padding: 8px 20px;
+    background: none;
+    border: none;
+    color: var(--text-muted, #94a3b8);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s, border-color 0.2s;
+}
+.tab-btn.active {
+    color: var(--text-primary, #f1f5f9);
+    border-bottom-color: var(--accent-indigo, #6366f1);
+}
+.tab-btn:hover {
+    color: var(--text-primary, #f1f5f9);
+}
+
+/* ========== Preset Grid ========== */
+.preset-category-tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.preset-cat-btn {
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    background: transparent;
+    color: var(--text-muted, #94a3b8);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.preset-cat-btn.active {
+    background: var(--accent-indigo, #6366f1);
+    color: white;
+    border-color: var(--accent-indigo, #6366f1);
+}
+.preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+}
+.preset-card {
+    padding: 16px;
+    border-radius: var(--radius-lg, 12px);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    background: var(--bg-card, rgba(255,255,255,0.03));
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+}
+.preset-card:hover, .preset-card.selected {
+    border-color: var(--accent-indigo, #6366f1);
+    background: rgba(99, 102, 241, 0.08);
+}
+.preset-card-icon { font-size: 24px; margin-bottom: 8px; }
+.preset-card-name { font-weight: 600; font-size: 14px; color: var(--text-primary, #f1f5f9); margin-bottom: 4px; }
+.preset-card-desc { font-size: 12px; color: var(--text-muted, #94a3b8); line-height: 1.4; }
+
+/* Preset detail view */
+.preset-detail { padding: 16px 0; }
+.preset-detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.preset-detail-icon { font-size: 32px; }
+.preset-detail-name { font-size: 20px; font-weight: 700; color: var(--text-primary, #f1f5f9); }
+.preset-detail-section { margin-bottom: 16px; }
+.preset-detail-section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted, #94a3b8); margin-bottom: 8px; }
+.preset-detail-section pre { background: var(--bg-primary, #05070e); border-radius: 8px; padding: 12px; font-size: 12px; max-height: 200px; overflow-y: auto; color: var(--text-secondary, #cbd5e1); white-space: pre-wrap; }
+.preset-detail-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Wizard modal (updated for flex layout) */
+.wizard-modal {
+    background: var(--bg-card, rgba(15, 20, 38, 0.95));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg, 20px);
+    padding: 24px;
+    width: 90%;
+    box-shadow: var(--shadow-xl);
+    backdrop-filter: blur(var(--glass-blur, 24px));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 24px));
+}
+.wizard-btn-primary {
+    padding: 8px 24px;
+    background: var(--accent-indigo, #6366f1);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm, 8px);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+.wizard-btn-primary:hover { background: #4f46e5; }
+.wizard-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.wizard-btn-secondary {
+    padding: 8px 24px;
+    background: transparent;
+    color: var(--text-secondary, #8b93a7);
+    border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+    border-radius: var(--radius-sm, 8px);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+.wizard-btn-secondary:hover { border-color: var(--text-muted); color: var(--text-primary); }

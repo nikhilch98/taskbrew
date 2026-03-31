@@ -92,8 +92,12 @@ let settingsData = { team: {}, roles: [] };
 let originalData = null;
 let availableModels = [];
 let unsaved = false;
-let wizardStep = 0;
-let wizardData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], receives_from: [], routes_to: [] };
+let addAgentTab = 'presets';
+let addAgentStep = 0;
+let selectedPreset = null;
+let allPresets = [];
+let presetCategoryFilter = 'all';
+let customData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], approval_mode: 'auto', max_revision_cycles: 0, uses_worktree: false };
 let promptFullscreenRole = null;
 let dragState = null; // For pipeline drag-to-connect
 
@@ -214,7 +218,7 @@ function renderAll() {
 }
 
 // ================================================================
-// Pipeline Visualizer (SVG)
+// Pipeline (SVG)
 // ================================================================
 function computeGraphLayout(roles) {
     // Build role map and adjacency
@@ -670,8 +674,6 @@ function renderAgentCards() {
         html += renderAccordion(roleId, 'model', 'Model & Execution', renderModelFields(role));
         // Tools
         html += renderAccordion(roleId, 'tools', 'Tools', renderToolsFields(role));
-        // Routing
-        html += renderAccordion(roleId, 'routing', 'Routing', renderRoutingFields(role));
         // System Prompt
         html += renderAccordion(roleId, 'prompt', 'System Prompt', renderPromptFields(role));
         // Advanced
@@ -960,6 +962,22 @@ function renderAdvancedFields(role) {
     });
     html += '</div></div>';
 
+    // Approval mode dropdown
+    html += '<div class="form-group"><label class="form-label">Approval Mode</label>';
+    html += '<select class="form-select" onchange="updateRole(\'' + r + '\',\'approval_mode\',this.value)">';
+    ['auto', 'manual', 'first_run'].forEach(function(m) {
+        html += '<option value="' + m + '"' + (role.approval_mode === m ? ' selected' : '') + '>' + m + '</option>';
+    });
+    html += '</select></div>';
+
+    // Max revision cycles and uses_worktree
+    html += '<div class="form-row">';
+    html += '<div class="form-group"><label class="form-label">Max Revision Cycles<span class="form-sublabel">(0 = unlimited)</span></label>';
+    html += '<input type="number" class="form-input" value="' + (role.max_revision_cycles || 0) + '" min="0" onchange="updateRole(\'' + r + '\',\'max_revision_cycles\',parseInt(this.value)||0)"></div>';
+    html += '<div class="form-group"><label class="form-label">Uses Git Worktree</label>';
+    html += '<label class="toggle-switch"><input type="checkbox"' + (role.uses_worktree ? ' checked' : '') + ' onchange="updateRole(\'' + r + '\',\'uses_worktree\',this.checked)"><span class="toggle-track"></span><span class="toggle-thumb"></span></label></div>';
+    html += '</div>';
+
     // Can create groups + group type
     var canCreate = role.can_create_groups || false;
     html += '<div class="toggle-row"><span class="toggle-label">Can Create Groups</span>' +
@@ -1226,57 +1244,202 @@ async function saveAll() {
 }
 
 // ================================================================
-// New Agent Wizard
+// Add Agent Modal (two-tab: Presets + Custom)
 // ================================================================
-function openWizard() {
-    wizardStep = 0;
-    wizardData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], receives_from: [], routes_to: [] };
-    document.getElementById('wizardOverlay').classList.add('open');
-    renderWizard();
+function openAddAgent() {
+    addAgentTab = 'presets';
+    addAgentStep = 0;
+    selectedPreset = null;
+    presetCategoryFilter = 'all';
+    customData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], approval_mode: 'auto', max_revision_cycles: 0, uses_worktree: false };
+    document.getElementById('addAgentOverlay').classList.add('open');
+    loadPresetsIfNeeded().then(function() { renderAddAgent(); });
 }
+var openWizard = openAddAgent;
 
-function closeWizard() {
-    document.getElementById('wizardOverlay').classList.remove('open');
+function closeAddAgent() {
+    document.getElementById('addAgentOverlay').classList.remove('open');
 }
+var closeWizard = closeAddAgent;
 
-function renderWizard() {
-    // Update step dots
-    document.querySelectorAll('.wizard-step-dot').forEach(function(dot, i) {
-        dot.className = 'wizard-step-dot';
-        if (i < wizardStep) dot.classList.add('completed');
-        if (i === wizardStep) dot.classList.add('active');
-    });
-
-    var body = document.getElementById('wizardBody');
-    var backBtn = document.getElementById('wizardBackBtn');
-    var nextBtn = document.getElementById('wizardNextBtn');
-
-    backBtn.style.visibility = wizardStep === 0 ? 'hidden' : 'visible';
-    nextBtn.textContent = wizardStep === 2 ? 'Create' : 'Next';
-
-    if (wizardStep === 0) {
-        body.innerHTML = renderWizardStep1();
-    } else if (wizardStep === 1) {
-        body.innerHTML = renderWizardStep2();
-    } else {
-        body.innerHTML = renderWizardStep3();
+async function loadPresetsIfNeeded() {
+    if (allPresets.length > 0) return;
+    try {
+        var res = await fetch('/api/presets');
+        if (res.ok) { allPresets = await res.json(); }
+    } catch (e) {
+        console.error('Failed to load presets:', e);
     }
 }
 
-function renderWizardStep1() {
+function switchAddAgentTab(tab) {
+    addAgentTab = tab;
+    addAgentStep = 0;
+    selectedPreset = null;
+    document.querySelectorAll('#addAgentOverlay .tab-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+        btn.setAttribute('aria-selected', btn.dataset.tab === tab ? 'true' : 'false');
+    });
+    renderAddAgent();
+}
+
+function renderAddAgent() {
+    var body = document.getElementById('addAgentBody');
+    var backBtn = document.getElementById('addAgentBackBtn');
+    var nextBtn = document.getElementById('addAgentNextBtn');
+    var title = document.getElementById('addAgentTitle');
+
+    if (addAgentTab === 'presets') {
+        backBtn.style.visibility = addAgentStep === 0 ? 'hidden' : 'visible';
+        if (addAgentStep === 0) {
+            title.textContent = 'Choose a Preset';
+            nextBtn.textContent = 'Select';
+            nextBtn.disabled = !selectedPreset;
+            body.innerHTML = renderPresetGrid();
+        } else if (addAgentStep === 1) {
+            title.textContent = selectedPreset ? selectedPreset.display_name : 'Preset Detail';
+            nextBtn.textContent = 'Next';
+            nextBtn.disabled = false;
+            body.innerHTML = renderPresetDetail();
+        } else {
+            title.textContent = 'Choose Model';
+            nextBtn.textContent = 'Create';
+            nextBtn.disabled = false;
+            body.innerHTML = renderPresetModelPicker();
+        }
+    } else {
+        backBtn.style.visibility = addAgentStep === 0 ? 'hidden' : 'visible';
+        if (addAgentStep === 0) {
+            title.textContent = 'New Custom Agent';
+            nextBtn.textContent = 'Next';
+            nextBtn.disabled = false;
+            body.innerHTML = renderCustomStep1();
+        } else {
+            title.textContent = 'Configure Agent';
+            nextBtn.textContent = 'Create';
+            nextBtn.disabled = false;
+            body.innerHTML = renderCustomStep2();
+        }
+    }
+}
+
+// ----- Presets Tab -----
+function renderPresetGrid() {
+    var categories = ['all'];
+    allPresets.forEach(function(p) {
+        if (p.category && categories.indexOf(p.category) === -1) categories.push(p.category);
+    });
+
+    var html = '<div class="preset-category-tabs">';
+    categories.forEach(function(cat) {
+        html += '<button class="preset-cat-btn' + (presetCategoryFilter === cat ? ' active' : '') + '" onclick="filterPresetCategory(\'' + escapeHtml(cat) + '\')">' + escapeHtml(cat === 'all' ? 'All' : cat) + '</button>';
+    });
+    html += '</div>';
+
+    var filtered = presetCategoryFilter === 'all' ? allPresets : allPresets.filter(function(p) { return p.category === presetCategoryFilter; });
+
+    html += '<div class="preset-grid">';
+    filtered.forEach(function(p) {
+        var sel = selectedPreset && selectedPreset.id === p.id ? ' selected' : '';
+        html += '<div class="preset-card' + sel + '" onclick="selectPreset(\'' + escapeHtml(p.id) + '\')">';
+        html += '<div class="preset-card-icon">' + escapeHtml(p.icon_emoji || p.emoji || '') + '</div>';
+        html += '<div class="preset-card-name">' + escapeHtml(p.display_name || p.id) + '</div>';
+        html += '<div class="preset-card-desc">' + escapeHtml(p.description || '') + '</div>';
+        html += '</div>';
+    });
+    html += '</div>';
+    return html;
+}
+
+function filterPresetCategory(cat) {
+    presetCategoryFilter = cat;
+    renderAddAgent();
+}
+
+function selectPreset(presetId) {
+    selectedPreset = allPresets.find(function(p) { return p.id === presetId; }) || null;
+    renderAddAgent();
+}
+
+function renderPresetDetail() {
+    if (!selectedPreset) return '<p>No preset selected.</p>';
+    var p = selectedPreset;
+
+    var html = '<div class="preset-detail">';
+    html += '<div class="preset-detail-header">';
+    html += '<span class="preset-detail-icon">' + escapeHtml(p.icon_emoji || p.emoji || '') + '</span>';
+    html += '<span class="preset-detail-name">' + escapeHtml(p.display_name || p.id) + '</span>';
+    html += '</div>';
+
+    // Capabilities
+    if (p.capabilities && p.capabilities.length > 0) {
+        html += '<div class="preset-detail-section"><h4>Capabilities</h4><ul>';
+        p.capabilities.forEach(function(c) { html += '<li>' + escapeHtml(c) + '</li>'; });
+        html += '</ul></div>';
+    }
+
+    // Tools
+    if (p.tools && p.tools.length > 0) {
+        html += '<div class="preset-detail-section"><h4>Tools</h4><div class="preset-detail-chips">';
+        p.tools.forEach(function(t) { html += '<span class="chip">' + escapeHtml(t) + '</span>'; });
+        html += '</div></div>';
+    }
+
+    // Settings grid
+    html += '<div class="preset-detail-section"><h4>Settings</h4>';
+    html += '<div class="form-row">';
+    html += '<div class="form-group"><label class="form-label">Approval Mode</label><span class="stat-chip">' + escapeHtml(p.approval_mode || 'auto') + '</span></div>';
+    html += '<div class="form-group"><label class="form-label">Max Revision Cycles</label><span class="stat-chip">' + (p.max_revision_cycles || 0) + '</span></div>';
+    html += '</div>';
+    html += '<div class="form-row">';
+    html += '<div class="form-group"><label class="form-label">Uses Worktree</label><span class="stat-chip">' + (p.uses_worktree ? 'Yes' : 'No') + '</span></div>';
+    html += '<div class="form-group"><label class="form-label">Max Instances</label><span class="stat-chip">' + (p.max_instances || 1) + '</span></div>';
+    html += '</div>';
+    html += '</div>';
+
+    // System prompt
+    if (p.system_prompt) {
+        html += '<div class="preset-detail-section"><h4>System Prompt</h4><pre>' + escapeHtml(p.system_prompt) + '</pre></div>';
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function renderPresetModelPicker() {
+    if (!selectedPreset) return '<p>No preset selected.</p>';
+    var models = availableModels.length > 0 ? availableModels : [
+        { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
+        { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+        { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' }
+    ];
+    var defaultModel = selectedPreset.default_model || '';
+    var opts = '';
+    models.forEach(function(m) {
+        var mid = m.id || m;
+        var mname = m.name || mid;
+        opts += '<option value="' + escapeHtml(mid) + '"' + (defaultModel === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
+    });
+    return '<div class="form-group"><label class="form-label">Model</label>' +
+        '<select class="form-select" id="preset-model-pick">' + opts + '</select></div>' +
+        '<p style="color:var(--text-muted);font-size:12px;margin-top:8px;">You can change the model later in the agent card settings.</p>';
+}
+
+// ----- Custom Tab -----
+function renderCustomStep1() {
     return '<div class="form-group"><label class="form-label">Display Name</label>' +
-        '<input class="form-input" id="wiz-display-name" value="' + escapeHtml(wizardData.display_name) + '" placeholder="e.g. Product Manager" oninput="wizUpdateIdentity()"></div>' +
+        '<input class="form-input" id="wiz-display-name" value="' + escapeHtml(customData.display_name) + '" placeholder="e.g. Product Manager" oninput="wizUpdateIdentity()"></div>' +
         '<div class="form-row">' +
         '<div class="form-group"><label class="form-label">Role ID<span class="form-sublabel">(auto-generated)</span></label>' +
-        '<input class="form-input" id="wiz-role-id" value="' + escapeHtml(wizardData.role) + '" placeholder="auto-generated"></div>' +
+        '<input class="form-input" id="wiz-role-id" value="' + escapeHtml(customData.role) + '" placeholder="auto-generated"></div>' +
         '<div class="form-group"><label class="form-label">Prefix<span class="form-sublabel">(2-char)</span></label>' +
-        '<input class="form-input" id="wiz-prefix" value="' + escapeHtml(wizardData.prefix) + '" maxlength="4"></div>' +
+        '<input class="form-input" id="wiz-prefix" value="' + escapeHtml(customData.prefix) + '" maxlength="4"></div>' +
         '</div>' +
         '<div class="form-row">' +
         '<div class="form-group"><label class="form-label">Color</label>' +
-        '<input type="color" class="form-input" id="wiz-color" value="' + escapeHtml(wizardData.color) + '"></div>' +
+        '<input type="color" class="form-input" id="wiz-color" value="' + escapeHtml(customData.color) + '"></div>' +
         '<div class="form-group"><label class="form-label">Emoji</label>' +
-        '<input class="form-input" id="wiz-emoji" value="' + escapeHtml(wizardData.emoji) + '" placeholder="e.g. \uD83D\uDCCB" style="font-size:18px"></div>' +
+        '<input class="form-input" id="wiz-emoji" value="' + escapeHtml(customData.emoji) + '" placeholder="e.g. \uD83D\uDCCB" style="font-size:18px"></div>' +
         '</div>';
 }
 
@@ -1288,7 +1451,7 @@ function wizUpdateIdentity() {
     if (nameEl && prefixEl && !prefixEl._userEdited) prefixEl.value = autoPrefix(nameEl.value);
 }
 
-function renderWizardStep2() {
+function renderCustomStep2() {
     var models = availableModels.length > 0 ? availableModels : [
         { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
         { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
@@ -1298,138 +1461,165 @@ function renderWizardStep2() {
     models.forEach(function(m) {
         var mid = m.id || m;
         var mname = m.name || mid;
-        opts += '<option value="' + escapeHtml(mid) + '"' + (wizardData.model === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
+        opts += '<option value="' + escapeHtml(mid) + '"' + (customData.model === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
     });
 
     var html = '<div class="form-group"><label class="form-label">Model</label>' +
         '<select class="form-select" id="wiz-model">' + opts + '</select></div>';
     html += '<div class="form-group"><label class="form-label">System Prompt</label>' +
-        '<textarea class="form-textarea" id="wiz-prompt" rows="6" placeholder="Describe this agent\'s responsibilities...">' + escapeHtml(wizardData.system_prompt) + '</textarea></div>';
+        '<textarea class="form-textarea" id="wiz-prompt" rows="6" placeholder="Describe this agent\'s responsibilities...">' + escapeHtml(customData.system_prompt) + '</textarea></div>';
     html += '<div class="form-group"><label class="form-label">Tools</label><div class="checkbox-group">';
     COMMON_TOOLS.forEach(function(tool) {
-        var checked = wizardData.tools.indexOf(tool) !== -1;
+        var checked = customData.tools.indexOf(tool) !== -1;
         html += '<label class="checkbox-item"><input type="checkbox" value="' + escapeHtml(tool) + '"' + (checked ? ' checked' : '') + ' class="wiz-tool-cb"><label>' + escapeHtml(tool) + '</label></label>';
     });
     html += '</div></div>';
+
+    // Approval mode
+    html += '<div class="form-group"><label class="form-label">Approval Mode</label>';
+    html += '<select class="form-select" id="wiz-approval-mode">';
+    ['auto', 'manual', 'first_run'].forEach(function(m) {
+        html += '<option value="' + m + '"' + (customData.approval_mode === m ? ' selected' : '') + '>' + m + '</option>';
+    });
+    html += '</select></div>';
+
+    // Max revision cycles + uses_worktree
+    html += '<div class="form-row">';
+    html += '<div class="form-group"><label class="form-label">Max Revision Cycles<span class="form-sublabel">(0 = unlimited)</span></label>';
+    html += '<input type="number" class="form-input" id="wiz-max-rev" value="' + (customData.max_revision_cycles || 0) + '" min="0"></div>';
+    html += '<div class="form-group"><label class="form-label">Uses Git Worktree</label>';
+    html += '<label class="toggle-switch"><input type="checkbox" id="wiz-worktree"' + (customData.uses_worktree ? ' checked' : '') + '><span class="toggle-track"></span><span class="toggle-thumb"></span></label></div>';
+    html += '</div>';
+
     return html;
 }
 
-function renderWizardStep3() {
-    var roleNames = settingsData.roles.map(function(r) { return r; });
-    var html = '<div class="form-group"><label class="form-label">Receives From<span class="form-sublabel">(which agents route tasks to this one)</span></label>';
-    html += '<div class="checkbox-group">';
-    roleNames.forEach(function(r) {
-        var checked = wizardData.receives_from.indexOf(r.role) !== -1;
-        html += '<label class="checkbox-item"><input type="checkbox" value="' + escapeHtml(r.role) + '"' + (checked ? ' checked' : '') + ' class="wiz-recv-cb"><label>' + escapeHtml(r.emoji || '') + ' ' + escapeHtml(r.display_name || r.role) + '</label></label>';
-    });
-    html += '</div></div>';
-
-    html += '<div class="form-group"><label class="form-label">Routes To<span class="form-sublabel">(tasks types to send)</span></label>';
-    html += '<div class="checkbox-group">';
-    roleNames.forEach(function(r) {
-        var checked = wizardData.routes_to.some(function(rt) { return rt.role === r.role; });
-        html += '<label class="checkbox-item"><input type="checkbox" value="' + escapeHtml(r.role) + '"' + (checked ? ' checked' : '') + ' class="wiz-route-cb"><label>' + escapeHtml(r.emoji || '') + ' ' + escapeHtml(r.display_name || r.role) + '</label></label>';
-    });
-    html += '</div></div>';
-    return html;
+function collectCustomStep1() {
+    var nameEl = document.getElementById('wiz-display-name');
+    var roleEl = document.getElementById('wiz-role-id');
+    var prefixEl = document.getElementById('wiz-prefix');
+    var colorEl = document.getElementById('wiz-color');
+    var emojiEl = document.getElementById('wiz-emoji');
+    if (nameEl) customData.display_name = nameEl.value;
+    if (roleEl) customData.role = roleEl.value || slugify(customData.display_name);
+    if (prefixEl) customData.prefix = prefixEl.value || autoPrefix(customData.display_name);
+    if (colorEl) customData.color = colorEl.value;
+    if (emojiEl) customData.emoji = emojiEl.value;
 }
 
-function collectWizardData() {
-    if (wizardStep === 0) {
-        var nameEl = document.getElementById('wiz-display-name');
-        var roleEl = document.getElementById('wiz-role-id');
-        var prefixEl = document.getElementById('wiz-prefix');
-        var colorEl = document.getElementById('wiz-color');
-        var emojiEl = document.getElementById('wiz-emoji');
-        if (nameEl) wizardData.display_name = nameEl.value;
-        if (roleEl) wizardData.role = roleEl.value || slugify(wizardData.display_name);
-        if (prefixEl) wizardData.prefix = prefixEl.value || autoPrefix(wizardData.display_name);
-        if (colorEl) wizardData.color = colorEl.value;
-        if (emojiEl) wizardData.emoji = emojiEl.value;
-    } else if (wizardStep === 1) {
-        var modelEl = document.getElementById('wiz-model');
-        var promptEl = document.getElementById('wiz-prompt');
-        if (modelEl) wizardData.model = modelEl.value;
-        if (promptEl) wizardData.system_prompt = promptEl.value;
-        wizardData.tools = [];
-        document.querySelectorAll('.wiz-tool-cb:checked').forEach(function(cb) {
-            wizardData.tools.push(cb.value);
-        });
-    } else if (wizardStep === 2) {
-        wizardData.receives_from = [];
-        document.querySelectorAll('.wiz-recv-cb:checked').forEach(function(cb) {
-            wizardData.receives_from.push(cb.value);
-        });
-        wizardData.routes_to = [];
-        document.querySelectorAll('.wiz-route-cb:checked').forEach(function(cb) {
-            wizardData.routes_to.push({ role: cb.value, task_types: [] });
-        });
+function collectCustomStep2() {
+    var modelEl = document.getElementById('wiz-model');
+    var promptEl = document.getElementById('wiz-prompt');
+    var approvalEl = document.getElementById('wiz-approval-mode');
+    var maxRevEl = document.getElementById('wiz-max-rev');
+    var worktreeEl = document.getElementById('wiz-worktree');
+    if (modelEl) customData.model = modelEl.value;
+    if (promptEl) customData.system_prompt = promptEl.value;
+    if (approvalEl) customData.approval_mode = approvalEl.value;
+    if (maxRevEl) customData.max_revision_cycles = parseInt(maxRevEl.value) || 0;
+    if (worktreeEl) customData.uses_worktree = worktreeEl.checked;
+    customData.tools = [];
+    document.querySelectorAll('.wiz-tool-cb:checked').forEach(function(cb) {
+        customData.tools.push(cb.value);
+    });
+}
+
+function addAgentBack() {
+    if (addAgentTab === 'custom' && addAgentStep === 1) {
+        collectCustomStep2();
     }
+    if (addAgentStep > 0) { addAgentStep--; renderAddAgent(); }
 }
 
-function wizardBack() {
-    collectWizardData();
-    if (wizardStep > 0) { wizardStep--; renderWizard(); }
-}
+function addAgentNext() {
+    if (addAgentTab === 'presets') {
+        if (addAgentStep === 0) {
+            if (!selectedPreset) { showToast('Select a preset first', 'error'); return; }
+            addAgentStep = 1;
+            // Load full preset detail
+            fetch('/api/presets/' + encodeURIComponent(selectedPreset.id))
+                .then(function(res) { return res.json(); })
+                .then(function(data) { selectedPreset = data; renderAddAgent(); })
+                .catch(function() { renderAddAgent(); });
+            return;
+        } else if (addAgentStep === 1) {
+            addAgentStep = 2;
+            renderAddAgent();
+            return;
+        } else {
+            // Create from preset
+            var modelEl = document.getElementById('preset-model-pick');
+            var model = modelEl ? modelEl.value : (selectedPreset.default_model || '');
+            var roleId = selectedPreset.role || selectedPreset.id;
+            // Deduplicate role_id
+            var existingIds = settingsData.roles.map(function(r) { return r.role; });
+            var baseId = roleId;
+            var suffix = 2;
+            while (existingIds.indexOf(roleId) !== -1) {
+                roleId = baseId + '_' + suffix;
+                suffix++;
+            }
+            var payload = { role: roleId, preset_id: selectedPreset.id, model: model };
+            fetch('/api/settings/roles', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).then(function(res) {
+                if (!res.ok) throw new Error('Server returned ' + res.status);
+                closeAddAgent();
+                showToast('Agent "' + (selectedPreset.display_name || roleId) + '" created from preset', 'success');
+                return loadSettings();
+            }).catch(function(e) {
+                showToast('Failed to create agent: ' + e.message, 'error');
+            });
+            return;
+        }
+    }
 
-function wizardNext() {
-    collectWizardData();
-    if (wizardStep < 2) {
-        if (wizardStep === 0 && !wizardData.display_name.trim()) {
+    // Custom tab
+    if (addAgentStep === 0) {
+        collectCustomStep1();
+        if (!customData.display_name.trim()) {
             showToast('Display name is required', 'error');
             return;
         }
-        wizardStep++;
-        renderWizard();
+        addAgentStep = 1;
+        renderAddAgent();
     } else {
-        createNewAgent();
-    }
-}
-
-async function createNewAgent() {
-    if (!wizardData.role) {
-        showToast('Role ID is required', 'error');
-        return;
-    }
-    try {
+        collectCustomStep2();
+        if (!customData.role) {
+            showToast('Role ID is required', 'error');
+            return;
+        }
         var payload = {
-            role: wizardData.role,
-            display_name: wizardData.display_name,
-            prefix: wizardData.prefix,
-            color: wizardData.color,
-            emoji: wizardData.emoji,
-            model: wizardData.model,
-            system_prompt: wizardData.system_prompt,
-            tools: wizardData.tools,
-            routes_to: wizardData.routes_to,
+            role: customData.role,
+            display_name: customData.display_name,
+            prefix: customData.prefix,
+            color: customData.color,
+            emoji: customData.emoji,
+            model: customData.model,
+            system_prompt: customData.system_prompt,
+            tools: customData.tools,
+            approval_mode: customData.approval_mode,
+            max_revision_cycles: customData.max_revision_cycles,
+            uses_worktree: customData.uses_worktree,
             max_instances: 1,
             produces: [],
             accepts: [],
             context_includes: ['parent_artifact', 'root_artifact']
         };
-
-        var res = await fetch('/api/settings/roles', {
+        fetch('/api/settings/roles', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
+        }).then(function(res) {
+            if (!res.ok) throw new Error('Server returned ' + res.status);
+            closeAddAgent();
+            showToast('Agent "' + customData.display_name + '" created', 'success');
+            return loadSettings();
+        }).catch(function(e) {
+            showToast('Failed to create agent: ' + e.message, 'error');
         });
-
-        if (!res.ok) throw new Error('Server returned ' + res.status);
-
-        // Add "receives_from" by updating source roles
-        for (var i = 0; i < wizardData.receives_from.length; i++) {
-            var sourceRole = getRoleByName(wizardData.receives_from[i]);
-            if (sourceRole) {
-                if (!sourceRole.routes_to) sourceRole.routes_to = [];
-                sourceRole.routes_to.push({ role: wizardData.role, task_types: [] });
-            }
-        }
-
-        closeWizard();
-        showToast('Agent "' + wizardData.display_name + '" created', 'success');
-        await loadSettings();
-    } catch (e) {
-        showToast('Failed to create agent: ' + e.message, 'error');
     }
 }
 
@@ -1520,19 +1710,19 @@ document.addEventListener('keydown', function(e) {
     }
     // Escape
     if (e.key === 'Escape') {
-        var wizard = document.getElementById('wizardOverlay');
+        var addAgent = document.getElementById('addAgentOverlay');
         var promptFs = document.getElementById('promptFullscreen');
         if (promptFs && promptFs.classList.contains('open')) {
             closePromptFullscreen();
-        } else if (wizard && wizard.classList.contains('open')) {
-            closeWizard();
+        } else if (addAgent && addAgent.classList.contains('open')) {
+            closeAddAgent();
         }
     }
 });
 
-// Close wizard on overlay click
-document.getElementById('wizardOverlay').addEventListener('click', function(e) {
-    if (e.target === this) closeWizard();
+// Close add-agent modal on overlay click
+document.getElementById('addAgentOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeAddAgent();
 });
 
 // ================================================================
