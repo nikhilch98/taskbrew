@@ -231,6 +231,14 @@ class RoleConfig:
     max_execution_time: int = 1800
     max_turns: int | None = None
     routing_mode: str = "open"
+    # --- New fields (v2) ---
+    approval_mode: str = "auto"  # "auto", "manual", "first_run"
+    max_revision_cycles: int = 0  # 0 = unlimited
+    max_clarification_requests: int = 10
+    max_route_tasks: int = 100
+    uses_worktree: bool = False
+    capabilities: list[str] = field(default_factory=list)
+    artifact_exclude_patterns: list[str] = field(default_factory=list)
 
 
 def _parse_role(data: dict) -> RoleConfig:
@@ -240,6 +248,12 @@ def _parse_role(data: dict) -> RoleConfig:
     for key in _REQUIRED_ROLE_KEYS:
         if key not in data:
             raise ValueError(f"Role config missing required key '{key}' (file may be incomplete)")
+
+    approval_mode = data.get("approval_mode", "auto")
+    if approval_mode not in ("auto", "manual", "first_run"):
+        raise ValueError(
+            f"approval_mode must be 'auto', 'manual', or 'first_run', got '{approval_mode}'"
+        )
 
     routes_to = [
         RouteTarget(role=r["role"], task_types=r.get("task_types", []))
@@ -275,6 +289,13 @@ def _parse_role(data: dict) -> RoleConfig:
         max_execution_time=data.get("max_execution_time", 1800),
         max_turns=data.get("max_turns"),
         routing_mode=data.get("routing_mode", "open"),
+        approval_mode=approval_mode,
+        max_revision_cycles=data.get("max_revision_cycles", 0),
+        max_clarification_requests=data.get("max_clarification_requests", 10),
+        max_route_tasks=data.get("max_route_tasks", 100),
+        uses_worktree=data.get("uses_worktree", False),
+        capabilities=data.get("capabilities", []),
+        artifact_exclude_patterns=data.get("artifact_exclude_patterns", []),
     )
 
     # Fix 2: Numeric bounds validation for role-specific fields
