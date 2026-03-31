@@ -3,6 +3,7 @@
 import pytest
 import aiosqlite
 from pathlib import Path
+from taskbrew.orchestrator.interactions import InteractionManager
 
 
 @pytest.fixture
@@ -88,3 +89,83 @@ class TestHILSchema:
         )
         row = await db.execute_fetchone("SELECT * FROM first_run_approvals WHERE group_id = ? AND agent_role = ?", ("grp-1", "architect"))
         assert row is not None
+
+
+@pytest.fixture
+async def db_for_interactions(db):
+    """Database pre-seeded with groups and tasks needed by InteractionManager tests."""
+    for gid in ("g1",):
+        await db.execute(
+            "INSERT OR IGNORE INTO groups (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+            (gid, f"Group {gid}", "active"),
+        )
+    for tid in ("t1", "t2", "t3"):
+        await db.execute(
+            "INSERT OR IGNORE INTO tasks (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+            (tid, f"Task {tid}", "pending"),
+        )
+    return db
+
+
+class TestInteractionManager:
+    """Test InteractionManager CRUD operations."""
+
+    @pytest.mark.asyncio
+    async def test_create_and_get_pending(self, db_for_interactions):
+        mgr = InteractionManager(db_for_interactions)
+        req = await mgr.create_request(
+            task_id="t1", group_id="g1", agent_role="coder",
+            instance_token="tok1", req_type="approval",
+            request_data={"summary": "test work"},
+        )
+        assert req["status"] == "pending"
+        assert req["type"] == "approval"
+
+        pending = await mgr.get_pending()
+        assert len(pending) == 1
+        assert pending[0]["id"] == req["id"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_and_history(self, db_for_interactions):
+        mgr = InteractionManager(db_for_interactions)
+        req = await mgr.create_request(
+            task_id="t2", group_id="g1", agent_role="designer",
+            instance_token="tok2", req_type="approval",
+            request_data={"summary": "mockup"},
+        )
+        resolved = await mgr.resolve(req["id"], "approved", {"notes": "looks good"})
+        assert resolved["status"] == "approved"
+        assert resolved["response_data"]["notes"] == "looks good"
+
+        pending = await mgr.get_pending()
+        assert len(pending) == 0
+
+        history = await mgr.get_history()
+        assert len(history) == 1
+
+    @pytest.mark.asyncio
+    async def test_idempotent_create(self, db_for_interactions):
+        mgr = InteractionManager(db_for_interactions)
+        req1 = await mgr.create_request(
+            task_id="t3", group_id="g1", agent_role="coder",
+            instance_token="tok3", req_type="clarification",
+            request_data={"question": "which DB?"},
+            request_key="t3:clarification:0",
+        )
+        req2 = await mgr.create_request(
+            task_id="t3", group_id="g1", agent_role="coder",
+            instance_token="tok3", req_type="clarification",
+            request_data={"question": "which DB?"},
+            request_key="t3:clarification:0",
+        )
+        assert req1["id"] == req2["id"]
+
+    @pytest.mark.asyncio
+    async def test_first_run_check_and_record(self, db_for_interactions):
+        mgr = InteractionManager(db_for_interactions)
+        assert await mgr.check_first_run("g1", "architect") is False
+        await mgr.record_first_run("g1", "architect")
+        assert await mgr.check_first_run("g1", "architect") is True
+        # Idempotent
+        await mgr.record_first_run("g1", "architect")
+        assert await mgr.check_first_run("g1", "architect") is True
