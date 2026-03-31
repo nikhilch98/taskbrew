@@ -261,6 +261,7 @@ def create_app(
     from taskbrew.dashboard.routers.comparison import router as comparison_router_obj
     from taskbrew.dashboard.routers.collaboration import router as collaboration_router
     from taskbrew.dashboard.routers.usage import router as usage_router
+    from taskbrew.dashboard.routers import presets as presets_router
 
     app.include_router(tasks_router, tags=["Tasks"])
     app.include_router(agents_router, tags=["Agents"])
@@ -276,6 +277,7 @@ def create_app(
     app.include_router(comparison_router_obj, tags=["Comparison"])
     app.include_router(collaboration_router, tags=["Collaboration"])
     app.include_router(usage_router, tags=["Usage"])
+    app.include_router(presets_router.router, tags=["Presets"])
     app.include_router(system_router.router, tags=["System"])
     app.include_router(ws_router.router)
 

@@ -116,3 +116,56 @@ class TestLoadPresets:
     def test_load_presets_missing_dir(self, tmp_path):
         presets = load_presets(tmp_path / "nonexistent")
         assert presets == {}
+
+
+from httpx import AsyncClient, ASGITransport
+
+
+@pytest.fixture
+def preset_app():
+    """Create a minimal FastAPI app with just the presets router for testing."""
+    from fastapi import FastAPI
+    from taskbrew.dashboard.routers.presets import router
+    app = FastAPI()
+    app.include_router(router)
+    return app
+
+
+@pytest.fixture
+async def preset_client(preset_app):
+    transport = ASGITransport(app=preset_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+class TestPresetsAPI:
+    """Test /api/presets endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_list_presets(self, preset_client):
+        resp = await preset_client.get("/api/presets")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "presets" in data
+        assert data["count"] >= 22
+        first = data["presets"][0]
+        assert "preset_id" in first
+        assert "category" in first
+        assert "display_name" in first
+        assert "description" in first
+        assert "system_prompt" not in first
+
+    @pytest.mark.asyncio
+    async def test_get_preset_detail(self, preset_client):
+        resp = await preset_client.get("/api/presets/pm")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["preset_id"] == "pm"
+        assert "system_prompt" in data
+        assert "tools" in data
+        assert "capabilities" in data
+
+    @pytest.mark.asyncio
+    async def test_get_preset_not_found(self, preset_client):
+        resp = await preset_client.get("/api/presets/nonexistent")
+        assert resp.status_code == 404
