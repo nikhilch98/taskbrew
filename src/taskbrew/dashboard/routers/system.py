@@ -596,6 +596,10 @@ async def delete_role(role_name: str):
                 with open(other_yaml, "w") as f:
                     yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
+    # Clean up pipeline edges referencing deleted role
+    from taskbrew.dashboard.routers.pipeline_editor import _cleanup_role_from_pipeline
+    _cleanup_role_from_pipeline(role_name)
+
     # Clean up task_board prefix tracking for the deleted role
     tb = orch.task_board
     tb._role_to_prefix.pop(role_name, None)
