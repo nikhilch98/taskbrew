@@ -652,3 +652,112 @@ class TestPipelineAPIPutFull:
             assert data["node_config"]["pm"]["join_strategy"] == "stream"
         finally:
             shutil.rmtree(tmpdir)
+
+
+class TestPipelineIntegration:
+    """End-to-end pipeline integration tests."""
+
+    def test_migration_produces_valid_pipeline(self, tmp_path):
+        """Migrated routes_to should produce a loadable pipeline."""
+        from taskbrew.config_loader import (
+            RoleConfig, RouteTarget, migrate_routes_to_pipeline,
+            save_pipeline, load_pipeline,
+        )
+        roles = {
+            "pm": RoleConfig(
+                role="pm", display_name="PM", prefix="PM", color="#3b82f6",
+                emoji="\U0001F4CB", system_prompt="PM agent",
+                can_create_groups=True, routes_to=[
+                    RouteTarget(role="architect", task_types=["tech_design"]),
+                ],
+            ),
+            "architect": RoleConfig(
+                role="architect", display_name="Architect", prefix="AR",
+                color="#8b5cf6", emoji="\U0001F3D7", system_prompt="Architect agent",
+                routes_to=[
+                    RouteTarget(role="coder", task_types=["implementation"]),
+                ],
+            ),
+            "coder": RoleConfig(
+                role="coder", display_name="Coder", prefix="CD", color="#f59e0b",
+                emoji="\U0001F4BB", system_prompt="Coder agent",
+                routes_to=[],
+            ),
+        }
+        team_yaml = tmp_path / "team.yaml"
+        team_yaml.write_text("team_name: Test\n")
+
+        pc = migrate_routes_to_pipeline(roles)
+        save_pipeline(team_yaml, pc)
+        loaded = load_pipeline(team_yaml)
+
+        assert loaded.start_agent == "pm"
+        assert len(loaded.edges) == 2
+        edge_pairs = [(e.from_agent, e.to_agent) for e in loaded.edges]
+        assert ("pm", "architect") in edge_pairs
+        assert ("architect", "coder") in edge_pairs
+
+    def test_pipeline_roundtrip_with_node_config(self, tmp_path):
+        """Pipeline with node_config should survive save/load roundtrip."""
+        from taskbrew.config_loader import (
+            PipelineConfig, PipelineEdge, PipelineNodeConfig,
+            save_pipeline, load_pipeline,
+        )
+        team_yaml = tmp_path / "team.yaml"
+        team_yaml.write_text("team_name: Roundtrip\n")
+
+        pc = PipelineConfig(
+            id="test-pipe",
+            name="Test",
+            start_agent="pm",
+            edges=[
+                PipelineEdge(id="e1", from_agent="pm", to_agent="arch", task_types=["design"]),
+                PipelineEdge(id="e2", from_agent="arch", to_agent="coder", task_types=["impl"], on_failure="continue_partial"),
+                PipelineEdge(id="e3", from_agent="coder", to_agent="reviewer", task_types=["verify"]),
+                PipelineEdge(id="e4", from_agent="reviewer", to_agent="coder", task_types=["revision"]),
+            ],
+            node_config={
+                "reviewer": PipelineNodeConfig(join_strategy="stream"),
+            },
+        )
+        save_pipeline(team_yaml, pc)
+        loaded = load_pipeline(team_yaml)
+
+        assert loaded.start_agent == "pm"
+        assert len(loaded.edges) == 4
+        assert loaded.edges[1].on_failure == "continue_partial"
+        assert loaded.node_config["reviewer"].join_strategy == "stream"
+        # Default join_strategy for nodes not in node_config
+        assert "pm" not in loaded.node_config
+
+    def test_pipeline_edge_crud_lifecycle(self, tmp_path):
+        """Add, update, delete edges through the data model functions."""
+        from taskbrew.config_loader import (
+            PipelineConfig, PipelineEdge, save_pipeline, load_pipeline,
+        )
+        team_yaml = tmp_path / "team.yaml"
+        team_yaml.write_text("team_name: CRUD\n")
+
+        # Start empty
+        pc = PipelineConfig(id="crud-pipe", start_agent="pm")
+        save_pipeline(team_yaml, pc)
+
+        # Add edge
+        pc.edges.append(PipelineEdge(id="e1", from_agent="pm", to_agent="arch"))
+        save_pipeline(team_yaml, pc)
+        loaded = load_pipeline(team_yaml)
+        assert len(loaded.edges) == 1
+
+        # Update edge
+        loaded.edges[0].task_types = ["tech_design"]
+        loaded.edges[0].on_failure = "cancel_pipeline"
+        save_pipeline(team_yaml, loaded)
+        loaded2 = load_pipeline(team_yaml)
+        assert loaded2.edges[0].task_types == ["tech_design"]
+        assert loaded2.edges[0].on_failure == "cancel_pipeline"
+
+        # Delete edge
+        loaded2.edges = [e for e in loaded2.edges if e.id != "e1"]
+        save_pipeline(team_yaml, loaded2)
+        loaded3 = load_pipeline(team_yaml)
+        assert len(loaded3.edges) == 0
