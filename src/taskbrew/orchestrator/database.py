@@ -40,7 +40,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     completed_at     TEXT,
     rejection_reason TEXT,
     revision_of      TEXT REFERENCES tasks(id),
-    output_text      TEXT
+    output_text      TEXT,
+    chain_id         TEXT,
+    approval_mode    TEXT DEFAULT 'auto',
+    instance_token   TEXT,
+    config_snapshot  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_dependencies (
@@ -199,6 +203,40 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     name TEXT NOT NULL,
     applied_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS human_interaction_requests (
+    id              TEXT PRIMARY KEY,
+    task_id         TEXT NOT NULL REFERENCES tasks(id),
+    instance_token  TEXT NOT NULL,
+    request_type    TEXT NOT NULL,
+    request_key     TEXT NOT NULL UNIQUE,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    payload         TEXT,
+    response_payload TEXT,
+    responded_by    TEXT,
+    created_at      TEXT NOT NULL,
+    resolved_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS task_chains (
+    id                   TEXT PRIMARY KEY,
+    original_task_id     TEXT NOT NULL REFERENCES tasks(id),
+    current_task_id      TEXT NOT NULL REFERENCES tasks(id),
+    agent_role           TEXT NOT NULL,
+    revision_count       INTEGER NOT NULL DEFAULT 0,
+    max_revision_cycles  INTEGER NOT NULL DEFAULT 0,
+    status               TEXT NOT NULL DEFAULT 'active',
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS first_run_approvals (
+    id          TEXT PRIMARY KEY,
+    group_id    TEXT NOT NULL REFERENCES groups(id),
+    agent_role  TEXT NOT NULL,
+    approved_at TEXT NOT NULL,
+    UNIQUE(group_id, agent_role)
+);
 """
 
 _INDEX_SQL = """
@@ -234,6 +272,29 @@ CREATE INDEX IF NOT EXISTS idx_cost_budgets_scope
 
 CREATE INDEX IF NOT EXISTS idx_agent_messages_to
     ON agent_messages(to_agent, read);
+
+CREATE INDEX IF NOT EXISTS idx_hir_pending
+    ON human_interaction_requests(status, created_at)
+    WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_hir_task
+    ON human_interaction_requests(task_id, request_type);
+
+CREATE INDEX IF NOT EXISTS idx_task_chains_current
+    ON task_chains(current_task_id);
+
+CREATE INDEX IF NOT EXISTS idx_task_chains_role
+    ON task_chains(agent_role, status);
+
+CREATE INDEX IF NOT EXISTS idx_first_run_approvals_group
+    ON first_run_approvals(group_id, agent_role);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_chain
+    ON tasks(chain_id);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_instance_token
+    ON tasks(instance_token)
+    WHERE instance_token IS NOT NULL;
 """
 
 
@@ -298,6 +359,22 @@ class Database:
             await self._conn.commit()
         except Exception as exc:
             logger.debug("output_text column already exists: %s", exc)
+
+        # Add HITL columns to tasks table if missing (backwards compat)
+        for col, col_type, default in [
+            ("chain_id", "TEXT", None),
+            ("approval_mode", "TEXT", "'auto'"),
+            ("instance_token", "TEXT", None),
+            ("config_snapshot", "TEXT", None),
+        ]:
+            try:
+                default_clause = f" DEFAULT {default}" if default else ""
+                await self._conn.execute(
+                    f"ALTER TABLE tasks ADD COLUMN {col} {col_type}{default_clause}"
+                )
+                await self._conn.commit()
+            except Exception:
+                pass  # Column already exists
 
         # Apply pending schema migrations
         from taskbrew.orchestrator.migration import MigrationManager

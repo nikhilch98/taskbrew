@@ -1237,6 +1237,57 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_compliance_checks_file ON compliance_checks(file_path);
         CREATE INDEX IF NOT EXISTS idx_compliance_exemptions_rule ON compliance_exemptions(rule_id, file_path);
     """),
+    (28, "add_human_in_the_loop_tables", """
+        CREATE TABLE IF NOT EXISTS human_interaction_requests (
+            id              TEXT PRIMARY KEY,
+            task_id         TEXT NOT NULL REFERENCES tasks(id),
+            instance_token  TEXT NOT NULL,
+            request_type    TEXT NOT NULL,
+            request_key     TEXT NOT NULL UNIQUE,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            payload         TEXT,
+            response_payload TEXT,
+            responded_by    TEXT,
+            created_at      TEXT NOT NULL,
+            resolved_at     TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS task_chains (
+            id                   TEXT PRIMARY KEY,
+            original_task_id     TEXT NOT NULL REFERENCES tasks(id),
+            current_task_id      TEXT NOT NULL REFERENCES tasks(id),
+            agent_role           TEXT NOT NULL,
+            revision_count       INTEGER NOT NULL DEFAULT 0,
+            max_revision_cycles  INTEGER NOT NULL DEFAULT 0,
+            status               TEXT NOT NULL DEFAULT 'active',
+            created_at           TEXT NOT NULL,
+            updated_at           TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS first_run_approvals (
+            id          TEXT PRIMARY KEY,
+            group_id    TEXT NOT NULL REFERENCES groups(id),
+            agent_role  TEXT NOT NULL,
+            approved_at TEXT NOT NULL,
+            UNIQUE(group_id, agent_role)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_hir_pending
+            ON human_interaction_requests(status, created_at)
+            WHERE status = 'pending';
+
+        CREATE INDEX IF NOT EXISTS idx_hir_task
+            ON human_interaction_requests(task_id, request_type);
+
+        CREATE INDEX IF NOT EXISTS idx_task_chains_current
+            ON task_chains(current_task_id);
+
+        CREATE INDEX IF NOT EXISTS idx_task_chains_role
+            ON task_chains(agent_role, status);
+
+        CREATE INDEX IF NOT EXISTS idx_first_run_approvals_group
+            ON first_run_approvals(group_id, agent_role);
+    """),
 ]
 
 
