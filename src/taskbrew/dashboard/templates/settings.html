@@ -1904,6 +1904,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 Pipeline
             </div>
+            <div id="pipelineValidation" style="margin-bottom:8px"></div>
             <svg id="pipelineSvg" class="pipeline-svg" xmlns="http://www.w3.org/2000/svg"></svg>
         </section>
 
@@ -2217,6 +2218,8 @@
         let customData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], approval_mode: 'auto', max_revision_cycles: 0, uses_worktree: false };
         let promptFullscreenRole = null;
         let dragState = null; // For pipeline drag-to-connect
+        var pipelineData = { id: 'default-pipeline', name: 'Default Pipeline', start_agent: null, edges: [], node_config: {} };
+        var pipelineSelectedNode = null;
 
         const COMMON_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'mcp__task-tools__create_task'];
         const CONTEXT_OPTIONS = ['parent_artifact', 'root_artifact', 'sibling_summary', 'rejection_history'];
@@ -2322,6 +2325,13 @@
                     availableModels = md.models || [];
                 }
                 originalData = deepClone(settingsData);
+
+                // Also load pipeline data
+                try {
+                    var pipeResp = await fetch('/api/pipeline');
+                    if (pipeResp.ok) { pipelineData = await pipeResp.json(); }
+                } catch (e) { console.error('Failed to load pipeline:', e); }
+
                 renderAll();
             } catch (e) {
                 showToast('Failed to load settings: ' + e.message, 'error');
@@ -2342,12 +2352,10 @@
             const roleMap = {};
             roles.forEach(function(r) { roleMap[r.role] = r; });
             const allEdges = [];
-            roles.forEach(function(r) {
-                (r.routes_to || []).forEach(function(rt) {
-                    if (roleMap[rt.role]) {
-                        allEdges.push({ from: r.role, to: rt.role, taskTypes: rt.task_types || [] });
-                    }
-                });
+            pipelineData.edges.forEach(function(e) {
+                if (roleMap[e.from] && roleMap[e.to]) {
+                    allEdges.push({ id: e.id, from: e.from, to: e.to, taskTypes: e.task_types || [] });
+                }
             });
 
             // Assign layers via longest-path from sources (ignoring back-edges iteratively)
@@ -2556,6 +2564,15 @@
                 html += '<circle class="pipeline-particle" r="2.5" fill="' + escapeHtml(toColor) + '" opacity="0.7" filter="url(#particle-glow)">';
                 html += '<animateMotion dur="2.5s" repeatCount="indefinite" begin="1.25s" path="' + pathD + '"/>';
                 html += '</circle>';
+                // Edge delete button at midpoint
+                if (e.id) {
+                    var midX = (x1 + x2) / 2;
+                    var midY = (y1 + y2) / 2;
+                    html += '<g class="edge-delete-btn" onclick="event.stopPropagation();deletePipelineEdge(\'' + escapeHtml(e.id) + '\')" style="cursor:pointer;opacity:0;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0">';
+                    html += '<circle cx="' + midX + '" cy="' + midY + '" r="10" fill="rgba(244,63,94,0.8)"/>';
+                    html += '<text x="' + midX + '" y="' + (midY + 4) + '" text-anchor="middle" fill="white" font-size="12" font-weight="bold" style="pointer-events:none">&times;</text>';
+                    html += '</g>';
+                }
                 connIdx++;
             });
 
@@ -2598,6 +2615,15 @@
                 html += '<circle class="pipeline-particle" r="2" fill="' + escapeHtml(toColor) + '" opacity="0.6" filter="url(#particle-glow)">';
                 html += '<animateMotion dur="3.5s" repeatCount="indefinite" path="' + pathD + '"/>';
                 html += '</circle>';
+                // Edge delete button at arc midpoint
+                if (e.id) {
+                    var delX = (x1 + x2) / 2;
+                    var delY = arcY;
+                    html += '<g class="edge-delete-btn" onclick="event.stopPropagation();deletePipelineEdge(\'' + escapeHtml(e.id) + '\')" style="cursor:pointer;opacity:0;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0">';
+                    html += '<circle cx="' + delX + '" cy="' + delY + '" r="10" fill="rgba(244,63,94,0.8)"/>';
+                    html += '<text x="' + delX + '" y="' + (delY + 4) + '" text-anchor="middle" fill="white" font-size="12" font-weight="bold" style="pointer-events:none">&times;</text>';
+                    html += '</g>';
+                }
                 connIdx++;
                 backIdx++;
             });
@@ -2617,19 +2643,42 @@
                 html += '<circle class="pipeline-particle" r="2" fill="' + escapeHtml(c) + '" opacity="0.6" filter="url(#particle-glow)">';
                 html += '<animateMotion dur="2s" repeatCount="indefinite" path="' + pathD + '"/>';
                 html += '</circle>';
+                // Self-loop delete button
+                if (e.id) {
+                    var slDelY = cy - loopR * 2 + 8;
+                    html += '<g class="edge-delete-btn" onclick="event.stopPropagation();deletePipelineEdge(\'' + escapeHtml(e.id) + '\')" style="cursor:pointer;opacity:0;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0">';
+                    html += '<circle cx="' + cx + '" cy="' + slDelY + '" r="10" fill="rgba(244,63,94,0.8)"/>';
+                    html += '<text x="' + cx + '" y="' + (slDelY + 4) + '" text-anchor="middle" fill="white" font-size="12" font-weight="bold" style="pointer-events:none">&times;</text>';
+                    html += '</g>';
+                }
                 connIdx++;
             });
 
             // ---- Nodes ----
+            // Build set of connected roles for dashed-border detection
+            var connectedRoles = new Set();
+            pipelineData.edges.forEach(function(e) { connectedRoles.add(e.from); connectedRoles.add(e.to); });
+            if (pipelineData.start_agent) connectedRoles.add(pipelineData.start_agent);
+
             layout.topoOrder.forEach(function(roleName) {
                 const r = roleMap[roleName];
                 if (!r) return;
                 const pos = positions[roleName];
                 const c = r.color || '#6366f1';
-                html += '<g class="pipeline-node" data-role="' + escapeHtml(r.role) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
-                html += '<rect width="' + nodeW + '" height="' + nodeH + '" rx="12" fill="' + escapeHtml(c) + '" fill-opacity="0.12" stroke="' + escapeHtml(c) + '" stroke-width="1.5" filter="url(#glow-' + r.role + ')"/>';
-                html += '<text x="' + (nodeW / 2) + '" y="' + (nodeH / 2 - 6) + '" text-anchor="middle" font-size="18" fill="var(--text-primary)">' + escapeHtml(r.emoji || '') + '</text>';
-                html += '<text x="' + (nodeW / 2) + '" y="' + (nodeH / 2 + 14) + '" text-anchor="middle" font-size="12" font-weight="600" fill="var(--text-primary)" font-family="Inter, sans-serif">' + escapeHtml(r.display_name || r.role) + '</text>';
+                var isSelected = pipelineSelectedNode === roleName;
+                var isStartAgent = pipelineData.start_agent === roleName;
+                var isConnected = connectedRoles.has(roleName);
+                var strokeDash = isConnected ? '' : ' stroke-dasharray="6 3"';
+                var strokeW = isSelected ? '3' : '1.5';
+                var fillOpacity = isSelected ? '0.22' : '0.12';
+                html += '<g class="pipeline-node" data-role="' + escapeHtml(r.role) + '" transform="translate(' + pos.x + ',' + pos.y + ')" style="cursor:pointer" onclick="onPipelineNodeClick(\'' + escapeHtml(r.role) + '\')" oncontextmenu="showNodeContextMenu(event, \'' + escapeHtml(r.role) + '\')">';
+                html += '<rect width="' + nodeW + '" height="' + nodeH + '" rx="12" fill="' + escapeHtml(c) + '" fill-opacity="' + fillOpacity + '" stroke="' + escapeHtml(c) + '" stroke-width="' + strokeW + '"' + strokeDash + ' filter="url(#glow-' + r.role + ')"/>';
+                html += '<text x="' + (nodeW / 2) + '" y="' + (nodeH / 2 - 6) + '" text-anchor="middle" font-size="18" fill="var(--text-primary)" style="pointer-events:none">' + escapeHtml(r.emoji || '') + '</text>';
+                html += '<text x="' + (nodeW / 2) + '" y="' + (nodeH / 2 + 14) + '" text-anchor="middle" font-size="12" font-weight="600" fill="var(--text-primary)" font-family="Inter, sans-serif" style="pointer-events:none">' + escapeHtml(r.display_name || r.role) + '</text>';
+                // Start agent badge
+                if (isStartAgent) {
+                    html += '<text x="' + (nodeW - 18) + '" y="16" font-size="14" fill="#22c55e" style="pointer-events:none">&#9654;</text>';
+                }
                 // Output port (right edge)
                 html += '<circle class="pipeline-port output-port" cx="' + nodeW + '" cy="' + (nodeH / 2) + '" r="5" fill="' + escapeHtml(c) + '" stroke="var(--bg-primary)" stroke-width="2" data-role="' + escapeHtml(r.role) + '" data-port="output"/>';
                 // Input port (left edge)
@@ -2650,6 +2699,7 @@
 
             svg.innerHTML = html;
             attachPipelineDragHandlers();
+            renderPipelineValidation();
         }
 
         function attachPipelineDragHandlers() {
@@ -2720,30 +2770,147 @@
                     }
                 });
             });
+
+            // Click empty SVG space to cancel node selection
+            svg.addEventListener('click', function(e) {
+                if (e.target === svg && pipelineSelectedNode !== null) {
+                    pipelineSelectedNode = null;
+                    renderPipeline();
+                }
+            });
         }
 
         function addRouteFromPipeline(fromRole, toRole) {
-            var r = getRoleByName(fromRole);
-            if (!r) return;
-            if (!r.routes_to) r.routes_to = [];
-            var exists = r.routes_to.some(function(rt) { return rt.role === toRole; });
-            if (exists) {
-                showToast('Route already exists', 'info');
-                return;
-            }
-            r.routes_to.push({ role: toRole, task_types: [] });
-            markUnsaved();
-            renderAll();
-            showToast('Route added: ' + fromRole + ' \u2192 ' + toRole, 'success');
+            // Use pipeline API to add edge
+            addPipelineEdge(fromRole, toRole);
         }
 
         function removeRoute(fromRole, toRole) {
-            var r = getRoleByName(fromRole);
-            if (!r || !r.routes_to) return;
-            r.routes_to = r.routes_to.filter(function(rt) { return rt.role !== toRole; });
-            markUnsaved();
-            renderAll();
-            showToast('Route removed', 'info');
+            // Find the edge in pipelineData and delete via API
+            var edge = pipelineData.edges.find(function(e) { return e.from === fromRole && e.to === toRole; });
+            if (edge && edge.id) {
+                deletePipelineEdge(edge.id);
+            }
+        }
+
+        // ================================================================
+        // Pipeline Interactive Editing
+        // ================================================================
+        function onPipelineNodeClick(roleName) {
+            if (pipelineSelectedNode === null) {
+                pipelineSelectedNode = roleName;
+                renderPipeline();
+            } else if (pipelineSelectedNode === roleName) {
+                pipelineSelectedNode = null;
+                renderPipeline();
+            } else {
+                // Create edge from selected to clicked
+                addPipelineEdge(pipelineSelectedNode, roleName);
+                pipelineSelectedNode = null;
+            }
+        }
+
+        async function addPipelineEdge(fromAgent, toAgent) {
+            try {
+                var resp = await fetch('/api/pipeline/edges', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({from_agent: fromAgent, to_agent: toAgent})
+                });
+                if (resp.ok) {
+                    var result = await resp.json();
+                    pipelineData.edges.push({id: result.edge_id, from: fromAgent, to: toAgent, task_types: [], on_failure: 'block'});
+                    renderPipeline();
+                    showToast('Connection added', 'success');
+                } else {
+                    var errData = await resp.json().catch(function() { return {}; });
+                    showToast(errData.detail || 'Failed to add connection', 'error');
+                }
+            } catch (e) { showToast('Failed to add connection: ' + e.message, 'error'); }
+        }
+
+        async function deletePipelineEdge(edgeId) {
+            try {
+                var resp = await fetch('/api/pipeline/edges/' + encodeURIComponent(edgeId), {method: 'DELETE'});
+                if (resp.ok) {
+                    pipelineData.edges = pipelineData.edges.filter(function(e) { return e.id !== edgeId; });
+                    renderPipeline();
+                    showToast('Connection removed', 'success');
+                }
+            } catch (e) { showToast('Failed to remove connection', 'error'); }
+        }
+
+        function showNodeContextMenu(event, roleName) {
+            event.preventDefault();
+            event.stopPropagation();
+            // Remove existing menu
+            var old = document.getElementById('nodeContextMenu');
+            if (old) old.remove();
+
+            var menu = document.createElement('div');
+            menu.id = 'nodeContextMenu';
+            menu.style.cssText = 'position:fixed;left:' + event.clientX + 'px;top:' + event.clientY + 'px;background:var(--bg-card,#1e293b);border:1px solid var(--border-subtle,rgba(255,255,255,0.1));border-radius:8px;padding:4px;z-index:10000;min-width:180px;box-shadow:var(--shadow-lg);';
+
+            var isStart = pipelineData.start_agent === roleName;
+            var btn = document.createElement('button');
+            btn.textContent = isStart ? '\u2605 Start Agent (current)' : '\u2606 Set as Start Agent';
+            btn.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 12px;background:none;border:none;color:var(--text-primary,#f1f5f9);cursor:pointer;font-size:13px;border-radius:4px;';
+            btn.onmouseover = function() { this.style.background = 'rgba(99,102,241,0.15)'; };
+            btn.onmouseout = function() { this.style.background = 'none'; };
+            if (!isStart) {
+                btn.onclick = function() { setStartAgent(roleName); menu.remove(); };
+            }
+            menu.appendChild(btn);
+            document.body.appendChild(menu);
+
+            // Close on click outside
+            setTimeout(function() {
+                document.addEventListener('click', function closeMenu() {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                });
+            }, 10);
+        }
+
+        async function setStartAgent(roleName) {
+            try {
+                var resp = await fetch('/api/pipeline/start-agent', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({role: roleName})
+                });
+                if (resp.ok) {
+                    pipelineData.start_agent = roleName;
+                    renderPipeline();
+                    showToast(roleName + ' set as start agent', 'success');
+                }
+            } catch (e) { showToast('Failed to set start agent', 'error'); }
+        }
+
+        function renderPipelineValidation() {
+            var container = document.getElementById('pipelineValidation');
+            if (!container) return;
+            var msgs = [];
+            if (!pipelineData.start_agent) {
+                msgs.push({type: 'error', text: 'No start agent set. Right-click a node to set one.'});
+            }
+            // Check disconnected nodes
+            var roles = settingsData.roles || [];
+            var connected = new Set();
+            pipelineData.edges.forEach(function(e) { connected.add(e.from); connected.add(e.to); });
+            if (pipelineData.start_agent) connected.add(pipelineData.start_agent);
+            roles.forEach(function(r) {
+                if (!connected.has(r.role) && r.role !== pipelineData.start_agent) {
+                    msgs.push({type: 'info', text: (r.display_name || r.role) + ' (' + r.role + ') is not connected to any agent.'});
+                }
+            });
+
+            container.innerHTML = msgs.map(function(m) {
+                var bg = m.type === 'error' ? 'rgba(244,63,94,0.12)' : 'rgba(99,102,241,0.08)';
+                var color = m.type === 'error' ? '#f43f5e' : '#94a3b8';
+                var icon = m.type === 'error' ? '\u26A0' : '\u2139';
+                return '<div style="padding:8px 12px;margin-bottom:4px;border-radius:6px;background:' + bg + ';color:' + color + ';font-size:13px;">' + icon + ' ' + m.text + '</div>';
+            }).join('');
         }
 
         // ================================================================
@@ -3349,6 +3516,15 @@
                         body: JSON.stringify(role)
                     });
                 }
+
+                // Save pipeline
+                try {
+                    await fetch('/api/pipeline', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(pipelineData)
+                    });
+                } catch (pe) { console.error('Failed to save pipeline:', pe); }
 
                 markSaved();
                 showToast('All settings saved successfully', 'success');
