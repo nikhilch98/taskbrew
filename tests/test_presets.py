@@ -62,3 +62,57 @@ class TestRoleConfigNewFields:
         }
         with pytest.raises(ValueError, match="approval_mode"):
             _parse_role(data)
+
+
+from pathlib import Path
+from taskbrew.config_loader import load_presets
+
+
+class TestLoadPresets:
+    """Test preset YAML loading."""
+
+    def test_load_presets_from_directory(self, tmp_path):
+        preset_dir = tmp_path / "presets"
+        preset_dir.mkdir()
+        (preset_dir / "test_agent.yaml").write_text(
+            "preset_id: test_agent\n"
+            "category: testing\n"
+            "display_name: Test Agent\n"
+            "description: A test agent\n"
+            "capabilities:\n"
+            "  - Does testing\n"
+            "icon_emoji: '\\U0001F916'\n"
+            "color: '#ff0000'\n"
+            "prefix: TA\n"
+            "approval_mode: auto\n"
+            "max_revision_cycles: 5\n"
+            "uses_worktree: true\n"
+            "system_prompt: You are a test agent.\n"
+            "tools: [Read, Write]\n"
+            "default_model: claude-sonnet-4-6\n"
+            "produces: [implementation]\n"
+            "accepts: [implementation]\n"
+            "max_instances: 1\n"
+            "max_turns: 50\n"
+            "max_execution_time: 1800\n"
+            "context_includes: [parent_artifact]\n"
+        )
+        presets = load_presets(preset_dir)
+        assert len(presets) == 1
+        assert "test_agent" in presets
+        p = presets["test_agent"]
+        assert p["preset_id"] == "test_agent"
+        assert p["category"] == "testing"
+        assert p["display_name"] == "Test Agent"
+        assert p["capabilities"] == ["Does testing"]
+        assert p["default_model"] == "claude-sonnet-4-6"
+
+    def test_load_presets_empty_dir(self, tmp_path):
+        preset_dir = tmp_path / "presets"
+        preset_dir.mkdir()
+        presets = load_presets(preset_dir)
+        assert presets == {}
+
+    def test_load_presets_missing_dir(self, tmp_path):
+        presets = load_presets(tmp_path / "nonexistent")
+        assert presets == {}
