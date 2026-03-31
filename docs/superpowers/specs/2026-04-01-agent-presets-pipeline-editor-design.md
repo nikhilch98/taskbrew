@@ -1,7 +1,7 @@
 # Agent Presets, Editable Pipeline & Human-in-the-Loop Design
 
 **Date:** 2026-04-01
-**Status:** Approved (rev 3 — post 20-pass review)
+**Status:** Approved (rev 4 — post 30-pass review)
 **Scope:** Redesign of the "Add New Agent" flow, editable pipeline editor, approval/clarification system, and hybrid routing engine.
 
 ---
@@ -115,22 +115,33 @@ When the user clicks "Add New Agent", a modal opens with two tabs:
 
 Each preset is a YAML file stored in `config/presets/` with the full agent config. The system prompt, tools, and defaults are pre-written and read-only during selection. Only the `model` field is user-chosen at creation time.
 
+**Each preset has a specialized system prompt** tailored to its role. The boilerplate section (tool usage, routing rules, artifact format) is shared, but each preset has unique instructions for its domain. For example, PM's prompt focuses on task decomposition, Architect Reviewer's prompt includes code review protocol and git diff instructions, Designer's prompt covers mockup artifact formats.
+
+**Each preset also has a `capabilities` field** — 2-3 bullet points summarizing what the agent does, displayed prominently in the preset selection UI (separate from the one-liner `description`).
+
 ```yaml
 # config/presets/coder_be.yaml
 preset_id: coder_be
 category: coding
 display_name: "Coder BE"
 description: "Backend implementation — APIs, services, databases"
+capabilities:
+  - "Implements APIs, services, and database logic from design documents"
+  - "Writes clean, tested code on isolated git branches"
+  - "Routes completed work to reviewers for verification"
 icon_emoji: "\U0001F4BB"
 color: "#f59e0b"
 prefix: "CB"
 approval_mode: auto
 max_revision_cycles: 5
 max_clarification_requests: 10
+max_route_tasks: 100
 uses_worktree: true
+artifact_exclude_patterns: ["*.env", "credentials*", "*.key", "*.pem", "*.secret"]
 
 system_prompt: |
   You are a Backend Engineer agent.
+  Agent Role: coder_be
 
   ## Your Task
   You will receive a task with a title, description, and context from upstream agents.
@@ -145,17 +156,19 @@ system_prompt: |
   ## Artifact Format
   Save all output files to your working directory. When calling `complete_task`, pass the
   relative file paths as `artifact_paths`. The orchestrator will collect and store them.
+  Do NOT include sensitive files (.env, credentials, keys) in artifact_paths.
 
   ## Routing Rules
   You can ONLY route tasks to agents listed in your injected connections section below.
   You CANNOT create tasks for agents you are not directly connected to.
   Call `route_task` BEFORE calling `complete_task`. After `complete_task` is called,
   no further `route_task` calls are accepted.
+  When routing a `revision` task, include the `chain_id` from your task context.
 
   ## Task Flow
   1. Read your task and all provided context/artifacts
   2. Implement the required changes
-  3. Route any downstream tasks via `route_task`
+  3. Route any downstream tasks via `route_task` (returns the created task_id)
   4. Call `complete_task` with your artifact paths and a summary
 
 tools:
@@ -269,6 +282,21 @@ For now, **one pipeline per project**. The data model includes an `id` field to 
 - When no agents exist or no edges are drawn, show: "Add agents and draw connections to create your pipeline."
 - Start agent indicator only appears once at least one agent exists and is marked.
 
+**Edge labels:**
+- Edges show their `task_types` as a small label on hover.
+- When multiple edges exist between different agent pairs, labels are always visible (not just on hover) to distinguish them.
+
+**Keyboard accessibility:**
+- Tab navigates between agent nodes.
+- Enter selects a node (enters "source selected" state). Tab to target, Enter to draw edge.
+- Escape cancels current selection.
+- Delete/Backspace removes the currently focused edge.
+- Arrow keys navigate between edges when an edge is focused.
+
+**Responsive behavior:**
+- On narrow screens (< 768px), the pipeline section enables horizontal scroll.
+- Pinch-to-zoom on touch devices.
+
 **Undo/redo:**
 - Pipeline editor maintains an undo stack (in-memory, up to 50 operations).
 - Ctrl+Z / Cmd+Z to undo, Ctrl+Shift+Z / Cmd+Shift+Z to redo.
@@ -288,7 +316,9 @@ For now, **one pipeline per project**. The data model includes an `id` field to 
 | Revision loops without a `max_revision_cycles` cap on involved agents | Warning on the cycle edges | Warning |
 | Edge task_types not in source's `produces` or target's `accepts` | Warning icon on the edge | Warning |
 | Pipeline running | "Pipeline running" overlay, editing disabled (see 2.7) | Info |
-| Single agent, no edges | Valid — agent operates standalone | None |
+| Single agent, no edges, marked as start | Valid — agent operates standalone | None |
+| Single agent, no edges, NOT marked as start | No start agent | Error (blocks save) |
+| Agent deletion would break connections | Confirmation required (see 7.3) | Warning |
 
 ### 2.5 Pipeline Data Model
 
@@ -381,8 +411,14 @@ Agents are given a **minimal, approval-mode-agnostic tool set.** The agent does 
 |------|---------|---------|
 | `complete_task(artifact_paths[], summary)` | Mark current task as done with output artifacts | Depends on approval_mode (see below) |
 | `request_clarification(question, context, suggested_options[])` | Ask user a question mid-task | Yes — blocks until user responds |
-| `route_task(target_agent, task_type, title, description, priority, blocked_by[])` | Create a downstream task for a connected agent | No (fire-and-forget, but see 3.8) |
+| `route_task(target_agent, task_type, title, description, priority, blocked_by[], chain_id?)` | Create a downstream task for a connected agent. Returns `{task_id}` of the created task. Optional `chain_id` for revision tracking. | No (fire-and-forget, but see 3.8) |
 | `get_my_connections()` | Get pipeline connections for this agent | No |
+
+**`route_task` returns task_id:** The returned `task_id` can be used in subsequent `route_task` calls' `blocked_by` arrays to express dependencies between downstream tasks.
+
+**`route_task` revision enforcement:** If `task_type` is `revision` and `chain_id` is provided, the orchestrator checks the chain's `revision_count` against `max_revision_cycles`. If at the limit, the call is rejected with: "Revision limit reached for chain {chain_id}. Escalating to human intervention."
+
+**`route_task` rate limit:** Max calls per task instance: configurable via `max_route_tasks` (default 100). Prevents runaway task creation from buggy agents.
 
 **Tool ordering constraint:** `route_task` must be called BEFORE `complete_task`. Once `complete_task` is called, the agent's `instance_token` is invalidated for `route_task` (but the `complete_task` blocking poll remains active). This prevents agents from creating downstream tasks after they've finished.
 
@@ -492,13 +528,27 @@ Available for any agent that produces artifacts, not just Designer.
 
 ### 3.7 Revision Loop
 
-- Revision count is tracked per **task chain** (the original task + all revision re-creations), not per task ID. The chain is identified by a `chain_id` field stored on each task, set to the original task's ID.
-- On rejection, count increments, a new task is created for the originating agent with the feedback and the same `chain_id`.
-- The **orchestrator** handles revision routing, not the agent. When `complete_task` returns `{status: "rejected", feedback: "..."}`, the orchestrator:
+Revisions can be triggered by two distinct paths:
+
+**Path A: Human rejects via dashboard (approval rejection)**
+- User rejects an `awaiting_approval` task in the dashboard.
+- The **orchestrator** handles revision routing automatically:
   1. Increments the chain's `revision_count`.
   2. If under `max_revision_cycles`: creates a new task for the originating agent with the feedback.
   3. If at limit: sets task status to `awaiting_human_intervention`.
+
+**Path B: Agent rejects via `route_task` (agent-to-agent review)**
+- Architect Reviewer reviews Coder's work and decides to reject.
+- Reviewer calls `route_task(coder_be, "revision", ...)` with the `chain_id` from its task context.
+- The pipeline must have a reverse edge (Reviewer → Coder with task_type `revision`).
+- `route_task` checks the chain's `revision_count` against `max_revision_cycles`. If at limit, the call is rejected and the task is escalated to `awaiting_human_intervention`.
+
+**Chain tracking:**
+- Revision count is tracked per **task chain** (the original task + all revision re-creations), not per task ID. The chain is identified by a `chain_id` field stored on each task, set to the original task's ID.
+- `max_revisions` is set ONCE when the chain is created (from the `config_snapshot` of the first task) and never updated, even if the agent config changes between revisions.
 - Dashboard shows escalation card with full revision history.
+
+**"Approve with Notes" creates a new chain:** When a user clicks "Approve with Notes", the original chain is closed (task completed). A NEW task with a NEW `chain_id` is created for the follow-up work. This is intentional — the follow-up is new work, not a revision.
 
 ### 3.8 Route-Task Deferred Activation
 
@@ -511,6 +561,10 @@ They only transition to `ready` when the parent task reaches `completed` status 
 - Wasted work if the upstream agent's task is rejected.
 - Race conditions between routing and completion.
 
+**Rejection cleanup:** When a parent task is rejected (via approval or timeout), ALL pending downstream tasks with `blocked_by` containing the rejected task are auto-cancelled. This cascades — if those cancelled tasks had their own pending downstream tasks, those are cancelled too.
+
+**Maximum pipeline depth:** The orchestrator enforces a maximum task chain depth (default 20, configurable via `execution.max_pipeline_depth` in `team.yaml`). If `route_task` would create a task at depth > max, the call is rejected with: "Maximum pipeline depth exceeded." This prevents runaway cascading from bugs.
+
 ---
 
 ## 4. Hybrid Routing Engine
@@ -521,7 +575,9 @@ At agent launch, the orchestrator dynamically injects connection info into the s
 
 ```
 == TASK CONTEXT ==
+Agent Role: {agent_role}
 Task ID: {task_id}
+Chain ID: {chain_id or "N/A"}
 Title: {task_title}
 Group: {group_id}
 Priority: {priority}
@@ -553,7 +609,11 @@ Use `complete_task` when done. Do NOT route to agents not listed above.
 
 **Staleness note:** The system prompt is generated at agent launch and may become stale if the pipeline is edited mid-execution (though pipeline editing is blocked during execution — see 2.7). The system prompt is **best-effort guidance** for the LLM. The `route_task` MCP tool is the **authoritative validator** — it checks the current pipeline topology at call time and rejects invalid routes.
 
+**Context refresh:** For long-running tasks, `context_includes` like `sibling_summary` may become stale. Agents can call `get_my_connections()` which also returns updated sibling summaries and current group state as an optional `include_context: true` parameter.
+
 **PM agent note:** The PM agent only sees its direct connections (e.g., Architect). It does NOT see the full pipeline. If PM needs to create tasks that eventually reach Coder, it creates tasks for Architect, and Architect creates tasks for Coder. Each agent only routes to its direct neighbors.
+
+**Reviewer context injection:** When the orchestrator creates a verification task for the Architect Reviewer (routed from Coder), the task description automatically includes: the Coder's branch name, the diff command (`git diff {base_branch}..{branch}`), list of changed files, and the `chain_id`. This gives the Reviewer everything needed to review the code and route revisions back with the correct `chain_id`.
 
 ### 4.2 MCP Tool Enforcement
 
@@ -567,10 +627,13 @@ Use `complete_task` when done. Do NOT route to agents not listed above.
 
 ### 4.3 Initial Goal → Start Agent
 
+**Concurrent goals:** Users can submit multiple goals while a pipeline is running. Each goal creates an independent group. Tasks from different groups share agent queues — if `max_instances: 1`, the second group's tasks queue behind the first's. Groups never interfere with each other's state.
+
 When the user submits a goal via the dashboard:
 1. Orchestrator validates the pipeline has a `start_agent` set. If not, returns an error.
-2. Orchestrator creates a new **group** (the "pipeline run").
-3. Orchestrator creates the first task:
+2. Orchestrator validates the goal text is non-empty (rejects whitespace-only).
+3. Orchestrator creates a new **group** (the "pipeline run").
+4. Orchestrator creates the first task:
    - `title`: the goal text (truncated to 200 chars)
    - `description`: the full goal text
    - `task_type`: `goal`
@@ -578,7 +641,8 @@ When the user submits a goal via the dashboard:
    - `assigned_to`: the pipeline's `start_agent`
    - `group_id`: the new group's ID
    - `status`: `ready` (not `pending` — no upstream dependency)
-4. Start agent is launched (or picks up the task from its queue if already running).
+   - `attachment_paths`: optional file attachments the user uploaded with the goal (screenshots, PDFs, specs). These are stored as root artifacts.
+5. Start agent is launched (or picks up the task from its queue if already running).
 
 ### 4.4 Context Passing Between Agents
 
@@ -609,11 +673,18 @@ Each task = new agent instance = new CLI process = new `instance_token`.
 1. Task becomes `ready` (all `blocked_by` dependencies resolved).
 2. Orchestrator checks `max_instances` for that agent role. If at capacity, task queues.
 3. **Task queue ordering:** Priority-weighted FIFO. Higher priority tasks dequeue first. Within same priority, FIFO.
-4. Orchestrator spawns a new CLI agent process (Claude Code, Gemini CLI, etc.).
-5. Agent receives its `instance_token`, MCP server config, and task context via system prompt injection.
-6. Agent works on the task (may call `route_task`, `request_clarification`).
-7. Agent calls `complete_task` → instance_token invalidated for `route_task`.
-8. CLI process exits. Instance is cleaned up.
+4. **CLI provider resolution:** The orchestrator determines which CLI tool to spawn based on the agent's model:
+   - `claude-*` models → spawns `claude` CLI (Claude Code)
+   - `gemini-*` models → spawns `gemini` CLI (Gemini CLI)
+   - This mapping is defined in `config/providers/` YAML files (already exist in the project).
+5. Orchestrator spawns a new CLI agent process via `AgentLoop` (in `src/taskbrew/agents/agent_loop.py`). The AgentLoop is updated to: (a) generate `instance_token`, (b) write temporary MCP config file for the CLI, (c) inject system prompt with task context, (d) forward environment variables (`ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, etc.) to the subprocess, (e) monitor process exit code.
+6. Agent receives its `instance_token`, MCP server config, and task context via system prompt injection.
+7. Agent works on the task (may call `route_task`, `request_clarification`).
+8. Agent calls `complete_task` → instance_token invalidated for `route_task`.
+9. CLI process exits (exit code 0 = normal, non-zero = crash → retry per 5.3). Instance is cleaned up.
+10. Temporary MCP config file is deleted.
+
+**CLI tool verification:** The `taskbrew doctor` command checks for required CLI tools based on all configured agents' models. Missing CLIs are reported with install instructions.
 
 ### 5.2 Task Timeout
 
@@ -652,7 +723,7 @@ Each task = new agent instance = new CLI process = new `instance_token`.
 
 ### 5.7 Git Worktrees
 
-- Only agents with `uses_worktree: true` get worktrees. Others work in the main project directory (read-only access for non-coding agents like PM, Research).
+- Only agents with `uses_worktree: true` get worktrees. Non-worktree agents (PM, Research, etc.) work in the main project directory with no git isolation — their tool sets should not include `Write`/`Edit` to prevent accidental modifications to the main branch.
 - Each agent instance gets its own git worktree and branch.
 - Branch naming: `task/{group_id}-{task_id}-{short_description}`
 - Worktree path: `.worktrees/task-{group_id}-{task_id}/` (consistent with existing `WorktreeManager`).
@@ -671,7 +742,14 @@ Each task = new agent instance = new CLI process = new `instance_token`.
 | `wait_all` (default) | Agent starts only when ALL upstream tasks in the current group that target this node are `completed` or resolved via `on_failure` policy |
 | `stream` | Each upstream task completion independently triggers a new task for this agent |
 
-**`wait_all` dynamic count:** The orchestrator does NOT require a pre-declared count of upstream tasks. Instead, it tracks all tasks in the current group that target this node. The `wait_all` condition is met when every such task has reached a terminal state (`completed`, `failed` with `continue_partial`, or `cancelled`). This is evaluated atomically with a database lock to prevent duplicate downstream task creation from race conditions.
+**`wait_all` dynamic count:** The orchestrator does NOT require a pre-declared count of upstream tasks. Instead, it tracks all tasks in the current group assigned to this node's upstream agent roles (as defined by pipeline edges). The `wait_all` condition is met when:
+1. Every upstream agent role has at least one task in the group that has reached a terminal state, AND
+2. All tasks in the group from upstream agent roles that target this node have reached a terminal state (`completed`, `failed` with `continue_partial`, or `cancelled`), AND
+3. All tasks that COULD create new tasks targeting this node (transitive upstream) are also terminal.
+
+This is evaluated atomically with a database lock to prevent duplicate downstream task creation from race conditions. The condition re-evaluates on every task status change in the group.
+
+**`wait_all` with zero upstream tasks:** If a `wait_all` node has pipeline edges from Agent X but no tasks were routed to it by X in this group, the node simply never activates for that group. This is correct — no work was requested.
 
 **On upstream failure (per incoming edge):**
 
@@ -761,14 +839,16 @@ The dashboard subscribes to the following WebSocket events for real-time updates
 
 ### 6.5 MCP Tool Endpoints
 
-Served at `/mcp` as an MCP-protocol-compliant server.
+The TaskBrew MCP server uses **HTTP+SSE (Streamable HTTP) transport**, compliant with the MCP protocol. Tools are discovered via standard MCP tool listing; the table below is conceptual.
 
-| Tool Name | Endpoint | Auth |
-|-----------|----------|------|
-| `complete_task` | `POST /mcp/tools/complete_task` | Bearer instance_token |
-| `request_clarification` | `POST /mcp/tools/request_clarification` | Bearer instance_token |
-| `route_task` | `POST /mcp/tools/route_task` | Bearer instance_token |
-| `get_my_connections` | `POST /mcp/tools/get_my_connections` | Bearer instance_token |
+| Tool Name | Auth | Notes |
+|-----------|------|-------|
+| `complete_task` | Bearer instance_token | Blocking for manual/first_run approval_mode |
+| `request_clarification` | Bearer instance_token | Always blocking |
+| `route_task` | Bearer instance_token | Returns `{task_id}`. Rate-limited per `max_route_tasks` |
+| `get_my_connections` | Bearer instance_token | Optional `include_context: true` for refreshed sibling summaries |
+
+**Dashboard interaction endpoints** use the existing dashboard auth mechanism (`AUTH_ENABLED` flag in `.env`). When `AUTH_ENABLED=true`, all `/api/interactions/*` endpoints require authentication.
 
 ---
 
@@ -799,7 +879,7 @@ On first load after upgrade:
 
 ### 7.3 Deletion Cascade
 
-When an agent is deleted from Agent Roles:
+When an agent is deleted from Agent Roles, a **confirmation modal** is shown: "Deleting {agent} will remove {N} pipeline connections. {M} in-flight tasks will be cancelled. Are you sure?" If confirmed:
 - All pipeline edges to/from that agent are removed from `team.yaml`.
 - If the deleted agent is the `start_agent`, the `start_agent` field is cleared and a validation error is shown.
 - **In-flight tasks** assigned to the deleted agent are cancelled with a notification to the user.
@@ -817,7 +897,46 @@ When an agent is deleted from Agent Roles:
 
 ---
 
-## 8. Future Considerations (Not In Scope, But Data-Model-Ready)
+## 8. Execution Configuration (`team.yaml`)
+
+The `execution` section in `team.yaml` controls orchestrator-level settings. All fields have defaults — the section can be omitted entirely.
+
+```yaml
+execution:
+  max_concurrent_api_calls: 5      # default: 5 — per-project semaphore
+  base_branch: "main"              # default: "main" — worktree base branch
+  worktree_retention_days: 7       # default: 7 — cleanup for failed/cancelled worktrees
+  max_pipeline_depth: 20           # default: 20 — max task chain depth
+  artifact_exclude_patterns:       # default: see below — global exclusions for artifact storage
+    - "*.env"
+    - "credentials*"
+    - "*.key"
+    - "*.pem"
+    - "*.secret"
+```
+
+If the `execution` section is missing, all defaults apply. Per-agent `artifact_exclude_patterns` are merged with the global list.
+
+---
+
+## 9. Database Migration
+
+New tables and columns are created using the existing `Database` class auto-creation pattern (used throughout the project). On server startup:
+
+1. `CREATE TABLE IF NOT EXISTS` for each new table (`human_interaction_requests`, `task_chains`, `first_run_approvals`).
+2. `ALTER TABLE tasks ADD COLUMN ... DEFAULT NULL` for each new column, wrapped in try/except to handle already-existing columns on subsequent startups.
+3. `CREATE INDEX IF NOT EXISTS` for performance-critical queries:
+   - `idx_hir_status` on `human_interaction_requests(status)` — for pending queries
+   - `idx_hir_group` on `human_interaction_requests(group_id)` — for history filtering
+   - `idx_hir_task` on `human_interaction_requests(task_id)` — for task lookup
+   - `idx_chains_chain` on `task_chains(chain_id)` — for revision chain lookup
+   - `idx_tasks_chain` on `tasks(chain_id)` — for chain task listing
+
+No Alembic or external migration tool needed — consistent with the existing codebase approach.
+
+---
+
+## 10. Future Considerations (Not In Scope, But Data-Model-Ready)
 
 These are explicitly deferred but the data model supports them:
 
@@ -826,10 +945,11 @@ These are explicitly deferred but the data model supports them:
 3. **`wait_threshold(n)` join strategy** — Start when N of M upstream tasks complete. Future: add to `join_strategy` enum.
 4. **Cost budget per pipeline run** — Pause execution when spend exceeds a threshold. Future: add `budget` field to pipeline config.
 5. **Per-pipeline-node approval_mode override** — Same agent with different approval behavior in different pipelines. Future: add to `node_config`.
+6. **Goal attachments** — User submits goal with file attachments (screenshots, PDFs, specs). Stored as root artifacts. Data model already supports `attachment_paths` on the initial task.
 
 ---
 
-## 9. New Database Tables
+## 11. New Database Tables
 
 ### 9.1 `human_interaction_requests`
 
@@ -888,6 +1008,43 @@ Primary key: `(group_id, agent_role)`.
 ---
 
 ## Changelog
+
+### Rev 4 (post passes 21–30)
+- Added rejection cleanup cascade for pending downstream tasks
+- Added max pipeline depth limit (default 20) to prevent runaway cascading
+- Added `route_task` returns `task_id` for expressing inter-task dependencies
+- Added `chain_id` parameter to `route_task` for revision tracking in agent-to-agent review
+- Added `route_task` rate limit (`max_route_tasks`, default 100)
+- Added `route_task` revision enforcement — checks chain limit before allowing revision routing
+- Clarified two distinct revision paths: human rejection (orchestrator handles) vs agent rejection (route_task)
+- Added `capabilities` field to presets — 2-3 bullet points for selection UI
+- Added `artifact_exclude_patterns` per-agent and global — prevents sensitive file leakage
+- Added `Agent Role` and `Chain ID` to system prompt injection template
+- Added context refresh via `get_my_connections(include_context: true)` for stale sibling summaries
+- Added Reviewer context injection (branch name, diff command, changed files, chain_id)
+- Clarified non-worktree agents should not have Write/Edit tools
+- Fixed `wait_all` to include transitive upstream termination check
+- Clarified `wait_all` with zero upstream tasks — node simply never activates
+- Clarified `max_revisions` in task_chains is immutable after chain creation
+- Clarified "Approve with Notes" creates new chain, not a revision
+- Added CLI provider resolution mapping (claude-* → Claude Code, gemini-* → Gemini CLI)
+- Added AgentLoop integration details (token gen, MCP config, env var forwarding, process monitoring)
+- Added `taskbrew doctor` CLI tool verification based on configured models
+- Added deletion confirmation modal with impact summary
+- Added edge labels (task_types) on hover and always-visible for multi-edge pairs
+- Added keyboard accessibility for pipeline editor (Tab, Enter, Escape, Delete)
+- Added responsive behavior (horizontal scroll, pinch-to-zoom)
+- Added concurrent goals documentation — independent groups sharing agent queues
+- Added empty goal validation
+- Added goal attachment support (file uploads as root artifacts)
+- Single-agent-not-marked-as-start is now correctly an error
+- Added full `execution` section in `team.yaml` with schema and defaults
+- Added database migration strategy (CREATE TABLE IF NOT EXISTS pattern)
+- Added database indexes for performance
+- Clarified MCP server transport: HTTP+SSE (Streamable HTTP), not custom REST
+- Added dashboard auth for interaction endpoints (respects AUTH_ENABLED)
+- Added `max_route_tasks` to preset YAML structure
+- Fixed section numbering for new sections (8: Execution Config, 9: DB Migration, 10: Future, 11: DB Tables)
 
 ### Rev 3 (post passes 11–20)
 - Added `uses_worktree` flag per agent template; non-coding agents skip worktree creation
