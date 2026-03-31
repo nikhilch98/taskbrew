@@ -484,3 +484,24 @@ class SetNodeConfigBody(BaseModel):
 class ValidatePipelineBody(BaseModel):
     """Optional body for pipeline validation (can be empty)."""
     pass
+
+
+# ---------------------------------------------------------------------------
+# Human-in-the-Loop models
+# ---------------------------------------------------------------------------
+
+
+class ApproveInteractionBody(BaseModel):
+    notes: Optional[str] = None
+
+
+class RejectInteractionBody(BaseModel):
+    feedback: str
+
+
+class RespondInteractionBody(BaseModel):
+    response: str
+
+
+class SkipInteractionBody(BaseModel):
+    pass

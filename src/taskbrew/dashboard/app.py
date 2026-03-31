@@ -277,6 +277,8 @@ def create_app(
     from taskbrew.dashboard.routers.usage import router as usage_router
     from taskbrew.dashboard.routers import presets as presets_router
     from taskbrew.dashboard.routers.pipeline_editor import router as pipeline_editor_router
+    from taskbrew.dashboard.routers.mcp_tools import router as mcp_tools_router
+    from taskbrew.dashboard.routers.interactions import router as interactions_router
 
     app.include_router(tasks_router, tags=["Tasks"])
     app.include_router(agents_router, tags=["Agents"])
@@ -294,6 +296,8 @@ def create_app(
     app.include_router(usage_router, tags=["Usage"])
     app.include_router(presets_router.router, tags=["Presets"])
     app.include_router(pipeline_editor_router, tags=["Pipeline Editor"])
+    app.include_router(mcp_tools_router, tags=["MCP Tools"])
+    app.include_router(interactions_router, tags=["Interactions"])
     app.include_router(system_router.router, tags=["System"])
     app.include_router(ws_router.router)
 

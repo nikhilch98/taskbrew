@@ -3,6 +3,8 @@
 import pytest
 import aiosqlite
 from pathlib import Path
+from httpx import AsyncClient, ASGITransport
+from fastapi import FastAPI
 from taskbrew.orchestrator.interactions import InteractionManager
 
 
@@ -169,3 +171,113 @@ class TestInteractionManager:
         # Idempotent
         await mgr.record_first_run("g1", "architect")
         assert await mgr.check_first_run("g1", "architect") is True
+
+
+# ---------------------------------------------------------------------------
+# Dashboard Interactions API tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def db_for_api(db):
+    """Database pre-seeded with groups and tasks needed by API tests."""
+    for gid in ("g1",):
+        await db.execute(
+            "INSERT OR IGNORE INTO groups (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+            (gid, f"Group {gid}", "active"),
+        )
+    for tid in ("t1", "t2", "t3", "t4"):
+        await db.execute(
+            "INSERT OR IGNORE INTO tasks (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+            (tid, f"Task {tid}", "pending"),
+        )
+    return db
+
+
+class TestInteractionsAPI:
+    """Test /api/interactions endpoints."""
+
+    @pytest.fixture
+    async def app_with_interactions(self, db_for_api):
+        from taskbrew.dashboard.routers.interactions import router as int_router, set_interaction_deps
+        mgr = InteractionManager(db_for_api)
+        set_interaction_deps(mgr)
+        app = FastAPI()
+        app.include_router(int_router)
+        yield app, mgr
+
+    @pytest.fixture
+    async def int_client(self, app_with_interactions):
+        app, mgr = app_with_interactions
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c, mgr
+
+    @pytest.mark.asyncio
+    async def test_pending_empty(self, int_client):
+        client, mgr = int_client
+        resp = await client.get("/api/interactions/pending")
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_approve_flow(self, int_client):
+        client, mgr = int_client
+        # Create a pending request directly
+        req = await mgr.create_request(
+            task_id="t1", group_id="g1", agent_role="designer",
+            instance_token="tok1", req_type="approval",
+            request_data={"summary": "mockup done"},
+        )
+        # Check pending
+        resp = await client.get("/api/interactions/pending")
+        assert resp.json()["count"] == 1
+
+        # Approve
+        resp = await client.post(f"/api/interactions/{req['id']}/approve", json={"notes": "looks great"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "approved"
+
+        # No longer pending
+        resp = await client.get("/api/interactions/pending")
+        assert resp.json()["count"] == 0
+
+        # In history
+        resp = await client.get("/api/interactions/history")
+        assert resp.json()["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_reject_flow(self, int_client):
+        client, mgr = int_client
+        req = await mgr.create_request(
+            task_id="t2", group_id="g1", agent_role="coder",
+            instance_token="tok2", req_type="approval",
+            request_data={"summary": "code review"},
+        )
+        resp = await client.post(f"/api/interactions/{req['id']}/reject", json={"feedback": "fix the tests"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "rejected"
+
+    @pytest.mark.asyncio
+    async def test_respond_to_clarification(self, int_client):
+        client, mgr = int_client
+        req = await mgr.create_request(
+            task_id="t3", group_id="g1", agent_role="coder_be",
+            instance_token="tok3", req_type="clarification",
+            request_data={"question": "REST or GraphQL?"},
+        )
+        resp = await client.post(f"/api/interactions/{req['id']}/respond", json={"response": "Use REST"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "responded"
+
+    @pytest.mark.asyncio
+    async def test_skip_clarification(self, int_client):
+        client, mgr = int_client
+        req = await mgr.create_request(
+            task_id="t4", group_id="g1", agent_role="pm",
+            instance_token="tok4", req_type="clarification",
+            request_data={"question": "which framework?"},
+        )
+        resp = await client.post(f"/api/interactions/{req['id']}/skip")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "skipped"
