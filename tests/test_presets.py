@@ -169,3 +169,59 @@ class TestPresetsAPI:
     async def test_get_preset_not_found(self, preset_client):
         resp = await preset_client.get("/api/presets/nonexistent")
         assert resp.status_code == 404
+
+
+class TestPresetIntegration:
+    """End-to-end test: load presets, verify completeness, parse as roles."""
+
+    def test_all_presets_have_required_fields(self):
+        from taskbrew.config_loader import load_presets
+        presets = load_presets(Path("config/presets"))
+        assert len(presets) == 22, f"Expected 22 presets, got {len(presets)}"
+        required = {"preset_id", "category", "display_name", "description", "system_prompt", "tools", "default_model"}
+        for pid, p in presets.items():
+            missing = required - set(p.keys())
+            assert not missing, f"Preset {pid} missing fields: {missing}"
+
+    def test_all_presets_parseable_as_roles(self):
+        from taskbrew.config_loader import load_presets, _parse_role
+        presets = load_presets(Path("config/presets"))
+        for pid, p in presets.items():
+            data = dict(p)
+            data["role"] = pid
+            data["model"] = data.pop("default_model", "claude-sonnet-4-6")
+            # Remap icon_emoji -> emoji so _parse_role's required key check passes
+            if "icon_emoji" in data and "emoji" not in data:
+                data["emoji"] = data.pop("icon_emoji")
+            for key in ("preset_id", "category", "description", "capabilities", "icon_emoji"):
+                data.pop(key, None)
+            rc = _parse_role(data)
+            assert rc.role == pid
+            assert rc.approval_mode in ("auto", "manual", "first_run")
+
+    def test_preset_categories_match_spec(self):
+        from taskbrew.config_loader import load_presets
+        presets = load_presets(Path("config/presets"))
+        expected_categories = {"planning", "architecture", "review", "coding", "design", "testing", "security", "ops", "docs", "research", "api"}
+        actual_categories = {p["category"] for p in presets.values()}
+        assert actual_categories == expected_categories, f"Category mismatch: {actual_categories} vs {expected_categories}"
+
+    def test_no_duplicate_prefixes_across_presets(self):
+        from taskbrew.config_loader import load_presets
+        presets = load_presets(Path("config/presets"))
+        prefixes = {}
+        for pid, p in presets.items():
+            prefix = p.get("prefix", "")
+            assert prefix not in prefixes, f"Duplicate prefix '{prefix}' in presets: {prefixes[prefix]} and {pid}"
+            prefixes[prefix] = pid
+
+    def test_uses_worktree_matches_expected(self):
+        from taskbrew.config_loader import load_presets
+        presets = load_presets(Path("config/presets"))
+        # Non-coding agents should NOT use worktrees
+        no_worktree = {"pm", "architect", "database_architect", "technical_writer", "research_agent", "api_designer"}
+        for pid, p in presets.items():
+            if pid in no_worktree:
+                assert p.get("uses_worktree") is False, f"{pid} should have uses_worktree=false"
+            elif pid.startswith("coder_") or pid.startswith("designer_") or pid.startswith("qa_tester_") or pid in ("architect_reviewer", "security_auditor", "devops_engineer"):
+                assert p.get("uses_worktree") is True, f"{pid} should have uses_worktree=true"
