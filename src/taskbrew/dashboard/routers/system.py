@@ -327,6 +327,13 @@ async def get_roles_settings():
             } if rc.auto_scale else None,
             "max_turns": rc.max_turns,
             "max_execution_time": rc.max_execution_time,
+            "approval_mode": rc.approval_mode,
+            "max_revision_cycles": rc.max_revision_cycles,
+            "max_clarification_requests": rc.max_clarification_requests,
+            "max_route_tasks": rc.max_route_tasks,
+            "uses_worktree": rc.uses_worktree,
+            "capabilities": rc.capabilities,
+            "artifact_exclude_patterns": rc.artifact_exclude_patterns,
         })
     return result
 
@@ -386,6 +393,18 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
     if "group_type" in body:
         rc.group_type = body["group_type"]
 
+    # New agent behaviour fields
+    if "approval_mode" in body:
+        rc.approval_mode = body["approval_mode"]
+    if "max_revision_cycles" in body:
+        rc.max_revision_cycles = body["max_revision_cycles"]
+    if "max_clarification_requests" in body:
+        rc.max_clarification_requests = body["max_clarification_requests"]
+    if "max_route_tasks" in body:
+        rc.max_route_tasks = body["max_route_tasks"]
+    if "uses_worktree" in body:
+        rc.uses_worktree = body["uses_worktree"]
+
     # Routes -- convert dicts to RouteTarget objects
     if "routes_to" in body:
         rc.routes_to = [
@@ -432,6 +451,8 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
                 "max_instances", "max_turns", "max_execution_time",
                 "produces", "accepts",
                 "context_includes", "can_create_groups", "group_type",
+                "approval_mode", "max_revision_cycles",
+                "max_clarification_requests", "max_route_tasks", "uses_worktree",
             )
             for key in direct_keys:
                 if key in body:
