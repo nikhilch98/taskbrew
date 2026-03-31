@@ -447,3 +447,40 @@ class PlanIncrementsBody(BaseModel):
 class GeneratePostMortemBody(BaseModel):
     task_id: Optional[str] = None
     group_id: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Editor (Plan 2)
+# ---------------------------------------------------------------------------
+
+
+class PipelineEdgeBody(BaseModel):
+    from_agent: str
+    to_agent: str
+    task_types: list[str] = []
+    on_failure: str = "block"
+
+
+class UpdatePipelineEdgeBody(BaseModel):
+    task_types: Optional[list[str]] = None
+    on_failure: Optional[str] = None
+
+
+class UpdatePipelineBody(BaseModel):
+    name: Optional[str] = None
+    start_agent: Optional[str] = None
+    edges: Optional[list[dict[str, Any]]] = None
+    node_config: Optional[dict[str, dict[str, str]]] = None
+
+
+class SetStartAgentBody(BaseModel):
+    role: str
+
+
+class SetNodeConfigBody(BaseModel):
+    join_strategy: str = "wait_all"
+
+
+class ValidatePipelineBody(BaseModel):
+    """Optional body for pipeline validation (can be empty)."""
+    pass

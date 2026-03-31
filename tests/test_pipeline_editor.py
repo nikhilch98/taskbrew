@@ -293,3 +293,362 @@ class TestMigrateRoutesToPipeline:
         pc = migrate_routes_to_pipeline(roles)
         edge_ids = [e.id for e in pc.edges]
         assert len(edge_ids) == len(set(edge_ids)), "Edge IDs must be unique"
+
+
+# ---------------------------------------------------------------------------
+# Pipeline API Tests (Task 3)
+# ---------------------------------------------------------------------------
+
+import json
+import tempfile
+import shutil
+from unittest.mock import MagicMock
+from fastapi.testclient import TestClient
+from pathlib import Path as RealPath
+
+
+def _make_test_app(roles_dict, pipeline_config=None, project_dir=None):
+    """Create a minimal FastAPI test app with mock orchestrator."""
+    from fastapi import FastAPI
+    from taskbrew.dashboard.routers.pipeline_editor import router, set_pipeline_deps
+    from taskbrew.dashboard.routers._deps import set_orchestrator
+
+    app = FastAPI()
+    app.include_router(router)
+
+    orch = MagicMock()
+    orch.roles = roles_dict
+    orch.project_dir = project_dir
+    orch.team_config = MagicMock()
+    set_orchestrator(orch)
+
+    if pipeline_config is not None:
+        set_pipeline_deps(pipeline_config)
+
+    return app
+
+
+class TestPipelineAPIGet:
+    """Test GET /api/pipeline."""
+
+    def test_get_pipeline_returns_config(self):
+        pc = PipelineConfig(
+            id="test-pipe", name="Test", start_agent="pm",
+            edges=[PipelineEdge(id="e1", from_agent="pm", to_agent="arch",
+                                task_types=["design"])],
+            node_config={"arch": PipelineNodeConfig(join_strategy="stream")},
+        )
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM."),
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch."),
+        }
+        app = _make_test_app(roles, pc)
+        client = TestClient(app)
+        resp = client.get("/api/pipeline")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == "test-pipe"
+        assert data["name"] == "Test"
+        assert data["start_agent"] == "pm"
+        assert len(data["edges"]) == 1
+        assert data["edges"][0]["from"] == "pm"
+        assert data["edges"][0]["to"] == "arch"
+        assert data["node_config"]["arch"]["join_strategy"] == "stream"
+
+    def test_get_pipeline_empty(self):
+        pc = PipelineConfig()
+        app = _make_test_app({}, pc)
+        client = TestClient(app)
+        resp = client.get("/api/pipeline")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["edges"] == []
+        assert data["start_agent"] is None
+
+
+class TestPipelineAPIEdges:
+    """Test edge CRUD endpoints."""
+
+    def test_add_edge(self):
+        pc = PipelineConfig(id="p1", start_agent="pm")
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM."),
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch."),
+        }
+        tmpdir = tempfile.mkdtemp()
+        team_yaml = RealPath(tmpdir) / "config" / "team.yaml"
+        team_yaml.parent.mkdir(parents=True)
+        team_yaml.write_text(yaml.dump({"team_name": "Test"}))
+        try:
+            app = _make_test_app(roles, pc, project_dir=tmpdir)
+            client = TestClient(app)
+            resp = client.post("/api/pipeline/edges", json={
+                "from_agent": "pm", "to_agent": "arch",
+                "task_types": ["tech_design"],
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert "edge_id" in data
+
+            # Verify edge was added
+            get_resp = client.get("/api/pipeline")
+            edges = get_resp.json()["edges"]
+            assert len(edges) == 1
+            assert edges[0]["from"] == "pm"
+            assert edges[0]["to"] == "arch"
+        finally:
+            shutil.rmtree(tmpdir)
+
+    def test_add_edge_unknown_role_rejected(self):
+        pc = PipelineConfig(id="p1")
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM."),
+        }
+        app = _make_test_app(roles, pc)
+        client = TestClient(app)
+        resp = client.post("/api/pipeline/edges", json={
+            "from_agent": "pm", "to_agent": "nonexistent",
+            "task_types": [],
+        })
+        assert resp.status_code == 400
+
+    def test_delete_edge(self):
+        pc = PipelineConfig(
+            id="p1",
+            edges=[PipelineEdge(id="e1", from_agent="pm", to_agent="arch")],
+        )
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM."),
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch."),
+        }
+        tmpdir = tempfile.mkdtemp()
+        team_yaml = RealPath(tmpdir) / "config" / "team.yaml"
+        team_yaml.parent.mkdir(parents=True)
+        team_yaml.write_text(yaml.dump({"team_name": "Test"}))
+        try:
+            app = _make_test_app(roles, pc, project_dir=tmpdir)
+            client = TestClient(app)
+            resp = client.delete("/api/pipeline/edges/e1")
+            assert resp.status_code == 200
+            # Verify edge removed
+            get_resp = client.get("/api/pipeline")
+            assert len(get_resp.json()["edges"]) == 0
+        finally:
+            shutil.rmtree(tmpdir)
+
+    def test_delete_edge_not_found(self):
+        pc = PipelineConfig(id="p1")
+        app = _make_test_app({}, pc)
+        client = TestClient(app)
+        resp = client.delete("/api/pipeline/edges/nonexistent")
+        assert resp.status_code == 404
+
+    def test_update_edge(self):
+        pc = PipelineConfig(
+            id="p1",
+            edges=[PipelineEdge(id="e1", from_agent="pm", to_agent="arch",
+                                task_types=["design"], on_failure="block")],
+        )
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM."),
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch."),
+        }
+        tmpdir = tempfile.mkdtemp()
+        team_yaml = RealPath(tmpdir) / "config" / "team.yaml"
+        team_yaml.parent.mkdir(parents=True)
+        team_yaml.write_text(yaml.dump({"team_name": "Test"}))
+        try:
+            app = _make_test_app(roles, pc, project_dir=tmpdir)
+            client = TestClient(app)
+            resp = client.put("/api/pipeline/edges/e1", json={
+                "task_types": ["implementation", "verification"],
+                "on_failure": "cancel_pipeline",
+            })
+            assert resp.status_code == 200
+            get_resp = client.get("/api/pipeline")
+            edge = get_resp.json()["edges"][0]
+            assert edge["task_types"] == ["implementation", "verification"]
+            assert edge["on_failure"] == "cancel_pipeline"
+        finally:
+            shutil.rmtree(tmpdir)
+
+
+class TestPipelineAPIStartAgent:
+    """Test start agent endpoint."""
+
+    def test_set_start_agent(self):
+        pc = PipelineConfig(id="p1", start_agent=None)
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM."),
+        }
+        tmpdir = tempfile.mkdtemp()
+        team_yaml = RealPath(tmpdir) / "config" / "team.yaml"
+        team_yaml.parent.mkdir(parents=True)
+        team_yaml.write_text(yaml.dump({"team_name": "Test"}))
+        try:
+            app = _make_test_app(roles, pc, project_dir=tmpdir)
+            client = TestClient(app)
+            resp = client.put("/api/pipeline/start-agent", json={"role": "pm"})
+            assert resp.status_code == 200
+            get_resp = client.get("/api/pipeline")
+            assert get_resp.json()["start_agent"] == "pm"
+        finally:
+            shutil.rmtree(tmpdir)
+
+    def test_set_start_agent_unknown_role(self):
+        pc = PipelineConfig(id="p1")
+        roles = {}
+        app = _make_test_app(roles, pc)
+        client = TestClient(app)
+        resp = client.put("/api/pipeline/start-agent", json={"role": "nope"})
+        assert resp.status_code == 400
+
+
+class TestPipelineAPINodeConfig:
+    """Test node config endpoint."""
+
+    def test_set_node_config(self):
+        pc = PipelineConfig(id="p1")
+        roles = {
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch."),
+        }
+        tmpdir = tempfile.mkdtemp()
+        team_yaml = RealPath(tmpdir) / "config" / "team.yaml"
+        team_yaml.parent.mkdir(parents=True)
+        team_yaml.write_text(yaml.dump({"team_name": "Test"}))
+        try:
+            app = _make_test_app(roles, pc, project_dir=tmpdir)
+            client = TestClient(app)
+            resp = client.put("/api/pipeline/node-config/arch",
+                              json={"join_strategy": "stream"})
+            assert resp.status_code == 200
+            get_resp = client.get("/api/pipeline")
+            assert get_resp.json()["node_config"]["arch"]["join_strategy"] == "stream"
+        finally:
+            shutil.rmtree(tmpdir)
+
+    def test_set_node_config_invalid_strategy(self):
+        pc = PipelineConfig(id="p1")
+        roles = {
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch."),
+        }
+        app = _make_test_app(roles, pc)
+        client = TestClient(app)
+        resp = client.put("/api/pipeline/node-config/arch",
+                          json={"join_strategy": "invalid"})
+        assert resp.status_code == 400
+
+
+class TestPipelineAPIValidate:
+    """Test pipeline validation endpoint."""
+
+    def test_validate_pipeline_no_start_agent(self):
+        pc = PipelineConfig(id="p1", start_agent=None, edges=[
+            PipelineEdge(id="e1", from_agent="a", to_agent="b"),
+        ])
+        roles = {
+            "a": RoleConfig(role="a", display_name="A", prefix="AA",
+                            color="#f00", emoji="A", system_prompt="A."),
+            "b": RoleConfig(role="b", display_name="B", prefix="BB",
+                            color="#0f0", emoji="B", system_prompt="B."),
+        }
+        app = _make_test_app(roles, pc)
+        client = TestClient(app)
+        resp = client.post("/api/pipeline/validate")
+        data = resp.json()
+        assert data["valid"] is False
+        assert any("start agent" in e.lower() for e in data["errors"])
+
+    def test_validate_pipeline_valid(self):
+        pc = PipelineConfig(
+            id="p1", start_agent="pm",
+            edges=[PipelineEdge(id="e1", from_agent="pm", to_agent="arch",
+                                task_types=["design"])],
+        )
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM.",
+                             produces=["design"]),
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch.",
+                               accepts=["design"]),
+        }
+        app = _make_test_app(roles, pc)
+        client = TestClient(app)
+        resp = client.post("/api/pipeline/validate")
+        data = resp.json()
+        assert data["valid"] is True
+
+    def test_validate_disconnected_agents(self):
+        pc = PipelineConfig(
+            id="p1", start_agent="pm",
+            edges=[PipelineEdge(id="e1", from_agent="pm", to_agent="arch")],
+        )
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM."),
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch."),
+            "orphan": RoleConfig(role="orphan", display_name="Orphan", prefix="OR",
+                                 color="#00f", emoji="O", system_prompt="Orphan."),
+        }
+        app = _make_test_app(roles, pc)
+        client = TestClient(app)
+        resp = client.post("/api/pipeline/validate")
+        data = resp.json()
+        assert any("disconnected" in w.lower() or "orphan" in w.lower()
+                    for w in data.get("infos", []))
+
+
+class TestPipelineAPIPutFull:
+    """Test PUT /api/pipeline (full update)."""
+
+    def test_full_pipeline_update(self):
+        pc = PipelineConfig(id="p1", start_agent="pm")
+        roles = {
+            "pm": RoleConfig(role="pm", display_name="PM", prefix="PM",
+                             color="#f00", emoji="P", system_prompt="PM."),
+            "arch": RoleConfig(role="arch", display_name="Arch", prefix="AR",
+                               color="#0f0", emoji="A", system_prompt="Arch."),
+        }
+        tmpdir = tempfile.mkdtemp()
+        team_yaml = RealPath(tmpdir) / "config" / "team.yaml"
+        team_yaml.parent.mkdir(parents=True)
+        team_yaml.write_text(yaml.dump({"team_name": "Test"}))
+        try:
+            app = _make_test_app(roles, pc, project_dir=tmpdir)
+            client = TestClient(app)
+            resp = client.put("/api/pipeline", json={
+                "name": "Updated Pipeline",
+                "start_agent": "arch",
+                "edges": [
+                    {"id": "new-e1", "from": "arch", "to": "pm",
+                     "task_types": ["review"], "on_failure": "block"},
+                ],
+                "node_config": {
+                    "pm": {"join_strategy": "stream"},
+                },
+            })
+            assert resp.status_code == 200
+            get_resp = client.get("/api/pipeline")
+            data = get_resp.json()
+            assert data["name"] == "Updated Pipeline"
+            assert data["start_agent"] == "arch"
+            assert len(data["edges"]) == 1
+            assert data["edges"][0]["from"] == "arch"
+            assert data["node_config"]["pm"]["join_strategy"] == "stream"
+        finally:
+            shutil.rmtree(tmpdir)
