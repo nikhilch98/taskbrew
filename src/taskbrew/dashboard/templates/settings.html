@@ -1843,6 +1843,41 @@
                 transition: none !important;
             }
         }
+
+        /* Pipeline Popovers */
+        .pipeline-popover {
+            position: fixed;
+            z-index: 10001;
+            min-width: 240px;
+            background: var(--bg-card, #1e293b);
+            border: 1px solid var(--border-subtle, rgba(255,255,255,0.1));
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            overflow: hidden;
+        }
+        .popover-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+        }
+        .popover-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary, #f1f5f9);
+        }
+        .popover-close {
+            background: none;
+            border: none;
+            color: var(--text-muted, #94a3b8);
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0 4px;
+        }
+        .popover-body {
+            padding: 12px 14px;
+        }
     </style>
 </head>
 
@@ -2769,14 +2804,26 @@
                 dragState = null;
             });
 
-            // Click connection to offer delete
+            // Click connection to show edge config popover
             svg.querySelectorAll('.pipeline-connection').forEach(function(conn) {
                 conn.addEventListener('click', function(e) {
                     e.stopPropagation();
                     var from = conn.getAttribute('data-from');
                     var to = conn.getAttribute('data-to');
-                    if (confirm('Remove route from ' + from + ' to ' + to + '?')) {
-                        removeRoute(from, to);
+                    var edge = pipelineData.edges.find(function(ed) { return ed.from === from && ed.to === to; });
+                    if (edge && edge.id) {
+                        showEdgePopover(e, edge.id);
+                    }
+                });
+            });
+
+            // Double-click node to show node config popover
+            svg.querySelectorAll('.pipeline-node').forEach(function(node) {
+                node.addEventListener('dblclick', function(e) {
+                    e.stopPropagation();
+                    var roleName = node.getAttribute('data-role');
+                    if (roleName) {
+                        showNodePopover(e, roleName);
                     }
                 });
             });
@@ -2848,6 +2895,151 @@
                     showToast('Connection removed', 'success');
                 }
             } catch (e) { showToast('Failed to remove connection', 'error'); }
+        }
+
+        // ================================================================
+        // Pipeline Popovers (Edge & Node Config)
+        // ================================================================
+
+        function showEdgePopover(event, edgeId) {
+            event.stopPropagation();
+            closeAllPopovers();
+
+            var edge = pipelineData.edges.find(function(e) { return e.id === edgeId; });
+            if (!edge) return;
+
+            var popover = document.createElement('div');
+            popover.id = 'pipelinePopover';
+            popover.className = 'pipeline-popover';
+            popover.style.left = event.clientX + 'px';
+            popover.style.top = event.clientY + 'px';
+
+            var taskTypesVal = (edge.task_types || []).join(', ');
+            var onFailureVal = edge.on_failure || 'block';
+
+            popover.innerHTML = '<div class="popover-header">' +
+                '<span class="popover-title">Edge: ' + escapeHtml(edge.from || edge.from_agent || '') + ' \u2192 ' + escapeHtml(edge.to || edge.to_agent || '') + '</span>' +
+                '<button onclick="closeAllPopovers()" class="popover-close">&times;</button>' +
+                '</div>' +
+                '<div class="popover-body">' +
+                '<div class="form-group" style="margin-bottom:10px;">' +
+                '<label class="form-label" style="font-size:11px;">Task Types <span style="color:var(--text-muted);font-size:10px;">(comma-separated)</span></label>' +
+                '<input class="form-input" id="popover-task-types" value="' + escapeHtml(taskTypesVal) + '" style="font-size:12px;padding:6px 8px;">' +
+                '</div>' +
+                '<div class="form-group" style="margin-bottom:12px;">' +
+                '<label class="form-label" style="font-size:11px;">On Failure</label>' +
+                '<select class="form-select" id="popover-on-failure" style="font-size:12px;padding:6px 8px;">' +
+                '<option value="block"' + (onFailureVal === 'block' ? ' selected' : '') + '>Block</option>' +
+                '<option value="continue_partial"' + (onFailureVal === 'continue_partial' ? ' selected' : '') + '>Continue Partial</option>' +
+                '<option value="cancel_pipeline"' + (onFailureVal === 'cancel_pipeline' ? ' selected' : '') + '>Cancel Pipeline</option>' +
+                '</select>' +
+                '</div>' +
+                '<button onclick="saveEdgeConfig(\'' + edgeId + '\')" style="width:100%;padding:6px;border:none;border-radius:6px;background:var(--accent-indigo,#6366f1);color:white;cursor:pointer;font-size:12px;font-weight:600;">Save</button>' +
+                '</div>';
+
+            document.body.appendChild(popover);
+
+            // Close on outside click (delayed to avoid immediate close)
+            setTimeout(function() {
+                document.addEventListener('click', function closePopover(e) {
+                    if (!popover.contains(e.target)) {
+                        closeAllPopovers();
+                        document.removeEventListener('click', closePopover);
+                    }
+                });
+            }, 50);
+        }
+
+        async function saveEdgeConfig(edgeId) {
+            var taskTypesEl = document.getElementById('popover-task-types');
+            var onFailureEl = document.getElementById('popover-on-failure');
+            if (!taskTypesEl || !onFailureEl) return;
+
+            var taskTypes = taskTypesEl.value.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+            var onFailure = onFailureEl.value;
+
+            try {
+                var resp = await fetch('/api/pipeline/edges/' + encodeURIComponent(edgeId), {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({task_types: taskTypes, on_failure: onFailure}),
+                });
+                if (resp.ok) {
+                    // Update local state
+                    var edge = pipelineData.edges.find(function(e) { return e.id === edgeId; });
+                    if (edge) { edge.task_types = taskTypes; edge.on_failure = onFailure; }
+                    closeAllPopovers();
+                    showToast('Edge config saved', 'success', 2000);
+                } else {
+                    showToast('Failed to save edge config', 'error');
+                }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        function showNodePopover(event, roleName) {
+            event.stopPropagation();
+            closeAllPopovers();
+
+            var nodeConfig = (pipelineData.node_config || {})[roleName] || {};
+            var joinStrategy = nodeConfig.join_strategy || 'wait_all';
+
+            var popover = document.createElement('div');
+            popover.id = 'pipelinePopover';
+            popover.className = 'pipeline-popover';
+            popover.style.left = event.clientX + 'px';
+            popover.style.top = event.clientY + 'px';
+
+            popover.innerHTML = '<div class="popover-header">' +
+                '<span class="popover-title">' + escapeHtml(roleName) + '</span>' +
+                '<button onclick="closeAllPopovers()" class="popover-close">&times;</button>' +
+                '</div>' +
+                '<div class="popover-body">' +
+                '<div class="form-group" style="margin-bottom:12px;">' +
+                '<label class="form-label" style="font-size:11px;">Join Strategy</label>' +
+                '<select class="form-select" id="popover-join-strategy" style="font-size:12px;padding:6px 8px;">' +
+                '<option value="wait_all"' + (joinStrategy === 'wait_all' ? ' selected' : '') + '>Wait All</option>' +
+                '<option value="stream"' + (joinStrategy === 'stream' ? ' selected' : '') + '>Stream</option>' +
+                '</select>' +
+                '</div>' +
+                '<button onclick="saveNodeConfig(\'' + escapeHtml(roleName) + '\')" style="width:100%;padding:6px;border:none;border-radius:6px;background:var(--accent-indigo,#6366f1);color:white;cursor:pointer;font-size:12px;font-weight:600;">Save</button>' +
+                '</div>';
+
+            document.body.appendChild(popover);
+
+            setTimeout(function() {
+                document.addEventListener('click', function closePopover(e) {
+                    if (!popover.contains(e.target)) {
+                        closeAllPopovers();
+                        document.removeEventListener('click', closePopover);
+                    }
+                });
+            }, 50);
+        }
+
+        async function saveNodeConfig(roleName) {
+            var joinEl = document.getElementById('popover-join-strategy');
+            if (!joinEl) return;
+
+            try {
+                var resp = await fetch('/api/pipeline/node-config/' + encodeURIComponent(roleName), {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({join_strategy: joinEl.value}),
+                });
+                if (resp.ok) {
+                    if (!pipelineData.node_config) pipelineData.node_config = {};
+                    pipelineData.node_config[roleName] = {join_strategy: joinEl.value};
+                    closeAllPopovers();
+                    showToast('Node config saved', 'success', 2000);
+                }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        function closeAllPopovers() {
+            var existing = document.getElementById('pipelinePopover');
+            if (existing) existing.remove();
+            var menu = document.getElementById('nodeContextMenu');
+            if (menu) menu.remove();
         }
 
         function showNodeContextMenu(event, roleName) {
