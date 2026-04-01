@@ -1939,6 +1939,13 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 Pipeline
             </div>
+            <div id="agentControlBar" style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 16px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle,rgba(255,255,255,0.08));">
+                <span id="agentStatusIndicator" style="width:10px;height:10px;border-radius:50%;background:#f59e0b;"></span>
+                <span id="agentStatusText" style="font-size:13px;color:var(--text-secondary,#cbd5e1);">Agents paused</span>
+                <div style="flex:1;"></div>
+                <button id="resumeAllBtn" onclick="resumeAllAgents()" style="padding:6px 16px;border-radius:6px;border:none;background:#22c55e;color:white;cursor:pointer;font-size:12px;font-weight:600;">Resume All</button>
+                <button id="pauseAllBtn" onclick="pauseAllAgents()" style="padding:6px 16px;border-radius:6px;border:none;background:#f59e0b;color:white;cursor:pointer;font-size:12px;font-weight:600;display:none;">Pause All</button>
+            </div>
             <div id="pipelineValidation" style="margin-bottom:8px"></div>
             <svg id="pipelineSvg" class="pipeline-svg" xmlns="http://www.w3.org/2000/svg"></svg>
         </section>
@@ -2378,9 +2385,78 @@
                 } catch (e) { console.error('Failed to load pipeline:', e); }
 
                 renderAll();
+                checkAgentStatus();
             } catch (e) {
                 showToast('Failed to load settings: ' + e.message, 'error');
             }
+        }
+
+        // ================================================================
+        // Agent Resume / Pause Controls
+        // ================================================================
+        var agentsRunning = false;
+
+        async function checkAgentStatus() {
+            try {
+                var resp = await fetch('/api/agents/paused');
+                if (resp.ok) {
+                    var data = await resp.json();
+                    var pausedRoles = data.paused_roles || [];
+                    var totalRoles = (settingsData.roles || []).length;
+                    agentsRunning = pausedRoles.length === 0 && totalRoles > 0;
+                    updateAgentStatusUI();
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        function updateAgentStatusUI() {
+            var indicator = document.getElementById('agentStatusIndicator');
+            var text = document.getElementById('agentStatusText');
+            var resumeBtn = document.getElementById('resumeAllBtn');
+            var pauseBtn = document.getElementById('pauseAllBtn');
+            if (!indicator || !text) return;
+
+            if (agentsRunning) {
+                indicator.style.background = '#22c55e';
+                text.textContent = 'Agents running';
+                if (resumeBtn) resumeBtn.style.display = 'none';
+                if (pauseBtn) pauseBtn.style.display = '';
+            } else {
+                indicator.style.background = '#f59e0b';
+                text.textContent = 'Agents paused';
+                if (resumeBtn) resumeBtn.style.display = '';
+                if (pauseBtn) pauseBtn.style.display = 'none';
+            }
+        }
+
+        async function resumeAllAgents() {
+            try {
+                var resp = await fetch('/api/agents/resume', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({role: 'all'}),
+                });
+                if (resp.ok) {
+                    agentsRunning = true;
+                    updateAgentStatusUI();
+                    showToast('All agents resumed', 'success', 2000);
+                }
+            } catch (e) { showToast('Failed to resume agents', 'error'); }
+        }
+
+        async function pauseAllAgents() {
+            try {
+                var resp = await fetch('/api/agents/pause', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({role: 'all'}),
+                });
+                if (resp.ok) {
+                    agentsRunning = false;
+                    updateAgentStatusUI();
+                    showToast('All agents paused', 'success', 2000);
+                }
+            } catch (e) { showToast('Failed to pause agents', 'error'); }
         }
 
         function renderAll() {

@@ -516,6 +516,10 @@ async def start_agents(orch: Orchestrator):
             orch.agent_tasks.append(task)
             orch._agent_tasks_by_id[instance_id] = (loop, task)
 
+    # Start all agents in paused state — user must click Resume on the dashboard
+    all_role_names = list(orch.roles.keys())
+    orch.instance_manager.pause_all(all_role_names)
+
     # Start auto-scaler if any role has auto_scale enabled
     has_auto_scale = any(
         r.auto_scale and r.auto_scale.enabled for r in orch.roles.values()
