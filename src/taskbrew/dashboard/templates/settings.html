@@ -2374,7 +2374,7 @@
                 settingsData.roles = await rolesRes.json();
                 if (modelsRes && modelsRes.ok) {
                     const md = await modelsRes.json();
-                    availableModels = md.models || [];
+                    availableModels = Array.isArray(md) ? md : (md.models || []);
                 }
                 originalData = deepClone(settingsData);
 
@@ -3303,7 +3303,7 @@
             ];
             models.forEach(function(m) {
                 var mid = m.id || m;
-                var mname = m.name || mid;
+                var mname = m.name || m.label || mid;
                 modelOpts += '<option value="' + escapeHtml(mid) + '"' + (role.model === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
             });
 
@@ -3605,17 +3605,30 @@
         // ================================================================
         // Duplicate & Delete Role
         // ================================================================
-        function duplicateRole(roleName) {
+        async function duplicateRole(roleName) {
             var r = getRoleByName(roleName);
             if (!r) return;
             var clone = deepClone(r);
             clone.role = r.role + '_copy';
             clone.display_name = (r.display_name || r.role) + ' (Copy)';
             clone.prefix = (r.prefix || 'XX') + '2';
-            settingsData.roles.push(clone);
-            markUnsaved();
-            renderAll();
-            showToast('Duplicated ' + roleName, 'success');
+            try {
+                var resp = await fetch('/api/settings/roles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(clone)
+                });
+                if (!resp.ok) {
+                    var err = await resp.text();
+                    showToast('Failed to duplicate: ' + err, 'error');
+                    return;
+                }
+                settingsData.roles.push(clone);
+                renderAll();
+                showToast('Duplicated ' + roleName, 'success');
+            } catch (e) {
+                showToast('Failed to duplicate: ' + e.message, 'error');
+            }
         }
 
         async function deleteRole(roleName) {
@@ -3984,7 +3997,7 @@
             var opts = '';
             models.forEach(function(m) {
                 var mid = m.id || m;
-                var mname = m.name || mid;
+                var mname = m.name || m.label || mid;
                 opts += '<option value="' + escapeHtml(mid) + '"' + (defaultModel === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
             });
             return '<div class="form-group"><label class="form-label">Model</label>' +
@@ -4027,7 +4040,7 @@
             var opts = '';
             models.forEach(function(m) {
                 var mid = m.id || m;
-                var mname = m.name || mid;
+                var mname = m.name || m.label || mid;
                 opts += '<option value="' + escapeHtml(mid) + '"' + (customData.model === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
             });
 
@@ -4225,7 +4238,7 @@
                 var resp = await fetch('/api/budgets', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ scope: scope, amount: amount, period: period })
+                    body: JSON.stringify({ scope: scope, budget_usd: amount, period: period })
                 });
 
                 if (resp.ok) {

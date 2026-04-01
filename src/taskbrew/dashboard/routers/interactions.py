@@ -19,18 +19,18 @@ def set_interaction_deps(interaction_mgr):
 
 
 @router.get("/api/interactions/pending")
-async def get_pending(group_id: str = Query(None)):
+async def get_pending():
     if not _interaction_mgr:
         return {"interactions": [], "count": 0}
-    pending = await _interaction_mgr.get_pending(group_id)
+    pending = await _interaction_mgr.get_pending()
     return {"interactions": pending, "count": len(pending)}
 
 
 @router.get("/api/interactions/history")
-async def get_history(group_id: str = Query(None), limit: int = Query(50)):
+async def get_history(limit: int = Query(50)):
     if not _interaction_mgr:
         return {"interactions": [], "count": 0}
-    history = await _interaction_mgr.get_history(group_id, limit)
+    history = await _interaction_mgr.get_history(limit)
     return {"interactions": history, "count": len(history)}
 
 

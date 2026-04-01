@@ -92,7 +92,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Accept"],
     )
 
@@ -257,6 +257,16 @@ def create_app(
     system_router.set_project_deps(project_manager, broadcast_event)
     comparison_router.set_comparison_deps(project_manager)
     ws_router.set_ws_deps(ws_manager, chat_manager)
+
+    # Wire up interaction and MCP tool dependencies
+    if orch_obj:
+        from taskbrew.orchestrator.interactions import InteractionManager
+        from taskbrew.dashboard.routers.mcp_tools import set_mcp_deps
+        from taskbrew.dashboard.routers.interactions import set_interaction_deps
+        from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
+        interaction_mgr = InteractionManager(orch_obj.task_board._db)
+        set_interaction_deps(interaction_mgr)
+        set_mcp_deps(interaction_mgr, get_pipeline, orch_obj.task_board)
 
     # ------------------------------------------------------------------
     # Include routers

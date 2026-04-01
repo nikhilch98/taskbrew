@@ -481,11 +481,6 @@ class SetNodeConfigBody(BaseModel):
     join_strategy: str = "wait_all"
 
 
-class ValidatePipelineBody(BaseModel):
-    """Optional body for pipeline validation (can be empty)."""
-    pass
-
-
 # ---------------------------------------------------------------------------
 # Human-in-the-Loop models
 # ---------------------------------------------------------------------------
@@ -501,7 +496,3 @@ class RejectInteractionBody(BaseModel):
 
 class RespondInteractionBody(BaseModel):
     response: str
-
-
-class SkipInteractionBody(BaseModel):
-    pass

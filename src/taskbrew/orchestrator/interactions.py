@@ -38,16 +38,21 @@ class InteractionManager:
         if existing:
             return self._row_to_dict(existing)
 
+        # Store group_id and agent_role inside the payload JSON so they
+        # survive the round-trip (the table has no dedicated columns for them).
+        enriched_payload = {**request_data, "_group_id": group_id, "_agent_role": agent_role}
         await self._db.execute(
             "INSERT INTO human_interaction_requests "
             "(id, request_key, task_id, instance_token, request_type, status, payload, created_at) "
             "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
-            (req_id, request_key, task_id, instance_token, req_type, json.dumps(request_data), now),
+            (req_id, request_key, task_id, instance_token, req_type, json.dumps(enriched_payload), now),
         )
         return {
             "id": req_id,
             "request_key": request_key,
             "task_id": task_id,
+            "group_id": group_id,
+            "agent_role": agent_role,
             "instance_token": instance_token,
             "type": req_type,
             "status": "pending",
@@ -57,15 +62,13 @@ class InteractionManager:
             "resolved_at": None,
         }
 
-    async def get_pending(self, group_id: str | None = None) -> list[dict]:
-        # group_id column does not exist on human_interaction_requests; filter is ignored
+    async def get_pending(self) -> list[dict]:
         rows = await self._db.execute_fetchall(
             "SELECT * FROM human_interaction_requests WHERE status = 'pending' ORDER BY created_at",
         )
         return [self._row_to_dict(r) for r in rows]
 
-    async def get_history(self, group_id: str | None = None, limit: int = 50) -> list[dict]:
-        # group_id column does not exist on human_interaction_requests; filter is ignored
+    async def get_history(self, limit: int = 50) -> list[dict]:
         rows = await self._db.execute_fetchall(
             "SELECT * FROM human_interaction_requests WHERE status != 'pending' ORDER BY resolved_at DESC LIMIT ?",
             (limit,),
@@ -116,6 +119,12 @@ class InteractionManager:
                     val = json.loads(val)
                 except (json.JSONDecodeError, TypeError):
                     pass
+            # Extract group_id/agent_role stored inside the payload
+            if isinstance(val, dict):
+                if "_group_id" in val:
+                    d["group_id"] = val.pop("_group_id")
+                if "_agent_role" in val:
+                    d["agent_role"] = val.pop("_agent_role")
             d["request_data"] = val
         if "response_payload" in d:
             val = d.pop("response_payload")

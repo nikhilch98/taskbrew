@@ -212,7 +212,6 @@ async def get_team_settings():
     return {
         "name": tc.team_name,
         "project_dir": pd,
-        "default_model": getattr(tc, "default_model", ""),
         "db_path": tc.db_path,
         "dashboard_host": tc.dashboard_host,
         "dashboard_port": tc.dashboard_port,

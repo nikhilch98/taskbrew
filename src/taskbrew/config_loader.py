@@ -567,8 +567,12 @@ def load_presets(presets_dir: Path) -> dict[str, dict]:
         return {}
     presets: dict[str, dict] = {}
     for yaml_file in sorted(presets_dir.glob("*.yaml")):
-        with open(yaml_file) as f:
-            data = yaml.safe_load(f)
+        try:
+            with open(yaml_file) as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            logger.warning("Skipping invalid preset file %s: %s", yaml_file.name, exc)
+            continue
         if not data or "preset_id" not in data:
             continue
         presets[data["preset_id"]] = data

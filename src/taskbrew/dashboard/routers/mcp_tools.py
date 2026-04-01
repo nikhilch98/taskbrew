@@ -102,7 +102,7 @@ async def mcp_route_task(
     authorization: Optional[str] = Header(None),
 ):
     """Agent routes a task to a connected agent. Validates pipeline edge."""
-    token = _get_token(authorization)
+    _get_token(authorization)
     target_agent = body.get("target_agent", "")
     task_type = body.get("task_type", "")
     title = body.get("title", "")
@@ -152,7 +152,7 @@ async def mcp_get_connections(
     authorization: Optional[str] = Header(None),
 ):
     """Returns outbound pipeline edges for the requesting agent."""
-    token = _get_token(authorization)
+    _get_token(authorization)
     agent_role = body.get("agent_role", "")
 
     if _pipeline_getter:

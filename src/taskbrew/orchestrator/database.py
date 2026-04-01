@@ -585,7 +585,6 @@ class Database:
         output_tokens: int = 0, cost_usd: float = 0, duration_api_ms: int = 0,
         num_turns: int = 0,
     ) -> None:
-        from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         await self.execute(
             "INSERT INTO task_usage (task_id, agent_id, input_tokens, output_tokens, "
