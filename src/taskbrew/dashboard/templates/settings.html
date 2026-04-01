@@ -169,9 +169,6 @@
         body.light-theme .prompt-fullscreen {
             background: rgba(255, 255, 255, 0.8);
         }
-        body.light-theme .route-item {
-            background: rgba(0, 0, 0, 0.02);
-        }
         body.light-theme .stat-chip {
             background: rgba(0, 0, 0, 0.04);
             border-color: rgba(0, 0, 0, 0.06);
@@ -982,89 +979,6 @@
 
         .toggle-switch:focus-within .toggle-track {
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
-        }
-
-        /* ========== Route Item ========== */
-        .route-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 12px;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-sm);
-            margin-bottom: 8px;
-        }
-
-        .route-target {
-            font-size: 13px;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .route-tasks {
-            display: flex;
-            gap: 4px;
-            flex-wrap: wrap;
-            flex: 1;
-        }
-
-        .route-task-chip {
-            font-size: 10px;
-            padding: 2px 7px;
-            border-radius: 4px;
-            background: rgba(139, 92, 246, 0.12);
-            color: var(--accent-purple);
-            font-weight: 500;
-        }
-
-        .route-remove-btn {
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            padding: 4px;
-            border-radius: 4px;
-            transition: all 0.15s ease;
-        }
-
-        .route-remove-btn:hover {
-            color: var(--accent-rose);
-            background: rgba(244, 63, 94, 0.1);
-        }
-
-        .add-route-row {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            margin-top: 8px;
-        }
-
-        .add-route-row .form-select,
-        .add-route-row .form-input {
-            flex: 1;
-            padding: 8px 12px;
-            font-size: 12px;
-        }
-
-        .add-route-btn {
-            padding: 8px 12px;
-            font-size: 12px;
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.2);
-            border-radius: var(--radius-sm);
-            color: var(--accent-indigo);
-            cursor: pointer;
-            font-family: inherit;
-            font-weight: 600;
-            white-space: nowrap;
-            transition: all 0.2s ease;
-        }
-
-        .add-route-btn:hover {
-            background: rgba(99, 102, 241, 0.2);
         }
 
         /* ========== Prompt expand ========== */
@@ -2321,8 +2235,9 @@
         // ================================================================
         // Toast Notifications
         // ================================================================
-        function showToast(message, type) {
+        function showToast(message, type, duration) {
             type = type || 'info';
+            duration = duration || 3000;
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = 'toast ' + type;
@@ -2336,7 +2251,7 @@
             setTimeout(function() {
                 toast.classList.add('removing');
                 setTimeout(function() { toast.remove(); }, 300);
-            }, 3000);
+            }, duration);
         }
 
         // ================================================================
@@ -3392,70 +3307,6 @@
             renderAgentCards();
         }
 
-        // ----- Routing Fields -----
-        function renderRoutingFields(role) {
-            var r = escapeHtml(role.role);
-            var html = '';
-            (role.routes_to || []).forEach(function(rt, idx) {
-                var target = getRoleByName(rt.role);
-                var emoji = target ? (target.emoji || '') : '';
-                var name = target ? (target.display_name || rt.role) : rt.role;
-                html += '<div class="route-item">';
-                html += '<span class="route-target">' + escapeHtml(emoji) + ' ' + escapeHtml(name) + '</span>';
-                html += '<div class="route-tasks">';
-                (rt.task_types || []).forEach(function(tt) {
-                    html += '<span class="route-task-chip">' + escapeHtml(tt) + '</span>';
-                });
-                html += '</div>';
-                html += '<button class="route-remove-btn" onclick="removeRouteFromCard(\'' + r + '\',' + idx + ')" title="Remove route">&times;</button>';
-                html += '</div>';
-            });
-
-            // Add route form
-            html += '<div class="add-route-row">';
-            html += '<select class="form-select" id="addRouteTarget-' + r + '">';
-            html += '<option value="">Select role...</option>';
-            (settingsData.roles || []).forEach(function(otherRole) {
-                if (otherRole.role !== role.role) {
-                    html += '<option value="' + escapeHtml(otherRole.role) + '">' + escapeHtml(otherRole.emoji || '') + ' ' + escapeHtml(otherRole.display_name || otherRole.role) + '</option>';
-                }
-            });
-            html += '</select>';
-            html += '<input class="form-input" id="addRouteTypes-' + r + '" placeholder="Task types (comma-sep)">';
-            html += '<button class="add-route-btn" onclick="addRouteFromCard(\'' + r + '\')">Add</button>';
-            html += '</div>';
-            return html;
-        }
-
-        function removeRouteFromCard(roleName, idx) {
-            var r = getRoleByName(roleName);
-            if (!r || !r.routes_to) return;
-            r.routes_to.splice(idx, 1);
-            markUnsaved();
-            renderAll();
-        }
-
-        function addRouteFromCard(roleName) {
-            var targetEl = document.getElementById('addRouteTarget-' + roleName);
-            var typesEl = document.getElementById('addRouteTypes-' + roleName);
-            if (!targetEl || !typesEl) return;
-            var target = targetEl.value;
-            if (!target) { showToast('Select a target role', 'error'); return; }
-            var types = typesEl.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
-            var r = getRoleByName(roleName);
-            if (!r) return;
-            if (!r.routes_to) r.routes_to = [];
-            var exists = r.routes_to.some(function(rt) { return rt.role === target; });
-            if (exists) {
-                showToast('Route already exists', 'info');
-                return;
-            }
-            r.routes_to.push({ role: target, task_types: types });
-            markUnsaved();
-            renderAll();
-            showToast('Route added', 'success');
-        }
-
         // ----- System Prompt Fields -----
         function renderPromptFields(role) {
             var r = escapeHtml(role.role);
@@ -3623,8 +3474,7 @@
                     showToast('Failed to duplicate: ' + err, 'error');
                     return;
                 }
-                settingsData.roles.push(clone);
-                renderAll();
+                await loadSettings();
                 showToast('Duplicated ' + roleName, 'success');
             } catch (e) {
                 showToast('Failed to duplicate: ' + e.message, 'error');

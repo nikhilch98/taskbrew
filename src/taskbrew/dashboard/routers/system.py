@@ -501,6 +501,9 @@ async def create_role(body: CreateRoleBody):
             body["model"] = preset.pop("default_model")
         else:
             preset.pop("default_model", None)
+        # Remap icon_emoji -> emoji so the role gets the preset's icon
+        if "icon_emoji" in preset and "emoji" not in body:
+            body["emoji"] = preset["icon_emoji"]
         # Remove preset-only metadata fields
         for key in ("preset_id", "category", "description", "capabilities", "icon_emoji"):
             preset.pop(key, None)
