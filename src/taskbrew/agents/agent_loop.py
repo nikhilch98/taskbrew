@@ -170,30 +170,47 @@ class AgentLoop:
                 ip_titles = ", ".join(t["title"] for t in in_progress)
                 parts.append(f"In progress: {ip_titles}")
 
-        # --- Routing: Agent manifest or restricted hints ---
-        routing_mode = getattr(self.role_config, "routing_mode", "open")
-        if routing_mode == "open" and self.all_roles:
-            parts.append("\n## Available Agents")
-            parts.append("You may create tasks for any of these agents:\n")
-            for name, role in self.all_roles.items():
-                if name == self.role_config.role:
-                    continue
-                accepts = ", ".join(role.accepts) if role.accepts else "any"
+        # --- Routing: Pipeline-based connections ---
+        # Try to load pipeline edges for this agent's outbound connections
+        pipeline_connections = []
+        try:
+            from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
+            pipeline = get_pipeline()
+            if pipeline and pipeline.edges:
+                pipeline_connections = [
+                    e for e in pipeline.edges
+                    if e.from_agent == self.role_config.role
+                ]
+        except Exception:
+            pass  # Pipeline not initialized yet
+
+        if pipeline_connections:
+            parts.append("\n## Connected Agents")
+            parts.append("You can route tasks to these agents:")
+            for edge in pipeline_connections:
+                target_role = self.all_roles.get(edge.to_agent)
+                display = target_role.display_name if target_role else edge.to_agent
+                task_types_str = ", ".join(edge.task_types) if edge.task_types else "any"
                 parts.append(
-                    f"- **{role.display_name}** ({role.prefix}): "
-                    f'assigned_to="{name}", accepts: [{accepts}]'
+                    f"- **{display}**: "
+                    f'assigned_to="{edge.to_agent}", task_types: [{task_types_str}]'
+                )
+            parts.append(
+                '\nUse create_task(assigned_to="<role>", task_type="<type>") '
+                "to delegate work. Do NOT route to agents not listed above."
+            )
+        elif self.role_config.routes_to:
+            # Fallback to legacy routes_to if no pipeline edges
+            parts.append("\n## Connected Agents")
+            parts.append("You can route tasks to:")
+            for route in self.role_config.routes_to:
+                parts.append(
+                    f"- **{route.role}** (types: {', '.join(route.task_types)})"
                 )
             parts.append(
                 '\nUse create_task(assigned_to="<role>", task_type="<type>") '
                 "to delegate work."
             )
-        elif self.role_config.routes_to:
-            parts.append("\n## When Complete")
-            parts.append("Create tasks for:")
-            for route in self.role_config.routes_to:
-                parts.append(
-                    f"- **{route.role}** (types: {', '.join(route.task_types)})"
-                )
 
         # --- Agent Memory ---
         if self.memory_manager and "agent_memory" in self.role_config.context_includes:
