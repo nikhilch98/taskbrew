@@ -391,3 +391,124 @@ class TestHILIntegration:
         assert await mgr.check_first_run("g-fr", "architect") is True
         # Different group is NOT approved
         assert await mgr.check_first_run("g-other", "architect") is False
+
+
+# ---------------------------------------------------------------------------
+# MCP Tools API tests (Tasks 32-33)
+# ---------------------------------------------------------------------------
+
+
+class TestMCPToolsAPI:
+    """Test MCP tool endpoints."""
+
+    @pytest.fixture
+    async def mcp_app(self, db):
+        from fastapi import FastAPI
+        from taskbrew.dashboard.routers.mcp_tools import router as mcp_router, set_mcp_deps
+        from taskbrew.config_loader import PipelineConfig, PipelineEdge
+
+        mgr = InteractionManager(db)
+        pipeline = PipelineConfig(
+            id="test", start_agent="pm",
+            edges=[
+                PipelineEdge(id="e1", from_agent="pm", to_agent="architect", task_types=["tech_design"]),
+                PipelineEdge(id="e2", from_agent="architect", to_agent="coder", task_types=["implementation"]),
+            ],
+        )
+        # Seed groups and tasks needed by the endpoints
+        for gid in ("g1",):
+            await db.execute(
+                "INSERT OR IGNORE INTO groups (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+                (gid, f"Group {gid}", "active"),
+            )
+        for tid in ("t1", "t2", "t5", "t6"):
+            await db.execute(
+                "INSERT OR IGNORE INTO tasks (id, title, status, created_at) VALUES (?, ?, ?, datetime('now'))",
+                (tid, f"Task {tid}", "pending"),
+            )
+        set_mcp_deps(mgr, lambda: pipeline)
+        app = FastAPI()
+        app.include_router(mcp_router)
+        yield app
+
+    @pytest.fixture
+    async def mcp_client(self, mcp_app):
+        transport = ASGITransport(app=mcp_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+
+    @pytest.mark.asyncio
+    async def test_complete_task_auto_approved(self, mcp_client):
+        resp = await mcp_client.post("/mcp/tools/complete_task",
+            json={"task_id": "t1", "group_id": "g1", "agent_role": "coder", "approval_mode": "auto", "summary": "done"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "approved"
+
+    @pytest.mark.asyncio
+    async def test_complete_task_manual_creates_request(self, mcp_client):
+        resp = await mcp_client.post("/mcp/tools/complete_task",
+            json={"task_id": "t2", "group_id": "g1", "agent_role": "designer", "approval_mode": "manual", "summary": "mockup"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+        assert "request_id" in resp.json()
+
+    @pytest.mark.asyncio
+    async def test_route_task_validates_edge(self, mcp_client):
+        # Valid edge: pm -> architect
+        resp = await mcp_client.post("/mcp/tools/route_task",
+            json={"agent_role": "pm", "target_agent": "architect", "task_type": "tech_design", "title": "Design task"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_route_task_rejects_invalid_edge(self, mcp_client):
+        # Invalid edge: pm -> coder (no direct edge)
+        resp = await mcp_client.post("/mcp/tools/route_task",
+            json={"agent_role": "pm", "target_agent": "coder", "task_type": "implementation", "title": "Code task"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_get_connections(self, mcp_client):
+        resp = await mcp_client.post("/mcp/tools/get_my_connections",
+            json={"agent_role": "pm"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert resp.status_code == 200
+        conns = resp.json()["connections"]
+        assert len(conns) == 1
+        assert conns[0]["target"] == "architect"
+
+    @pytest.mark.asyncio
+    async def test_request_clarification(self, mcp_client):
+        resp = await mcp_client.post("/mcp/tools/request_clarification",
+            json={"task_id": "t5", "group_id": "g1", "agent_role": "coder", "question": "REST or GraphQL?"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_no_auth_rejected(self, mcp_client):
+        resp = await mcp_client.post("/mcp/tools/get_my_connections", json={"agent_role": "pm"})
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_poll_status(self, mcp_client):
+        # Create a request first
+        resp = await mcp_client.post("/mcp/tools/request_clarification",
+            json={"task_id": "t6", "group_id": "g1", "agent_role": "pm", "question": "test?"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+        req_id = resp.json()["request_id"]
+        # Poll
+        resp = await mcp_client.get(f"/mcp/tools/poll/{req_id}", headers={"Authorization": "Bearer test-token"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pending"

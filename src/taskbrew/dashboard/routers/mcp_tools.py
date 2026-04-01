@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Header
 from typing import Optional
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _interaction_mgr = None
 _pipeline_getter = None
+_task_board = None
 
 
-def set_mcp_deps(interaction_mgr, pipeline_getter):
+def set_mcp_deps(interaction_mgr, pipeline_getter, task_board=None):
     """Set dependencies. Called from app.py startup."""
-    global _interaction_mgr, _pipeline_getter
+    global _interaction_mgr, _pipeline_getter, _task_board
     _interaction_mgr = interaction_mgr
     _pipeline_getter = pipeline_getter
+    _task_board = task_board
 
 
 def _get_token(authorization: Optional[str] = Header(None)) -> str:
@@ -39,6 +44,13 @@ async def mcp_complete_task(
     approval_mode = body.get("approval_mode", "auto")
 
     if approval_mode == "auto":
+        # Actually mark the task as completed in the DB and resolve deps
+        if _task_board:
+            try:
+                await _task_board.complete_task_with_output(task_id, summary)
+                logger.info("Task %s auto-completed via MCP", task_id)
+            except ValueError:
+                logger.warning("Task %s not found or not in_progress for auto-complete", task_id)
         return {"status": "approved", "message": "Auto-approved"}
 
     if approval_mode == "first_run" and _interaction_mgr:
@@ -108,8 +120,28 @@ async def mcp_route_task(
         if edge and edge.task_types and task_type not in edge.task_types:
             raise HTTPException(400, f"Task type '{task_type}' not allowed on edge {agent_role}->{target_agent}. Allowed: {edge.task_types}")
 
-    # In a full implementation, this would create the actual task in the task board
-    # For now, return success with a placeholder task_id
+    # Create the task in the TaskBoard if available
+    group_id = body.get("group_id")
+    priority = body.get("priority", "medium")
+    blocked_by_task = body.get("task_id")  # calling agent's current task
+    chain_id = body.get("chain_id")
+    blocked_by = [blocked_by_task] if blocked_by_task else None
+
+    if _task_board:
+        task = await _task_board.create_task(
+            group_id=group_id or "",
+            title=title,
+            description=description or None,
+            task_type=task_type,
+            assigned_to=target_agent,
+            created_by=agent_role,
+            priority=priority,
+            blocked_by=blocked_by,
+        )
+        logger.info("Task %s routed from %s to %s via MCP", task["id"], agent_role, target_agent)
+        return {"status": "ok", "task_id": task["id"], "target": target_agent}
+
+    # Fallback when no task board is configured
     import uuid
     return {"status": "ok", "task_id": f"routed-{uuid.uuid4().hex[:8]}", "target": target_agent}
 
