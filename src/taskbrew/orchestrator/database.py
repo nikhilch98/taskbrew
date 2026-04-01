@@ -289,6 +289,10 @@ CREATE INDEX IF NOT EXISTS idx_task_chains_role
 CREATE INDEX IF NOT EXISTS idx_first_run_approvals_group
     ON first_run_approvals(group_id, agent_role);
 
+"""
+
+# Indexes that depend on ALTER TABLE columns — applied after migrations
+_DEFERRED_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_tasks_chain
     ON tasks(chain_id);
 
@@ -375,6 +379,12 @@ class Database:
                 await self._conn.commit()
             except Exception:
                 pass  # Column already exists
+
+        # Create indexes that depend on ALTER TABLE columns
+        try:
+            await self._conn.executescript(_DEFERRED_INDEX_SQL)
+        except Exception:
+            pass  # Columns may not exist yet on very old databases
 
         # Apply pending schema migrations
         from taskbrew.orchestrator.migration import MigrationManager

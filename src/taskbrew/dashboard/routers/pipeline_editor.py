@@ -73,6 +73,21 @@ def _cleanup_role_from_pipeline(role_name: str) -> None:
 @router.get("/api/pipeline")
 async def get_pipeline_config():
     pc = get_pipeline()
+    # Auto-migrate from routes_to if pipeline is empty but roles have routes
+    if not pc.edges:
+        orch = get_orch_optional()
+        if orch and orch.roles:
+            has_routes = any(
+                len(rc.routes_to) > 0 for rc in orch.roles.values()
+            )
+            if has_routes:
+                from taskbrew.config_loader import migrate_routes_to_pipeline, save_pipeline as _save_pipeline
+                pc = migrate_routes_to_pipeline(orch.roles)
+                set_pipeline_deps(pc)
+                if orch.project_dir:
+                    team_yaml = Path(orch.project_dir) / "config" / "team.yaml"
+                    if team_yaml.exists():
+                        _save_pipeline(team_yaml, pc)
     return {
         "id": pc.id,
         "name": pc.name,
