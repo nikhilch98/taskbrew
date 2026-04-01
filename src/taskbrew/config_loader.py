@@ -72,6 +72,23 @@ class GuardrailsConfig:
 
 
 @dataclass
+class ExecutionConfig:
+    """Orchestrator-level execution settings from team.yaml.
+
+    All fields have sensible defaults — the ``execution`` section can be
+    omitted entirely from team.yaml.
+    """
+
+    max_concurrent_api_calls: int = 5
+    base_branch: str = "main"
+    worktree_retention_days: int = 7
+    max_pipeline_depth: int = 20
+    artifact_exclude_patterns: list[str] = field(default_factory=lambda: [
+        "*.env", "credentials*", "*.key", "*.pem", "*.secret",
+    ])
+
+
+@dataclass
 class TeamConfig:
     """Top-level team settings loaded from config/team.yaml."""
 
@@ -92,6 +109,7 @@ class TeamConfig:
     webhooks_enabled: bool = False
     mcp_servers: dict[str, MCPServerConfig] = field(default_factory=dict)
     guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
+    execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
 
 def load_team_config(path: Path) -> TeamConfig:
@@ -154,6 +172,19 @@ def load_team_config(path: Path) -> TeamConfig:
         rejection_cycle_limit=guardrails_raw.get("rejection_cycle_limit", 3),
     )
 
+    # Parse execution config
+    exec_raw = data.get("execution", {}) or {}
+    default_excludes = ["*.env", "credentials*", "*.key", "*.pem", "*.secret"]
+    execution = ExecutionConfig(
+        max_concurrent_api_calls=exec_raw.get("max_concurrent_api_calls", 5),
+        base_branch=exec_raw.get("base_branch", "main"),
+        worktree_retention_days=exec_raw.get("worktree_retention_days", 7),
+        max_pipeline_depth=exec_raw.get("max_pipeline_depth", 20),
+        artifact_exclude_patterns=exec_raw.get(
+            "artifact_exclude_patterns", default_excludes
+        ),
+    )
+
     team_config = TeamConfig(
         team_name=_get_required(data, "team_name", "team.yaml"),
         db_path=str(Path(_get_required(data, "database.path", "team.yaml")).expanduser()),
@@ -176,6 +207,7 @@ def load_team_config(path: Path) -> TeamConfig:
         webhooks_enabled=webhooks_raw.get("enabled", False),
         mcp_servers=mcp_servers,
         guardrails=guardrails,
+        execution=execution,
     )
 
     # Fix 2: Numeric bounds validation
