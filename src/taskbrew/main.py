@@ -666,32 +666,44 @@ async def async_main(args):
             slug = _slugify(name)
             await pm.activate_project(slug)
         else:
-            # Check if CWD has config and no registry exists yet
-            cwd = Path.cwd()
-            if (cwd / "config" / "team.yaml").exists() and pm.get_active() is None:
-                name = cwd.name.replace("-", " ").replace("_", " ").title()
+            # Try to activate the last-used project from registry
+            active = pm.get_active()
+            if active:
                 try:
-                    pm.create_project(name, str(cwd))
-                except ValueError:
-                    pass
-                slug = _slugify(name)
-                try:
-                    await pm.activate_project(slug)
+                    await pm.activate_project(active["id"])
                 except Exception as e:
-                    logging.getLogger(__name__).warning("Auto-migration failed: %s", e)
-            else:
-                # Try to activate last-used project
-                active = pm.get_active()
-                if active:
+                    logging.getLogger(__name__).warning(
+                        "Failed to activate saved project '%s': %s", active["id"], e
+                    )
+                    # Don't fall back to CWD — let user pick from dashboard
+            elif pm.get_active() is None:
+                # No saved project — check if CWD has config (first-time setup)
+                cwd = Path.cwd()
+                if (cwd / "config" / "team.yaml").exists():
+                    name = cwd.name.replace("-", " ").replace("_", " ").title()
                     try:
-                        await pm.activate_project(active["id"])
+                        pm.create_project(name, str(cwd))
+                    except ValueError:
+                        pass
+                    slug = _slugify(name)
+                    try:
+                        await pm.activate_project(slug)
                     except Exception as e:
-                        logging.getLogger(__name__).warning("Failed to activate project %s: %s", active["id"], e)
+                        logging.getLogger(__name__).warning("Auto-activation failed: %s", e)
 
         try:
             await run_server(pm)
         finally:
-            await pm.deactivate_current()
+            # Shut down the orchestrator but DON'T clear the active project
+            # so it persists across server restarts
+            if pm.orchestrator:
+                try:
+                    await asyncio.wait_for(pm.orchestrator.shutdown(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logging.getLogger(__name__).warning("Orchestrator shutdown timed out")
+                except Exception:
+                    logging.getLogger(__name__).exception("Error during orchestrator shutdown")
+                pm.orchestrator = None
 
     elif args.command == "goal":
         # Keep using build_orchestrator directly for CLI commands
