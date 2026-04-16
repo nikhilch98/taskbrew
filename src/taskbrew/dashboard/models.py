@@ -66,10 +66,17 @@ class UpdateRoleSettingsBody(BaseModel):
     group_type: Optional[str] = None
     routes_to: Optional[list[dict[str, Any]]] = None
     auto_scale: Optional[dict[str, Any]] = None
+    # --- New fields (v2) ---
+    approval_mode: Optional[str] = None
+    max_revision_cycles: Optional[int] = None
+    max_clarification_requests: Optional[int] = None
+    max_route_tasks: Optional[int] = None
+    uses_worktree: Optional[bool] = None
 
 
 class CreateRoleBody(BaseModel):
     role: str
+    preset_id: Optional[str] = None  # If set, copy config from preset
     display_name: Optional[str] = None
     prefix: Optional[str] = None
     color: Optional[str] = None
@@ -87,6 +94,12 @@ class CreateRoleBody(BaseModel):
     context_includes: Optional[list[str]] = None
     max_execution_time: Optional[int] = None
     auto_scale: Optional[dict[str, Any]] = None
+    # --- New fields (v2) ---
+    approval_mode: Optional[str] = None
+    max_revision_cycles: Optional[int] = None
+    max_clarification_requests: Optional[int] = None
+    max_route_tasks: Optional[int] = None
+    uses_worktree: Optional[bool] = None
 
 
 class CancelTaskBody(BaseModel):
@@ -436,3 +449,52 @@ class PlanIncrementsBody(BaseModel):
 class GeneratePostMortemBody(BaseModel):
     task_id: Optional[str] = None
     group_id: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Editor (Plan 2)
+# ---------------------------------------------------------------------------
+
+
+class PipelineEdgeBody(BaseModel):
+    from_agent: str
+    to_agent: str
+    task_types: list[str] = []
+    on_failure: str = "block"
+
+
+class UpdatePipelineEdgeBody(BaseModel):
+    task_types: Optional[list[str]] = None
+    on_failure: Optional[str] = None
+
+
+class UpdatePipelineBody(BaseModel):
+    name: Optional[str] = None
+    start_agent: Optional[str] = None
+    edges: Optional[list[dict[str, Any]]] = None
+    node_config: Optional[dict[str, dict[str, str]]] = None
+
+
+class SetStartAgentBody(BaseModel):
+    role: str
+
+
+class SetNodeConfigBody(BaseModel):
+    join_strategy: str = "wait_all"
+
+
+# ---------------------------------------------------------------------------
+# Human-in-the-Loop models
+# ---------------------------------------------------------------------------
+
+
+class ApproveInteractionBody(BaseModel):
+    notes: Optional[str] = None
+
+
+class RejectInteractionBody(BaseModel):
+    feedback: str
+
+
+class RespondInteractionBody(BaseModel):
+    response: str

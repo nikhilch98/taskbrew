@@ -169,6 +169,22 @@ def detect_provider(model: str | None = None, cli_provider: str = "claude") -> s
     return cli_provider
 
 
+def resolve_cli_provider(
+    model: str | None,
+    fallback: str = "claude",
+) -> str:
+    """Resolve the CLI tool name from a model string.
+
+    Uses prefix matching: ``claude-*`` -> ``"claude"``,
+    ``gemini-*`` -> ``"gemini"``.  Falls back to *fallback* if the model
+    is None or unrecognised.
+
+    This is a thin wrapper around ``detect_provider`` with a clearer name
+    for use in the orchestrator startup path.
+    """
+    return detect_provider(model=model, cli_provider=fallback)
+
+
 # ---------------------------------------------------------------------------
 # SDK option builders
 # ---------------------------------------------------------------------------

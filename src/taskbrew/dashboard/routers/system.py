@@ -212,7 +212,6 @@ async def get_team_settings():
     return {
         "name": tc.team_name,
         "project_dir": pd,
-        "default_model": getattr(tc, "default_model", ""),
         "db_path": tc.db_path,
         "dashboard_host": tc.dashboard_host,
         "dashboard_port": tc.dashboard_port,
@@ -327,6 +326,13 @@ async def get_roles_settings():
             } if rc.auto_scale else None,
             "max_turns": rc.max_turns,
             "max_execution_time": rc.max_execution_time,
+            "approval_mode": rc.approval_mode,
+            "max_revision_cycles": rc.max_revision_cycles,
+            "max_clarification_requests": rc.max_clarification_requests,
+            "max_route_tasks": rc.max_route_tasks,
+            "uses_worktree": rc.uses_worktree,
+            "capabilities": rc.capabilities,
+            "artifact_exclude_patterns": rc.artifact_exclude_patterns,
         })
     return result
 
@@ -386,6 +392,18 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
     if "group_type" in body:
         rc.group_type = body["group_type"]
 
+    # New agent behaviour fields
+    if "approval_mode" in body:
+        rc.approval_mode = body["approval_mode"]
+    if "max_revision_cycles" in body:
+        rc.max_revision_cycles = body["max_revision_cycles"]
+    if "max_clarification_requests" in body:
+        rc.max_clarification_requests = body["max_clarification_requests"]
+    if "max_route_tasks" in body:
+        rc.max_route_tasks = body["max_route_tasks"]
+    if "uses_worktree" in body:
+        rc.uses_worktree = body["uses_worktree"]
+
     # Routes -- convert dicts to RouteTarget objects
     if "routes_to" in body:
         rc.routes_to = [
@@ -432,6 +450,8 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
                 "max_instances", "max_turns", "max_execution_time",
                 "produces", "accepts",
                 "context_includes", "can_create_groups", "group_type",
+                "approval_mode", "max_revision_cycles",
+                "max_clarification_requests", "max_route_tasks", "uses_worktree",
             )
             for key in direct_keys:
                 if key in body:
@@ -468,6 +488,29 @@ async def create_role(body: CreateRoleBody):
     if _roles and role_name in _roles:
         raise HTTPException(status_code=409, detail=f"Role '{role_name}' already exists")
 
+    # --- Preset merging ---
+    preset_id = body.pop("preset_id", None)
+    if preset_id:
+        from taskbrew.dashboard.routers.presets import _get_presets
+        presets = _get_presets()
+        if preset_id not in presets:
+            raise HTTPException(status_code=404, detail=f"Preset not found: {preset_id}")
+        preset = dict(presets[preset_id])  # copy to avoid mutating cache
+        # Use preset's default_model as model if not overridden
+        if "model" not in body and "default_model" in preset:
+            body["model"] = preset.pop("default_model")
+        else:
+            preset.pop("default_model", None)
+        # Remap icon_emoji -> emoji so the role gets the preset's icon
+        if "icon_emoji" in preset and "emoji" not in body:
+            body["emoji"] = preset["icon_emoji"]
+        # Remove preset-only metadata fields
+        for key in ("preset_id", "category", "description", "capabilities", "icon_emoji"):
+            preset.pop(key, None)
+        # Merge: preset provides defaults, explicit body fields override
+        merged = {**preset, **body}
+        body = merged
+
     # Build YAML data with defaults for missing fields
     yaml_data: dict[str, Any] = {
         "role": role_name,
@@ -485,6 +528,12 @@ async def create_role(body: CreateRoleBody):
         "max_instances": body.get("max_instances", 1),
         "context_includes": body.get("context_includes", []),
         "max_execution_time": body.get("max_execution_time", 1800),
+        "approval_mode": body.get("approval_mode", "auto"),
+        "max_revision_cycles": body.get("max_revision_cycles", 0),
+        "max_clarification_requests": body.get("max_clarification_requests", 10),
+        "max_route_tasks": body.get("max_route_tasks", 100),
+        "uses_worktree": body.get("uses_worktree", False),
+        "artifact_exclude_patterns": body.get("artifact_exclude_patterns", []),
     }
     if body.get("group_type"):
         yaml_data["group_type"] = body["group_type"]
@@ -548,6 +597,10 @@ async def delete_role(role_name: str):
                 ]
                 with open(other_yaml, "w") as f:
                     yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    # Clean up pipeline edges referencing deleted role
+    from taskbrew.dashboard.routers.pipeline_editor import _cleanup_role_from_pipeline
+    _cleanup_role_from_pipeline(role_name)
 
     # Clean up task_board prefix tracking for the deleted role
     tb = orch.task_board

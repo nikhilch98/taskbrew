@@ -92,7 +92,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Accept"],
     )
 
@@ -239,10 +239,34 @@ def create_app(
     if orch_obj is not None:
         set_orchestrator(orch_obj)
 
+    # Initialize pipeline config from team.yaml or auto-migrate
+    from taskbrew.dashboard.routers.pipeline_editor import set_pipeline_deps
+    from taskbrew.config_loader import load_pipeline, migrate_routes_to_pipeline, save_pipeline as _save_pipeline
+    if orch_obj and getattr(orch_obj, "project_dir", None):
+        team_yaml_path = Path(orch_obj.project_dir) / "config" / "team.yaml"
+        if team_yaml_path.exists():
+            pc = load_pipeline(team_yaml_path)
+            if not pc.edges and orch_obj.roles:
+                # Auto-migrate from routes_to
+                pc = migrate_routes_to_pipeline(orch_obj.roles)
+                if pc.edges:
+                    _save_pipeline(team_yaml_path, pc)
+            set_pipeline_deps(pc)
+
     system_router.set_auth_deps(verify_admin)
     system_router.set_project_deps(project_manager, broadcast_event)
     comparison_router.set_comparison_deps(project_manager)
     ws_router.set_ws_deps(ws_manager, chat_manager)
+
+    # Wire up interaction and MCP tool dependencies
+    if orch_obj:
+        from taskbrew.orchestrator.interactions import InteractionManager
+        from taskbrew.dashboard.routers.mcp_tools import set_mcp_deps
+        from taskbrew.dashboard.routers.interactions import set_interaction_deps
+        from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
+        interaction_mgr = InteractionManager(orch_obj.task_board._db)
+        set_interaction_deps(interaction_mgr)
+        set_mcp_deps(interaction_mgr, get_pipeline, orch_obj.task_board)
 
     # ------------------------------------------------------------------
     # Include routers
@@ -261,6 +285,10 @@ def create_app(
     from taskbrew.dashboard.routers.comparison import router as comparison_router_obj
     from taskbrew.dashboard.routers.collaboration import router as collaboration_router
     from taskbrew.dashboard.routers.usage import router as usage_router
+    from taskbrew.dashboard.routers import presets as presets_router
+    from taskbrew.dashboard.routers.pipeline_editor import router as pipeline_editor_router
+    from taskbrew.dashboard.routers.mcp_tools import router as mcp_tools_router
+    from taskbrew.dashboard.routers.interactions import router as interactions_router
 
     app.include_router(tasks_router, tags=["Tasks"])
     app.include_router(agents_router, tags=["Agents"])
@@ -276,6 +304,10 @@ def create_app(
     app.include_router(comparison_router_obj, tags=["Comparison"])
     app.include_router(collaboration_router, tags=["Collaboration"])
     app.include_router(usage_router, tags=["Usage"])
+    app.include_router(presets_router.router, tags=["Presets"])
+    app.include_router(pipeline_editor_router, tags=["Pipeline Editor"])
+    app.include_router(mcp_tools_router, tags=["MCP Tools"])
+    app.include_router(interactions_router, tags=["Interactions"])
     app.include_router(system_router.router, tags=["System"])
     app.include_router(ws_router.router)
 

@@ -72,6 +72,23 @@ class GuardrailsConfig:
 
 
 @dataclass
+class ExecutionConfig:
+    """Orchestrator-level execution settings from team.yaml.
+
+    All fields have sensible defaults — the ``execution`` section can be
+    omitted entirely from team.yaml.
+    """
+
+    max_concurrent_api_calls: int = 5
+    base_branch: str = "main"
+    worktree_retention_days: int = 7
+    max_pipeline_depth: int = 20
+    artifact_exclude_patterns: list[str] = field(default_factory=lambda: [
+        "*.env", "credentials*", "*.key", "*.pem", "*.secret",
+    ])
+
+
+@dataclass
 class TeamConfig:
     """Top-level team settings loaded from config/team.yaml."""
 
@@ -92,6 +109,7 @@ class TeamConfig:
     webhooks_enabled: bool = False
     mcp_servers: dict[str, MCPServerConfig] = field(default_factory=dict)
     guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
+    execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
 
 def load_team_config(path: Path) -> TeamConfig:
@@ -154,6 +172,19 @@ def load_team_config(path: Path) -> TeamConfig:
         rejection_cycle_limit=guardrails_raw.get("rejection_cycle_limit", 3),
     )
 
+    # Parse execution config
+    exec_raw = data.get("execution", {}) or {}
+    default_excludes = ["*.env", "credentials*", "*.key", "*.pem", "*.secret"]
+    execution = ExecutionConfig(
+        max_concurrent_api_calls=exec_raw.get("max_concurrent_api_calls", 5),
+        base_branch=exec_raw.get("base_branch", "main"),
+        worktree_retention_days=exec_raw.get("worktree_retention_days", 7),
+        max_pipeline_depth=exec_raw.get("max_pipeline_depth", 20),
+        artifact_exclude_patterns=exec_raw.get(
+            "artifact_exclude_patterns", default_excludes
+        ),
+    )
+
     team_config = TeamConfig(
         team_name=_get_required(data, "team_name", "team.yaml"),
         db_path=str(Path(_get_required(data, "database.path", "team.yaml")).expanduser()),
@@ -176,6 +207,7 @@ def load_team_config(path: Path) -> TeamConfig:
         webhooks_enabled=webhooks_raw.get("enabled", False),
         mcp_servers=mcp_servers,
         guardrails=guardrails,
+        execution=execution,
     )
 
     # Fix 2: Numeric bounds validation
@@ -197,6 +229,195 @@ class RouteTarget:
 
     role: str
     task_types: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PipelineEdge:
+    """A single directed edge in the pipeline graph."""
+
+    id: str
+    from_agent: str
+    to_agent: str
+    task_types: list[str] = field(default_factory=list)
+    on_failure: str = "block"  # "block", "continue_partial", "cancel_pipeline"
+
+
+@dataclass
+class PipelineNodeConfig:
+    """Per-node configuration in the pipeline (receiving-side settings)."""
+
+    join_strategy: str = "wait_all"  # "wait_all" or "stream"
+
+
+@dataclass
+class PipelineConfig:
+    """Top-level pipeline topology stored in team.yaml."""
+
+    id: str = "default-pipeline"
+    name: str = "Default Pipeline"
+    start_agent: str | None = None
+    edges: list[PipelineEdge] = field(default_factory=list)
+    node_config: dict[str, PipelineNodeConfig] = field(default_factory=dict)
+
+
+def load_pipeline(team_yaml_path: Path) -> PipelineConfig:
+    """Load pipeline topology from team.yaml.
+
+    Parameters
+    ----------
+    team_yaml_path:
+        Path to the team YAML file (e.g. ``config/team.yaml``).
+
+    Returns
+    -------
+    PipelineConfig
+        Parsed pipeline configuration. Returns a default empty pipeline
+        if the ``pipeline`` key is missing from the YAML.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *team_yaml_path* does not exist.
+    """
+    if not team_yaml_path.exists():
+        raise FileNotFoundError(f"Team config not found: {team_yaml_path}")
+
+    with open(team_yaml_path) as f:
+        data = yaml.safe_load(f) or {}
+
+    pipeline_raw = data.get("pipeline")
+    if not pipeline_raw:
+        return PipelineConfig()
+
+    edges = []
+    for e in pipeline_raw.get("edges", []):
+        edges.append(PipelineEdge(
+            id=e["id"],
+            from_agent=e["from"],
+            to_agent=e["to"],
+            task_types=e.get("task_types", []),
+            on_failure=e.get("on_failure", "block"),
+        ))
+
+    node_config: dict[str, PipelineNodeConfig] = {}
+    for role_name, nc_raw in pipeline_raw.get("node_config", {}).items():
+        node_config[role_name] = PipelineNodeConfig(
+            join_strategy=nc_raw.get("join_strategy", "wait_all"),
+        )
+
+    return PipelineConfig(
+        id=pipeline_raw.get("id", "default-pipeline"),
+        name=pipeline_raw.get("name", "Default Pipeline"),
+        start_agent=pipeline_raw.get("start_agent"),
+        edges=edges,
+        node_config=node_config,
+    )
+
+
+def save_pipeline(team_yaml_path: Path, pipeline: PipelineConfig) -> None:
+    """Persist pipeline topology to team.yaml.
+
+    Reads the existing file, updates the ``pipeline`` key, and writes back.
+    All other top-level keys are preserved.
+
+    Parameters
+    ----------
+    team_yaml_path:
+        Path to the team YAML file.
+    pipeline:
+        The pipeline config to save.
+    """
+    with open(team_yaml_path) as f:
+        data = yaml.safe_load(f) or {}
+
+    data["pipeline"] = {
+        "id": pipeline.id,
+        "name": pipeline.name,
+        "start_agent": pipeline.start_agent,
+        "edges": [
+            {
+                "id": e.id,
+                "from": e.from_agent,
+                "to": e.to_agent,
+                "task_types": e.task_types,
+                "on_failure": e.on_failure,
+            }
+            for e in pipeline.edges
+        ],
+        "node_config": {
+            role: {"join_strategy": nc.join_strategy}
+            for role, nc in pipeline.node_config.items()
+        },
+    }
+
+    with open(team_yaml_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def migrate_routes_to_pipeline(roles: dict[str, RoleConfig]) -> PipelineConfig:
+    """Auto-generate a PipelineConfig from per-role routes_to fields.
+
+    Used on first load when team.yaml has no ``pipeline`` section but
+    roles have ``routes_to`` entries.
+
+    Parameters
+    ----------
+    roles:
+        Mapping of role name to RoleConfig (as returned by :func:`load_roles`).
+
+    Returns
+    -------
+    PipelineConfig
+        A new pipeline with edges derived from all roles' ``routes_to``.
+    """
+    edges: list[PipelineEdge] = []
+    edge_counter = 0
+
+    for role_name, rc in roles.items():
+        for rt in rc.routes_to:
+            # Skip routes to non-existent roles
+            if rt.role not in roles:
+                logger.warning(
+                    "Migration: skipping route from '%s' to unknown role '%s'",
+                    role_name, rt.role,
+                )
+                continue
+            edge_counter += 1
+            edges.append(PipelineEdge(
+                id=f"migrated-edge-{edge_counter}",
+                from_agent=role_name,
+                to_agent=rt.role,
+                task_types=rt.task_types,
+                on_failure="block",
+            ))
+
+    # Detect start agent: role with no inbound edges (and at least one
+    # outbound edge, or at least one edge exists).
+    if edges:
+        all_roles = set(roles.keys())
+        routed_to = {e.to_agent for e in edges}
+        entry_points = all_roles - routed_to
+        # Among entry points, prefer those with outbound edges
+        entry_with_outbound = [
+            r for r in entry_points
+            if any(e.from_agent == r for e in edges)
+        ]
+        start_agent = entry_with_outbound[0] if entry_with_outbound else None
+    else:
+        start_agent = None
+
+    return PipelineConfig(
+        id="default-pipeline",
+        name="Default Pipeline",
+        start_agent=start_agent,
+        edges=edges,
+        node_config={},
+    )
 
 
 @dataclass
@@ -231,6 +452,14 @@ class RoleConfig:
     max_execution_time: int = 1800
     max_turns: int | None = None
     routing_mode: str = "open"
+    # --- New fields (v2) ---
+    approval_mode: str = "auto"  # "auto", "manual", "first_run"
+    max_revision_cycles: int = 0  # 0 = unlimited
+    max_clarification_requests: int = 10
+    max_route_tasks: int = 100
+    uses_worktree: bool = False
+    capabilities: list[str] = field(default_factory=list)
+    artifact_exclude_patterns: list[str] = field(default_factory=list)
 
 
 def _parse_role(data: dict) -> RoleConfig:
@@ -240,6 +469,12 @@ def _parse_role(data: dict) -> RoleConfig:
     for key in _REQUIRED_ROLE_KEYS:
         if key not in data:
             raise ValueError(f"Role config missing required key '{key}' (file may be incomplete)")
+
+    approval_mode = data.get("approval_mode", "auto")
+    if approval_mode not in ("auto", "manual", "first_run"):
+        raise ValueError(
+            f"approval_mode must be 'auto', 'manual', or 'first_run', got '{approval_mode}'"
+        )
 
     routes_to = [
         RouteTarget(role=r["role"], task_types=r.get("task_types", []))
@@ -275,6 +510,13 @@ def _parse_role(data: dict) -> RoleConfig:
         max_execution_time=data.get("max_execution_time", 1800),
         max_turns=data.get("max_turns"),
         routing_mode=data.get("routing_mode", "open"),
+        approval_mode=approval_mode,
+        max_revision_cycles=data.get("max_revision_cycles", 0),
+        max_clarification_requests=data.get("max_clarification_requests", 10),
+        max_route_tasks=data.get("max_route_tasks", 100),
+        uses_worktree=data.get("uses_worktree", False),
+        capabilities=data.get("capabilities", []),
+        artifact_exclude_patterns=data.get("artifact_exclude_patterns", []),
     )
 
     # Fix 2: Numeric bounds validation for role-specific fields
@@ -317,6 +559,24 @@ def load_roles(roles_dir: Path) -> dict[str, RoleConfig]:
             continue
 
     return roles
+
+
+def load_presets(presets_dir: Path) -> dict[str, dict]:
+    """Load preset YAML files from directory. Returns raw dicts keyed by preset_id."""
+    if not presets_dir.is_dir():
+        return {}
+    presets: dict[str, dict] = {}
+    for yaml_file in sorted(presets_dir.glob("*.yaml")):
+        try:
+            with open(yaml_file) as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            logger.warning("Skipping invalid preset file %s: %s", yaml_file.name, exc)
+            continue
+        if not data or "preset_id" not in data:
+            continue
+        presets[data["preset_id"]] = data
+    return presets
 
 
 # ---------------------------------------------------------------------------

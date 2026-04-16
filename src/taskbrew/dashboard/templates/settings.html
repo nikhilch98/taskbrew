@@ -169,9 +169,6 @@
         body.light-theme .prompt-fullscreen {
             background: rgba(255, 255, 255, 0.8);
         }
-        body.light-theme .route-item {
-            background: rgba(0, 0, 0, 0.02);
-        }
         body.light-theme .stat-chip {
             background: rgba(0, 0, 0, 0.04);
             border-color: rgba(0, 0, 0, 0.06);
@@ -498,7 +495,7 @@
             color: var(--accent-indigo);
         }
 
-        /* ========== Pipeline Visualizer ========== */
+        /* ========== Pipeline ========== */
         .pipeline-section {
             background: var(--bg-card);
             border: 1px solid var(--border-subtle);
@@ -984,89 +981,6 @@
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
         }
 
-        /* ========== Route Item ========== */
-        .route-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 12px;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-sm);
-            margin-bottom: 8px;
-        }
-
-        .route-target {
-            font-size: 13px;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .route-tasks {
-            display: flex;
-            gap: 4px;
-            flex-wrap: wrap;
-            flex: 1;
-        }
-
-        .route-task-chip {
-            font-size: 10px;
-            padding: 2px 7px;
-            border-radius: 4px;
-            background: rgba(139, 92, 246, 0.12);
-            color: var(--accent-purple);
-            font-weight: 500;
-        }
-
-        .route-remove-btn {
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            padding: 4px;
-            border-radius: 4px;
-            transition: all 0.15s ease;
-        }
-
-        .route-remove-btn:hover {
-            color: var(--accent-rose);
-            background: rgba(244, 63, 94, 0.1);
-        }
-
-        .add-route-row {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            margin-top: 8px;
-        }
-
-        .add-route-row .form-select,
-        .add-route-row .form-input {
-            flex: 1;
-            padding: 8px 12px;
-            font-size: 12px;
-        }
-
-        .add-route-btn {
-            padding: 8px 12px;
-            font-size: 12px;
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.2);
-            border-radius: var(--radius-sm);
-            color: var(--accent-indigo);
-            cursor: pointer;
-            font-family: inherit;
-            font-weight: 600;
-            white-space: nowrap;
-            transition: all 0.2s ease;
-        }
-
-        .add-route-btn:hover {
-            background: rgba(99, 102, 241, 0.2);
-        }
-
         /* ========== Prompt expand ========== */
         .prompt-header {
             display: flex;
@@ -1250,6 +1164,82 @@
         .add-agent-card:hover span {
             color: var(--accent-indigo);
         }
+
+        /* ========== Add Agent Modal Tabs ========== */
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            margin-top: 16px;
+            border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+        }
+        .tab-btn {
+            padding: 8px 20px;
+            background: none;
+            border: none;
+            color: var(--text-muted, #94a3b8);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .tab-btn.active {
+            color: var(--text-primary, #f1f5f9);
+            border-bottom-color: var(--accent-indigo, #6366f1);
+        }
+        .tab-btn:hover {
+            color: var(--text-primary, #f1f5f9);
+        }
+        /* ========== Preset Grid ========== */
+        .preset-category-tabs {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+        .preset-cat-btn {
+            padding: 4px 12px;
+            border-radius: 999px;
+            border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+            background: transparent;
+            color: var(--text-muted, #94a3b8);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .preset-cat-btn.active {
+            background: var(--accent-indigo, #6366f1);
+            color: white;
+            border-color: var(--accent-indigo, #6366f1);
+        }
+        .preset-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+        }
+        .preset-card {
+            padding: 16px;
+            border-radius: var(--radius-lg, 12px);
+            border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+            background: var(--bg-card, rgba(255,255,255,0.03));
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .preset-card:hover, .preset-card.selected {
+            border-color: var(--accent-indigo, #6366f1);
+            background: rgba(99, 102, 241, 0.08);
+        }
+        .preset-card-icon { font-size: 24px; margin-bottom: 8px; }
+        .preset-card-name { font-weight: 600; font-size: 14px; color: var(--text-primary, #f1f5f9); margin-bottom: 4px; }
+        .preset-card-desc { font-size: 12px; color: var(--text-muted, #94a3b8); line-height: 1.4; }
+        .preset-detail { padding: 16px 0; }
+        .preset-detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .preset-detail-icon { font-size: 32px; }
+        .preset-detail-name { font-size: 20px; font-weight: 700; color: var(--text-primary, #f1f5f9); }
+        .preset-detail-section { margin-bottom: 16px; }
+        .preset-detail-section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted, #94a3b8); margin-bottom: 8px; }
+        .preset-detail-section pre { background: var(--bg-primary, #05070e); border-radius: 8px; padding: 12px; font-size: 12px; max-height: 200px; overflow-y: auto; color: var(--text-secondary, #cbd5e1); white-space: pre-wrap; }
+        .preset-detail-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
         /* ========== Team Settings Section ========== */
         .team-section {
@@ -1767,6 +1757,41 @@
                 transition: none !important;
             }
         }
+
+        /* Pipeline Popovers */
+        .pipeline-popover {
+            position: fixed;
+            z-index: 10001;
+            min-width: 240px;
+            background: var(--bg-card, #1e293b);
+            border: 1px solid var(--border-subtle, rgba(255,255,255,0.1));
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            overflow: hidden;
+        }
+        .popover-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+        }
+        .popover-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary, #f1f5f9);
+        }
+        .popover-close {
+            background: none;
+            border: none;
+            color: var(--text-muted, #94a3b8);
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0 4px;
+        }
+        .popover-body {
+            padding: 12px 14px;
+        }
     </style>
 </head>
 
@@ -1822,13 +1847,31 @@
     <!-- Main Content -->
     <main class="main-content" id="main-content">
 
-        <!-- Pipeline Visualizer -->
-        <section class="pipeline-section" role="region" aria-label="Pipeline visualizer">
+        <!-- Pipeline -->
+        <section class="pipeline-section" role="region" aria-label="Pipeline">
             <div class="section-title">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                Pipeline Visualizer
+                Pipeline
             </div>
+            <div id="agentControlBar" style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 16px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle,rgba(255,255,255,0.08));">
+                <span id="agentStatusIndicator" style="width:10px;height:10px;border-radius:50%;background:#f59e0b;"></span>
+                <span id="agentStatusText" style="font-size:13px;color:var(--text-secondary,#cbd5e1);">Agents paused</span>
+                <div style="flex:1;"></div>
+                <button id="resumeAllBtn" onclick="resumeAllAgents()" style="padding:6px 16px;border-radius:6px;border:none;background:#22c55e;color:white;cursor:pointer;font-size:12px;font-weight:600;">Resume All</button>
+                <button id="pauseAllBtn" onclick="pauseAllAgents()" style="padding:6px 16px;border-radius:6px;border:none;background:#f59e0b;color:white;cursor:pointer;font-size:12px;font-weight:600;display:none;">Pause All</button>
+            </div>
+            <div id="pipelineValidation" style="margin-bottom:8px"></div>
             <svg id="pipelineSvg" class="pipeline-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+        </section>
+
+        <!-- Action Required Panel -->
+        <section id="actionRequiredSection" class="action-required-section" style="display:none;">
+            <div class="section-header" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <span style="font-size:20px;">🔔</span>
+                <h2 style="margin:0;font-size:18px;color:var(--text-primary,#f1f5f9);">Action Required</h2>
+                <span id="actionRequiredBadge" style="background:var(--accent-rose,#f43f5e);color:white;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;"></span>
+            </div>
+            <div id="actionRequiredCards"></div>
         </section>
 
         <!-- Agent Cards Grid -->
@@ -2005,30 +2048,23 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 
-    <!-- New Agent Wizard Modal -->
-    <div class="wizard-overlay" id="wizardOverlay">
-        <div class="wizard-content">
-            <div class="wizard-header">
-                <h2>Create New Agent</h2>
-                <div class="wizard-steps" id="wizardSteps">
-                    <div>
-                        <div class="wizard-step-dot active" data-step="0"></div>
-                        <div class="wizard-step-label">Identity</div>
-                    </div>
-                    <div>
-                        <div class="wizard-step-dot" data-step="1"></div>
-                        <div class="wizard-step-label">Config</div>
-                    </div>
-                    <div>
-                        <div class="wizard-step-dot" data-step="2"></div>
-                        <div class="wizard-step-label">Pipeline</div>
-                    </div>
+    <!-- Add Agent Modal -->
+    <div id="addAgentOverlay" class="wizard-overlay" role="dialog" aria-modal="true" aria-label="Add New Agent">
+        <div class="wizard-modal" style="max-width: 720px; max-height: 85vh; display: flex; flex-direction: column;">
+            <div class="wizard-header" style="flex-shrink: 0;">
+                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                    <h2 id="addAgentTitle">Add New Agent</h2>
+                    <button onclick="closeAddAgent()" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;padding:4px 8px;" aria-label="Close">&times;</button>
+                </div>
+                <div class="tab-bar" role="tablist">
+                    <button class="tab-btn active" data-tab="presets" role="tab" aria-selected="true" onclick="switchAddAgentTab('presets')">Presets</button>
+                    <button class="tab-btn" data-tab="custom" role="tab" aria-selected="false" onclick="switchAddAgentTab('custom')">Custom</button>
                 </div>
             </div>
-            <div class="wizard-body" id="wizardBody"></div>
-            <div class="wizard-footer">
-                <button class="btn" id="wizardBackBtn" onclick="wizardBack()">Back</button>
-                <button class="btn btn-primary" id="wizardNextBtn" onclick="wizardNext()">Next</button>
+            <div id="addAgentBody" class="wizard-content" style="flex: 1; overflow-y: auto;"></div>
+            <div id="addAgentFooter" class="wizard-footer" style="flex-shrink: 0;">
+                <button id="addAgentBackBtn" class="wizard-btn-secondary" onclick="addAgentBack()" style="visibility: hidden;">Back</button>
+                <button id="addAgentNextBtn" class="wizard-btn-primary" onclick="addAgentNext()">Select</button>
             </div>
         </div>
     </div>
@@ -2140,10 +2176,16 @@
         let originalData = null;
         let availableModels = [];
         let unsaved = false;
-        let wizardStep = 0;
-        let wizardData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], receives_from: [], routes_to: [] };
+        let addAgentTab = 'presets';
+        let addAgentStep = 0;
+        let selectedPreset = null;
+        let allPresets = [];
+        let presetCategoryFilter = 'all';
+        let customData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], approval_mode: 'auto', max_revision_cycles: 0, uses_worktree: false };
         let promptFullscreenRole = null;
         let dragState = null; // For pipeline drag-to-connect
+        var pipelineData = { id: 'default-pipeline', name: 'Default Pipeline', start_agent: null, edges: [], node_config: {} };
+        var pipelineSelectedNode = null;
 
         const COMMON_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'mcp__task-tools__create_task'];
         const CONTEXT_OPTIONS = ['parent_artifact', 'root_artifact', 'sibling_summary', 'rejection_history'];
@@ -2193,8 +2235,9 @@
         // ================================================================
         // Toast Notifications
         // ================================================================
-        function showToast(message, type) {
+        function showToast(message, type, duration) {
             type = type || 'info';
+            duration = duration || 3000;
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = 'toast ' + type;
@@ -2208,7 +2251,7 @@
             setTimeout(function() {
                 toast.classList.add('removing');
                 setTimeout(function() { toast.remove(); }, 300);
-            }, 3000);
+            }, duration);
         }
 
         // ================================================================
@@ -2246,13 +2289,89 @@
                 settingsData.roles = await rolesRes.json();
                 if (modelsRes && modelsRes.ok) {
                     const md = await modelsRes.json();
-                    availableModels = md.models || [];
+                    availableModels = Array.isArray(md) ? md : (md.models || []);
                 }
                 originalData = deepClone(settingsData);
+
+                // Also load pipeline data
+                try {
+                    var pipeResp = await fetch('/api/pipeline');
+                    if (pipeResp.ok) { pipelineData = await pipeResp.json(); }
+                } catch (e) { console.error('Failed to load pipeline:', e); }
+
                 renderAll();
+                checkAgentStatus();
             } catch (e) {
                 showToast('Failed to load settings: ' + e.message, 'error');
             }
+        }
+
+        // ================================================================
+        // Agent Resume / Pause Controls
+        // ================================================================
+        var agentsRunning = false;
+
+        async function checkAgentStatus() {
+            try {
+                var resp = await fetch('/api/agents/paused');
+                if (resp.ok) {
+                    var data = await resp.json();
+                    var pausedRoles = data.paused_roles || [];
+                    var totalRoles = (settingsData.roles || []).length;
+                    agentsRunning = pausedRoles.length === 0 && totalRoles > 0;
+                    updateAgentStatusUI();
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        function updateAgentStatusUI() {
+            var indicator = document.getElementById('agentStatusIndicator');
+            var text = document.getElementById('agentStatusText');
+            var resumeBtn = document.getElementById('resumeAllBtn');
+            var pauseBtn = document.getElementById('pauseAllBtn');
+            if (!indicator || !text) return;
+
+            if (agentsRunning) {
+                indicator.style.background = '#22c55e';
+                text.textContent = 'Agents running';
+                if (resumeBtn) resumeBtn.style.display = 'none';
+                if (pauseBtn) pauseBtn.style.display = '';
+            } else {
+                indicator.style.background = '#f59e0b';
+                text.textContent = 'Agents paused';
+                if (resumeBtn) resumeBtn.style.display = '';
+                if (pauseBtn) pauseBtn.style.display = 'none';
+            }
+        }
+
+        async function resumeAllAgents() {
+            try {
+                var resp = await fetch('/api/agents/resume', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({role: 'all'}),
+                });
+                if (resp.ok) {
+                    agentsRunning = true;
+                    updateAgentStatusUI();
+                    showToast('All agents resumed', 'success', 2000);
+                }
+            } catch (e) { showToast('Failed to resume agents', 'error'); }
+        }
+
+        async function pauseAllAgents() {
+            try {
+                var resp = await fetch('/api/agents/pause', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({role: 'all'}),
+                });
+                if (resp.ok) {
+                    agentsRunning = false;
+                    updateAgentStatusUI();
+                    showToast('All agents paused', 'success', 2000);
+                }
+            } catch (e) { showToast('Failed to pause agents', 'error'); }
         }
 
         function renderAll() {
@@ -2262,19 +2381,17 @@
         }
 
         // ================================================================
-        // Pipeline Visualizer (SVG)
+        // Pipeline (SVG)
         // ================================================================
         function computeGraphLayout(roles) {
             // Build role map and adjacency
             const roleMap = {};
             roles.forEach(function(r) { roleMap[r.role] = r; });
             const allEdges = [];
-            roles.forEach(function(r) {
-                (r.routes_to || []).forEach(function(rt) {
-                    if (roleMap[rt.role]) {
-                        allEdges.push({ from: r.role, to: rt.role, taskTypes: rt.task_types || [] });
-                    }
-                });
+            pipelineData.edges.forEach(function(e) {
+                if (roleMap[e.from] && roleMap[e.to]) {
+                    allEdges.push({ id: e.id, from: e.from, to: e.to, taskTypes: e.task_types || [] });
+                }
             });
 
             // Assign layers via longest-path from sources (ignoring back-edges iteratively)
@@ -2483,6 +2600,15 @@
                 html += '<circle class="pipeline-particle" r="2.5" fill="' + escapeHtml(toColor) + '" opacity="0.7" filter="url(#particle-glow)">';
                 html += '<animateMotion dur="2.5s" repeatCount="indefinite" begin="1.25s" path="' + pathD + '"/>';
                 html += '</circle>';
+                // Edge delete button at midpoint
+                if (e.id) {
+                    var midX = (x1 + x2) / 2;
+                    var midY = (y1 + y2) / 2;
+                    html += '<g class="edge-delete-btn" onclick="event.stopPropagation();deletePipelineEdge(\'' + escapeHtml(e.id) + '\')" style="cursor:pointer;opacity:0;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0">';
+                    html += '<circle cx="' + midX + '" cy="' + midY + '" r="10" fill="rgba(244,63,94,0.8)"/>';
+                    html += '<text x="' + midX + '" y="' + (midY + 4) + '" text-anchor="middle" fill="white" font-size="12" font-weight="bold" style="pointer-events:none">&times;</text>';
+                    html += '</g>';
+                }
                 connIdx++;
             });
 
@@ -2525,6 +2651,15 @@
                 html += '<circle class="pipeline-particle" r="2" fill="' + escapeHtml(toColor) + '" opacity="0.6" filter="url(#particle-glow)">';
                 html += '<animateMotion dur="3.5s" repeatCount="indefinite" path="' + pathD + '"/>';
                 html += '</circle>';
+                // Edge delete button at arc midpoint
+                if (e.id) {
+                    var delX = (x1 + x2) / 2;
+                    var delY = arcY;
+                    html += '<g class="edge-delete-btn" onclick="event.stopPropagation();deletePipelineEdge(\'' + escapeHtml(e.id) + '\')" style="cursor:pointer;opacity:0;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0">';
+                    html += '<circle cx="' + delX + '" cy="' + delY + '" r="10" fill="rgba(244,63,94,0.8)"/>';
+                    html += '<text x="' + delX + '" y="' + (delY + 4) + '" text-anchor="middle" fill="white" font-size="12" font-weight="bold" style="pointer-events:none">&times;</text>';
+                    html += '</g>';
+                }
                 connIdx++;
                 backIdx++;
             });
@@ -2544,19 +2679,42 @@
                 html += '<circle class="pipeline-particle" r="2" fill="' + escapeHtml(c) + '" opacity="0.6" filter="url(#particle-glow)">';
                 html += '<animateMotion dur="2s" repeatCount="indefinite" path="' + pathD + '"/>';
                 html += '</circle>';
+                // Self-loop delete button
+                if (e.id) {
+                    var slDelY = cy - loopR * 2 + 8;
+                    html += '<g class="edge-delete-btn" onclick="event.stopPropagation();deletePipelineEdge(\'' + escapeHtml(e.id) + '\')" style="cursor:pointer;opacity:0;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0">';
+                    html += '<circle cx="' + cx + '" cy="' + slDelY + '" r="10" fill="rgba(244,63,94,0.8)"/>';
+                    html += '<text x="' + cx + '" y="' + (slDelY + 4) + '" text-anchor="middle" fill="white" font-size="12" font-weight="bold" style="pointer-events:none">&times;</text>';
+                    html += '</g>';
+                }
                 connIdx++;
             });
 
             // ---- Nodes ----
+            // Build set of connected roles for dashed-border detection
+            var connectedRoles = new Set();
+            pipelineData.edges.forEach(function(e) { connectedRoles.add(e.from); connectedRoles.add(e.to); });
+            if (pipelineData.start_agent) connectedRoles.add(pipelineData.start_agent);
+
             layout.topoOrder.forEach(function(roleName) {
                 const r = roleMap[roleName];
                 if (!r) return;
                 const pos = positions[roleName];
                 const c = r.color || '#6366f1';
-                html += '<g class="pipeline-node" data-role="' + escapeHtml(r.role) + '" transform="translate(' + pos.x + ',' + pos.y + ')">';
-                html += '<rect width="' + nodeW + '" height="' + nodeH + '" rx="12" fill="' + escapeHtml(c) + '" fill-opacity="0.12" stroke="' + escapeHtml(c) + '" stroke-width="1.5" filter="url(#glow-' + r.role + ')"/>';
-                html += '<text x="' + (nodeW / 2) + '" y="' + (nodeH / 2 - 6) + '" text-anchor="middle" font-size="18" fill="var(--text-primary)">' + escapeHtml(r.emoji || '') + '</text>';
-                html += '<text x="' + (nodeW / 2) + '" y="' + (nodeH / 2 + 14) + '" text-anchor="middle" font-size="12" font-weight="600" fill="var(--text-primary)" font-family="Inter, sans-serif">' + escapeHtml(r.display_name || r.role) + '</text>';
+                var isSelected = pipelineSelectedNode === roleName;
+                var isStartAgent = pipelineData.start_agent === roleName;
+                var isConnected = connectedRoles.has(roleName);
+                var strokeDash = isConnected ? '' : ' stroke-dasharray="6 3"';
+                var strokeW = isSelected ? '3' : '1.5';
+                var fillOpacity = isSelected ? '0.22' : '0.12';
+                html += '<g class="pipeline-node" data-role="' + escapeHtml(r.role) + '" transform="translate(' + pos.x + ',' + pos.y + ')" style="cursor:pointer" onclick="onPipelineNodeClick(\'' + escapeHtml(r.role) + '\')" oncontextmenu="showNodeContextMenu(event, \'' + escapeHtml(r.role) + '\')">';
+                html += '<rect width="' + nodeW + '" height="' + nodeH + '" rx="12" fill="' + escapeHtml(c) + '" fill-opacity="' + fillOpacity + '" stroke="' + escapeHtml(c) + '" stroke-width="' + strokeW + '"' + strokeDash + ' filter="url(#glow-' + r.role + ')"/>';
+                html += '<text x="' + (nodeW / 2) + '" y="' + (nodeH / 2 - 6) + '" text-anchor="middle" font-size="18" fill="var(--text-primary)" style="pointer-events:none">' + escapeHtml(r.emoji || '') + '</text>';
+                html += '<text x="' + (nodeW / 2) + '" y="' + (nodeH / 2 + 14) + '" text-anchor="middle" font-size="12" font-weight="600" fill="var(--text-primary)" font-family="Inter, sans-serif" style="pointer-events:none">' + escapeHtml(r.display_name || r.role) + '</text>';
+                // Start agent badge
+                if (isStartAgent) {
+                    html += '<text x="' + (nodeW - 18) + '" y="16" font-size="14" fill="#22c55e" style="pointer-events:none">&#9654;</text>';
+                }
                 // Output port (right edge)
                 html += '<circle class="pipeline-port output-port" cx="' + nodeW + '" cy="' + (nodeH / 2) + '" r="5" fill="' + escapeHtml(c) + '" stroke="var(--bg-primary)" stroke-width="2" data-role="' + escapeHtml(r.role) + '" data-port="output"/>';
                 // Input port (left edge)
@@ -2577,6 +2735,7 @@
 
             svg.innerHTML = html;
             attachPipelineDragHandlers();
+            renderPipelineValidation();
         }
 
         function attachPipelineDragHandlers() {
@@ -2636,41 +2795,315 @@
                 dragState = null;
             });
 
-            // Click connection to offer delete
+            // Click connection to show edge config popover
             svg.querySelectorAll('.pipeline-connection').forEach(function(conn) {
                 conn.addEventListener('click', function(e) {
                     e.stopPropagation();
                     var from = conn.getAttribute('data-from');
                     var to = conn.getAttribute('data-to');
-                    if (confirm('Remove route from ' + from + ' to ' + to + '?')) {
-                        removeRoute(from, to);
+                    var edge = pipelineData.edges.find(function(ed) { return ed.from === from && ed.to === to; });
+                    if (edge && edge.id) {
+                        showEdgePopover(e, edge.id);
                     }
                 });
+            });
+
+            // Double-click node to show node config popover
+            svg.querySelectorAll('.pipeline-node').forEach(function(node) {
+                node.addEventListener('dblclick', function(e) {
+                    e.stopPropagation();
+                    var roleName = node.getAttribute('data-role');
+                    if (roleName) {
+                        showNodePopover(e, roleName);
+                    }
+                });
+            });
+
+            // Click empty SVG space to cancel node selection
+            svg.addEventListener('click', function(e) {
+                if (e.target === svg && pipelineSelectedNode !== null) {
+                    pipelineSelectedNode = null;
+                    renderPipeline();
+                }
             });
         }
 
         function addRouteFromPipeline(fromRole, toRole) {
-            var r = getRoleByName(fromRole);
-            if (!r) return;
-            if (!r.routes_to) r.routes_to = [];
-            var exists = r.routes_to.some(function(rt) { return rt.role === toRole; });
-            if (exists) {
-                showToast('Route already exists', 'info');
-                return;
-            }
-            r.routes_to.push({ role: toRole, task_types: [] });
-            markUnsaved();
-            renderAll();
-            showToast('Route added: ' + fromRole + ' \u2192 ' + toRole, 'success');
+            // Use pipeline API to add edge
+            addPipelineEdge(fromRole, toRole);
         }
 
         function removeRoute(fromRole, toRole) {
-            var r = getRoleByName(fromRole);
-            if (!r || !r.routes_to) return;
-            r.routes_to = r.routes_to.filter(function(rt) { return rt.role !== toRole; });
-            markUnsaved();
-            renderAll();
-            showToast('Route removed', 'info');
+            // Find the edge in pipelineData and delete via API
+            var edge = pipelineData.edges.find(function(e) { return e.from === fromRole && e.to === toRole; });
+            if (edge && edge.id) {
+                deletePipelineEdge(edge.id);
+            }
+        }
+
+        // ================================================================
+        // Pipeline Interactive Editing
+        // ================================================================
+        function onPipelineNodeClick(roleName) {
+            if (pipelineSelectedNode === null) {
+                pipelineSelectedNode = roleName;
+                renderPipeline();
+            } else if (pipelineSelectedNode === roleName) {
+                pipelineSelectedNode = null;
+                renderPipeline();
+            } else {
+                // Create edge from selected to clicked
+                addPipelineEdge(pipelineSelectedNode, roleName);
+                pipelineSelectedNode = null;
+            }
+        }
+
+        async function addPipelineEdge(fromAgent, toAgent) {
+            try {
+                var resp = await fetch('/api/pipeline/edges', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({from_agent: fromAgent, to_agent: toAgent})
+                });
+                if (resp.ok) {
+                    var result = await resp.json();
+                    pipelineData.edges.push({id: result.edge_id, from: fromAgent, to: toAgent, task_types: [], on_failure: 'block'});
+                    renderPipeline();
+                    showToast('Connection added', 'success');
+                } else {
+                    var errData = await resp.json().catch(function() { return {}; });
+                    showToast(errData.detail || 'Failed to add connection', 'error');
+                }
+            } catch (e) { showToast('Failed to add connection: ' + e.message, 'error'); }
+        }
+
+        async function deletePipelineEdge(edgeId) {
+            try {
+                var resp = await fetch('/api/pipeline/edges/' + encodeURIComponent(edgeId), {method: 'DELETE'});
+                if (resp.ok) {
+                    pipelineData.edges = pipelineData.edges.filter(function(e) { return e.id !== edgeId; });
+                    renderPipeline();
+                    showToast('Connection removed', 'success');
+                }
+            } catch (e) { showToast('Failed to remove connection', 'error'); }
+        }
+
+        // ================================================================
+        // Pipeline Popovers (Edge & Node Config)
+        // ================================================================
+
+        function showEdgePopover(event, edgeId) {
+            event.stopPropagation();
+            closeAllPopovers();
+
+            var edge = pipelineData.edges.find(function(e) { return e.id === edgeId; });
+            if (!edge) return;
+
+            var popover = document.createElement('div');
+            popover.id = 'pipelinePopover';
+            popover.className = 'pipeline-popover';
+            popover.style.left = event.clientX + 'px';
+            popover.style.top = event.clientY + 'px';
+
+            var taskTypesVal = (edge.task_types || []).join(', ');
+            var onFailureVal = edge.on_failure || 'block';
+
+            popover.innerHTML = '<div class="popover-header">' +
+                '<span class="popover-title">Edge: ' + escapeHtml(edge.from || edge.from_agent || '') + ' \u2192 ' + escapeHtml(edge.to || edge.to_agent || '') + '</span>' +
+                '<button onclick="closeAllPopovers()" class="popover-close">&times;</button>' +
+                '</div>' +
+                '<div class="popover-body">' +
+                '<div class="form-group" style="margin-bottom:10px;">' +
+                '<label class="form-label" style="font-size:11px;">Task Types <span style="color:var(--text-muted);font-size:10px;">(comma-separated)</span></label>' +
+                '<input class="form-input" id="popover-task-types" value="' + escapeHtml(taskTypesVal) + '" style="font-size:12px;padding:6px 8px;">' +
+                '</div>' +
+                '<div class="form-group" style="margin-bottom:12px;">' +
+                '<label class="form-label" style="font-size:11px;">On Failure</label>' +
+                '<select class="form-select" id="popover-on-failure" style="font-size:12px;padding:6px 8px;">' +
+                '<option value="block"' + (onFailureVal === 'block' ? ' selected' : '') + '>Block</option>' +
+                '<option value="continue_partial"' + (onFailureVal === 'continue_partial' ? ' selected' : '') + '>Continue Partial</option>' +
+                '<option value="cancel_pipeline"' + (onFailureVal === 'cancel_pipeline' ? ' selected' : '') + '>Cancel Pipeline</option>' +
+                '</select>' +
+                '</div>' +
+                '<button onclick="saveEdgeConfig(\'' + edgeId + '\')" style="width:100%;padding:6px;border:none;border-radius:6px;background:var(--accent-indigo,#6366f1);color:white;cursor:pointer;font-size:12px;font-weight:600;">Save</button>' +
+                '</div>';
+
+            document.body.appendChild(popover);
+
+            // Close on outside click (delayed to avoid immediate close)
+            setTimeout(function() {
+                document.addEventListener('click', function closePopover(e) {
+                    if (!popover.contains(e.target)) {
+                        closeAllPopovers();
+                        document.removeEventListener('click', closePopover);
+                    }
+                });
+            }, 50);
+        }
+
+        async function saveEdgeConfig(edgeId) {
+            var taskTypesEl = document.getElementById('popover-task-types');
+            var onFailureEl = document.getElementById('popover-on-failure');
+            if (!taskTypesEl || !onFailureEl) return;
+
+            var taskTypes = taskTypesEl.value.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+            var onFailure = onFailureEl.value;
+
+            try {
+                var resp = await fetch('/api/pipeline/edges/' + encodeURIComponent(edgeId), {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({task_types: taskTypes, on_failure: onFailure}),
+                });
+                if (resp.ok) {
+                    // Update local state
+                    var edge = pipelineData.edges.find(function(e) { return e.id === edgeId; });
+                    if (edge) { edge.task_types = taskTypes; edge.on_failure = onFailure; }
+                    closeAllPopovers();
+                    showToast('Edge config saved', 'success', 2000);
+                } else {
+                    showToast('Failed to save edge config', 'error');
+                }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        function showNodePopover(event, roleName) {
+            event.stopPropagation();
+            closeAllPopovers();
+
+            var nodeConfig = (pipelineData.node_config || {})[roleName] || {};
+            var joinStrategy = nodeConfig.join_strategy || 'wait_all';
+
+            var popover = document.createElement('div');
+            popover.id = 'pipelinePopover';
+            popover.className = 'pipeline-popover';
+            popover.style.left = event.clientX + 'px';
+            popover.style.top = event.clientY + 'px';
+
+            popover.innerHTML = '<div class="popover-header">' +
+                '<span class="popover-title">' + escapeHtml(roleName) + '</span>' +
+                '<button onclick="closeAllPopovers()" class="popover-close">&times;</button>' +
+                '</div>' +
+                '<div class="popover-body">' +
+                '<div class="form-group" style="margin-bottom:12px;">' +
+                '<label class="form-label" style="font-size:11px;">Join Strategy</label>' +
+                '<select class="form-select" id="popover-join-strategy" style="font-size:12px;padding:6px 8px;">' +
+                '<option value="wait_all"' + (joinStrategy === 'wait_all' ? ' selected' : '') + '>Wait All</option>' +
+                '<option value="stream"' + (joinStrategy === 'stream' ? ' selected' : '') + '>Stream</option>' +
+                '</select>' +
+                '</div>' +
+                '<button onclick="saveNodeConfig(\'' + escapeHtml(roleName) + '\')" style="width:100%;padding:6px;border:none;border-radius:6px;background:var(--accent-indigo,#6366f1);color:white;cursor:pointer;font-size:12px;font-weight:600;">Save</button>' +
+                '</div>';
+
+            document.body.appendChild(popover);
+
+            setTimeout(function() {
+                document.addEventListener('click', function closePopover(e) {
+                    if (!popover.contains(e.target)) {
+                        closeAllPopovers();
+                        document.removeEventListener('click', closePopover);
+                    }
+                });
+            }, 50);
+        }
+
+        async function saveNodeConfig(roleName) {
+            var joinEl = document.getElementById('popover-join-strategy');
+            if (!joinEl) return;
+
+            try {
+                var resp = await fetch('/api/pipeline/node-config/' + encodeURIComponent(roleName), {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({join_strategy: joinEl.value}),
+                });
+                if (resp.ok) {
+                    if (!pipelineData.node_config) pipelineData.node_config = {};
+                    pipelineData.node_config[roleName] = {join_strategy: joinEl.value};
+                    closeAllPopovers();
+                    showToast('Node config saved', 'success', 2000);
+                }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        function closeAllPopovers() {
+            var existing = document.getElementById('pipelinePopover');
+            if (existing) existing.remove();
+            var menu = document.getElementById('nodeContextMenu');
+            if (menu) menu.remove();
+        }
+
+        function showNodeContextMenu(event, roleName) {
+            event.preventDefault();
+            event.stopPropagation();
+            // Remove existing menu
+            var old = document.getElementById('nodeContextMenu');
+            if (old) old.remove();
+
+            var menu = document.createElement('div');
+            menu.id = 'nodeContextMenu';
+            menu.style.cssText = 'position:fixed;left:' + event.clientX + 'px;top:' + event.clientY + 'px;background:var(--bg-card,#1e293b);border:1px solid var(--border-subtle,rgba(255,255,255,0.1));border-radius:8px;padding:4px;z-index:10000;min-width:180px;box-shadow:var(--shadow-lg);';
+
+            var isStart = pipelineData.start_agent === roleName;
+            var btn = document.createElement('button');
+            btn.textContent = isStart ? '\u2605 Start Agent (current)' : '\u2606 Set as Start Agent';
+            btn.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 12px;background:none;border:none;color:var(--text-primary,#f1f5f9);cursor:pointer;font-size:13px;border-radius:4px;';
+            btn.onmouseover = function() { this.style.background = 'rgba(99,102,241,0.15)'; };
+            btn.onmouseout = function() { this.style.background = 'none'; };
+            if (!isStart) {
+                btn.onclick = function() { setStartAgent(roleName); menu.remove(); };
+            }
+            menu.appendChild(btn);
+            document.body.appendChild(menu);
+
+            // Close on click outside
+            setTimeout(function() {
+                document.addEventListener('click', function closeMenu() {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                });
+            }, 10);
+        }
+
+        async function setStartAgent(roleName) {
+            try {
+                var resp = await fetch('/api/pipeline/start-agent', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({role: roleName})
+                });
+                if (resp.ok) {
+                    pipelineData.start_agent = roleName;
+                    renderPipeline();
+                    showToast(roleName + ' set as start agent', 'success');
+                }
+            } catch (e) { showToast('Failed to set start agent', 'error'); }
+        }
+
+        function renderPipelineValidation() {
+            var container = document.getElementById('pipelineValidation');
+            if (!container) return;
+            var msgs = [];
+            if (!pipelineData.start_agent) {
+                msgs.push({type: 'error', text: 'No start agent set. Right-click a node to set one.'});
+            }
+            // Check disconnected nodes
+            var roles = settingsData.roles || [];
+            var connected = new Set();
+            pipelineData.edges.forEach(function(e) { connected.add(e.from); connected.add(e.to); });
+            if (pipelineData.start_agent) connected.add(pipelineData.start_agent);
+            roles.forEach(function(r) {
+                if (!connected.has(r.role) && r.role !== pipelineData.start_agent) {
+                    msgs.push({type: 'info', text: (r.display_name || r.role) + ' (' + r.role + ') is not connected to any agent.'});
+                }
+            });
+
+            container.innerHTML = msgs.map(function(m) {
+                var bg = m.type === 'error' ? 'rgba(244,63,94,0.12)' : 'rgba(99,102,241,0.08)';
+                var color = m.type === 'error' ? '#f43f5e' : '#94a3b8';
+                var icon = m.type === 'error' ? '\u26A0' : '\u2139';
+                return '<div style="padding:8px 12px;margin-bottom:4px;border-radius:6px;background:' + bg + ';color:' + color + ';font-size:13px;">' + icon + ' ' + m.text + '</div>';
+            }).join('');
         }
 
         // ================================================================
@@ -2718,8 +3151,6 @@
                 html += renderAccordion(roleId, 'model', 'Model & Execution', renderModelFields(role));
                 // Tools
                 html += renderAccordion(roleId, 'tools', 'Tools', renderToolsFields(role));
-                // Routing
-                html += renderAccordion(roleId, 'routing', 'Routing', renderRoutingFields(role));
                 // System Prompt
                 html += renderAccordion(roleId, 'prompt', 'System Prompt', renderPromptFields(role));
                 // Advanced
@@ -2787,7 +3218,7 @@
             ];
             models.forEach(function(m) {
                 var mid = m.id || m;
-                var mname = m.name || mid;
+                var mname = m.name || m.label || mid;
                 modelOpts += '<option value="' + escapeHtml(mid) + '"' + (role.model === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
             });
 
@@ -2876,70 +3307,6 @@
             renderAgentCards();
         }
 
-        // ----- Routing Fields -----
-        function renderRoutingFields(role) {
-            var r = escapeHtml(role.role);
-            var html = '';
-            (role.routes_to || []).forEach(function(rt, idx) {
-                var target = getRoleByName(rt.role);
-                var emoji = target ? (target.emoji || '') : '';
-                var name = target ? (target.display_name || rt.role) : rt.role;
-                html += '<div class="route-item">';
-                html += '<span class="route-target">' + escapeHtml(emoji) + ' ' + escapeHtml(name) + '</span>';
-                html += '<div class="route-tasks">';
-                (rt.task_types || []).forEach(function(tt) {
-                    html += '<span class="route-task-chip">' + escapeHtml(tt) + '</span>';
-                });
-                html += '</div>';
-                html += '<button class="route-remove-btn" onclick="removeRouteFromCard(\'' + r + '\',' + idx + ')" title="Remove route">&times;</button>';
-                html += '</div>';
-            });
-
-            // Add route form
-            html += '<div class="add-route-row">';
-            html += '<select class="form-select" id="addRouteTarget-' + r + '">';
-            html += '<option value="">Select role...</option>';
-            (settingsData.roles || []).forEach(function(otherRole) {
-                if (otherRole.role !== role.role) {
-                    html += '<option value="' + escapeHtml(otherRole.role) + '">' + escapeHtml(otherRole.emoji || '') + ' ' + escapeHtml(otherRole.display_name || otherRole.role) + '</option>';
-                }
-            });
-            html += '</select>';
-            html += '<input class="form-input" id="addRouteTypes-' + r + '" placeholder="Task types (comma-sep)">';
-            html += '<button class="add-route-btn" onclick="addRouteFromCard(\'' + r + '\')">Add</button>';
-            html += '</div>';
-            return html;
-        }
-
-        function removeRouteFromCard(roleName, idx) {
-            var r = getRoleByName(roleName);
-            if (!r || !r.routes_to) return;
-            r.routes_to.splice(idx, 1);
-            markUnsaved();
-            renderAll();
-        }
-
-        function addRouteFromCard(roleName) {
-            var targetEl = document.getElementById('addRouteTarget-' + roleName);
-            var typesEl = document.getElementById('addRouteTypes-' + roleName);
-            if (!targetEl || !typesEl) return;
-            var target = targetEl.value;
-            if (!target) { showToast('Select a target role', 'error'); return; }
-            var types = typesEl.value.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
-            var r = getRoleByName(roleName);
-            if (!r) return;
-            if (!r.routes_to) r.routes_to = [];
-            var exists = r.routes_to.some(function(rt) { return rt.role === target; });
-            if (exists) {
-                showToast('Route already exists', 'info');
-                return;
-            }
-            r.routes_to.push({ role: target, task_types: types });
-            markUnsaved();
-            renderAll();
-            showToast('Route added', 'success');
-        }
-
         // ----- System Prompt Fields -----
         function renderPromptFields(role) {
             var r = escapeHtml(role.role);
@@ -3008,6 +3375,22 @@
             });
             html += '</div></div>';
 
+            // Approval mode dropdown
+            html += '<div class="form-group"><label class="form-label">Approval Mode</label>';
+            html += '<select class="form-select" onchange="updateRole(\'' + r + '\',\'approval_mode\',this.value)">';
+            ['auto', 'manual', 'first_run'].forEach(function(m) {
+                html += '<option value="' + m + '"' + (role.approval_mode === m ? ' selected' : '') + '>' + m + '</option>';
+            });
+            html += '</select></div>';
+
+            // Max revision cycles and uses_worktree
+            html += '<div class="form-row">';
+            html += '<div class="form-group"><label class="form-label">Max Revision Cycles<span class="form-sublabel">(0 = unlimited)</span></label>';
+            html += '<input type="number" class="form-input" value="' + (role.max_revision_cycles || 0) + '" min="0" onchange="updateRole(\'' + r + '\',\'max_revision_cycles\',parseInt(this.value)||0)"></div>';
+            html += '<div class="form-group"><label class="form-label">Uses Git Worktree</label>';
+            html += '<label class="toggle-switch"><input type="checkbox"' + (role.uses_worktree ? ' checked' : '') + ' onchange="updateRole(\'' + r + '\',\'uses_worktree\',this.checked)"><span class="toggle-track"></span><span class="toggle-thumb"></span></label></div>';
+            html += '</div>';
+
             // Can create groups + group type
             var canCreate = role.can_create_groups || false;
             html += '<div class="toggle-row"><span class="toggle-label">Can Create Groups</span>' +
@@ -3073,17 +3456,29 @@
         // ================================================================
         // Duplicate & Delete Role
         // ================================================================
-        function duplicateRole(roleName) {
+        async function duplicateRole(roleName) {
             var r = getRoleByName(roleName);
             if (!r) return;
             var clone = deepClone(r);
             clone.role = r.role + '_copy';
             clone.display_name = (r.display_name || r.role) + ' (Copy)';
             clone.prefix = (r.prefix || 'XX') + '2';
-            settingsData.roles.push(clone);
-            markUnsaved();
-            renderAll();
-            showToast('Duplicated ' + roleName, 'success');
+            try {
+                var resp = await fetch('/api/settings/roles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(clone)
+                });
+                if (!resp.ok) {
+                    var err = await resp.text();
+                    showToast('Failed to duplicate: ' + err, 'error');
+                    return;
+                }
+                await loadSettings();
+                showToast('Duplicated ' + roleName, 'success');
+            } catch (e) {
+                showToast('Failed to duplicate: ' + e.message, 'error');
+            }
         }
 
         async function deleteRole(roleName) {
@@ -3263,6 +3658,15 @@
                     });
                 }
 
+                // Save pipeline
+                try {
+                    await fetch('/api/pipeline', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(pipelineData)
+                    });
+                } catch (pe) { console.error('Failed to save pipeline:', pe); }
+
                 markSaved();
                 showToast('All settings saved successfully', 'success');
             } catch (e) {
@@ -3274,57 +3678,198 @@
         }
 
         // ================================================================
-        // New Agent Wizard
+        // Add Agent Modal (two-tab: Presets + Custom)
         // ================================================================
-        function openWizard() {
-            wizardStep = 0;
-            wizardData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], receives_from: [], routes_to: [] };
-            document.getElementById('wizardOverlay').classList.add('open');
-            renderWizard();
+        function openAddAgent() {
+            addAgentTab = 'presets';
+            addAgentStep = 0;
+            selectedPreset = null;
+            presetCategoryFilter = 'all';
+            customData = { role: '', display_name: '', prefix: '', color: '#6366f1', emoji: '', model: '', system_prompt: '', tools: [], approval_mode: 'auto', max_revision_cycles: 0, uses_worktree: false };
+            document.getElementById('addAgentOverlay').classList.add('open');
+            loadPresetsIfNeeded().then(function() { renderAddAgent(); });
         }
+        var openWizard = openAddAgent;
 
-        function closeWizard() {
-            document.getElementById('wizardOverlay').classList.remove('open');
+        function closeAddAgent() {
+            document.getElementById('addAgentOverlay').classList.remove('open');
         }
+        var closeWizard = closeAddAgent;
 
-        function renderWizard() {
-            // Update step dots
-            document.querySelectorAll('.wizard-step-dot').forEach(function(dot, i) {
-                dot.className = 'wizard-step-dot';
-                if (i < wizardStep) dot.classList.add('completed');
-                if (i === wizardStep) dot.classList.add('active');
-            });
-
-            var body = document.getElementById('wizardBody');
-            var backBtn = document.getElementById('wizardBackBtn');
-            var nextBtn = document.getElementById('wizardNextBtn');
-
-            backBtn.style.visibility = wizardStep === 0 ? 'hidden' : 'visible';
-            nextBtn.textContent = wizardStep === 2 ? 'Create' : 'Next';
-
-            if (wizardStep === 0) {
-                body.innerHTML = renderWizardStep1();
-            } else if (wizardStep === 1) {
-                body.innerHTML = renderWizardStep2();
-            } else {
-                body.innerHTML = renderWizardStep3();
+        async function loadPresetsIfNeeded() {
+            if (allPresets.length > 0) return;
+            try {
+                var res = await fetch('/api/presets');
+                if (res.ok) { var data = await res.json(); allPresets = data.presets || []; }
+            } catch (e) {
+                console.error('Failed to load presets:', e);
             }
         }
 
-        function renderWizardStep1() {
+        function switchAddAgentTab(tab) {
+            addAgentTab = tab;
+            addAgentStep = 0;
+            selectedPreset = null;
+            document.querySelectorAll('#addAgentOverlay .tab-btn').forEach(function(btn) {
+                btn.classList.toggle('active', btn.dataset.tab === tab);
+                btn.setAttribute('aria-selected', btn.dataset.tab === tab ? 'true' : 'false');
+            });
+            renderAddAgent();
+        }
+
+        function renderAddAgent() {
+            var body = document.getElementById('addAgentBody');
+            var backBtn = document.getElementById('addAgentBackBtn');
+            var nextBtn = document.getElementById('addAgentNextBtn');
+            var title = document.getElementById('addAgentTitle');
+
+            if (addAgentTab === 'presets') {
+                backBtn.style.visibility = addAgentStep === 0 ? 'hidden' : 'visible';
+                if (addAgentStep === 0) {
+                    title.textContent = 'Choose a Preset';
+                    nextBtn.textContent = 'Select';
+                    nextBtn.disabled = !selectedPreset;
+                    body.innerHTML = renderPresetGrid();
+                } else if (addAgentStep === 1) {
+                    title.textContent = selectedPreset ? selectedPreset.display_name : 'Preset Detail';
+                    nextBtn.textContent = 'Next';
+                    nextBtn.disabled = false;
+                    body.innerHTML = renderPresetDetail();
+                } else {
+                    title.textContent = 'Choose Model';
+                    nextBtn.textContent = 'Create';
+                    nextBtn.disabled = false;
+                    body.innerHTML = renderPresetModelPicker();
+                }
+            } else {
+                backBtn.style.visibility = addAgentStep === 0 ? 'hidden' : 'visible';
+                if (addAgentStep === 0) {
+                    title.textContent = 'New Custom Agent';
+                    nextBtn.textContent = 'Next';
+                    nextBtn.disabled = false;
+                    body.innerHTML = renderCustomStep1();
+                } else {
+                    title.textContent = 'Configure Agent';
+                    nextBtn.textContent = 'Create';
+                    nextBtn.disabled = false;
+                    body.innerHTML = renderCustomStep2();
+                }
+            }
+        }
+
+        // ----- Presets Tab -----
+        function renderPresetGrid() {
+            var categories = ['all'];
+            allPresets.forEach(function(p) {
+                if (p.category && categories.indexOf(p.category) === -1) categories.push(p.category);
+            });
+
+            var html = '<div class="preset-category-tabs">';
+            categories.forEach(function(cat) {
+                html += '<button class="preset-cat-btn' + (presetCategoryFilter === cat ? ' active' : '') + '" onclick="filterPresetCategory(\'' + escapeHtml(cat) + '\')">' + escapeHtml(cat === 'all' ? 'All' : cat) + '</button>';
+            });
+            html += '</div>';
+
+            var filtered = presetCategoryFilter === 'all' ? allPresets : allPresets.filter(function(p) { return p.category === presetCategoryFilter; });
+
+            html += '<div class="preset-grid">';
+            filtered.forEach(function(p) {
+                var sel = selectedPreset && selectedPreset.preset_id === p.preset_id ? ' selected' : '';
+                html += '<div class="preset-card' + sel + '" onclick="selectPreset(\'' + escapeHtml(p.preset_id) + '\')">';
+                html += '<div class="preset-card-icon">' + escapeHtml(p.icon_emoji || p.emoji || '') + '</div>';
+                html += '<div class="preset-card-name">' + escapeHtml(p.display_name || p.preset_id) + '</div>';
+                html += '<div class="preset-card-desc">' + escapeHtml(p.description || '') + '</div>';
+                html += '</div>';
+            });
+            html += '</div>';
+            return html;
+        }
+
+        function filterPresetCategory(cat) {
+            presetCategoryFilter = cat;
+            renderAddAgent();
+        }
+
+        function selectPreset(presetId) {
+            selectedPreset = allPresets.find(function(p) { return p.preset_id === presetId; }) || null;
+            renderAddAgent();
+        }
+
+        function renderPresetDetail() {
+            if (!selectedPreset) return '<p>No preset selected.</p>';
+            var p = selectedPreset;
+
+            var html = '<div class="preset-detail">';
+            html += '<div class="preset-detail-header">';
+            html += '<span class="preset-detail-icon">' + escapeHtml(p.icon_emoji || p.emoji || '') + '</span>';
+            html += '<span class="preset-detail-name">' + escapeHtml(p.display_name || p.preset_id) + '</span>';
+            html += '</div>';
+
+            if (p.capabilities && p.capabilities.length > 0) {
+                html += '<div class="preset-detail-section"><h4>Capabilities</h4><ul>';
+                p.capabilities.forEach(function(c) { html += '<li>' + escapeHtml(c) + '</li>'; });
+                html += '</ul></div>';
+            }
+
+            if (p.tools && p.tools.length > 0) {
+                html += '<div class="preset-detail-section"><h4>Tools</h4><div class="preset-detail-chips">';
+                p.tools.forEach(function(t) { html += '<span class="chip">' + escapeHtml(t) + '</span>'; });
+                html += '</div></div>';
+            }
+
+            html += '<div class="preset-detail-section"><h4>Settings</h4>';
+            html += '<div class="form-row">';
+            html += '<div class="form-group"><label class="form-label">Approval Mode</label><span class="stat-chip">' + escapeHtml(p.approval_mode || 'auto') + '</span></div>';
+            html += '<div class="form-group"><label class="form-label">Max Revision Cycles</label><span class="stat-chip">' + (p.max_revision_cycles || 0) + '</span></div>';
+            html += '</div>';
+            html += '<div class="form-row">';
+            html += '<div class="form-group"><label class="form-label">Uses Worktree</label><span class="stat-chip">' + (p.uses_worktree ? 'Yes' : 'No') + '</span></div>';
+            html += '<div class="form-group"><label class="form-label">Max Instances</label><span class="stat-chip">' + (p.max_instances || 1) + '</span></div>';
+            html += '</div>';
+            html += '</div>';
+
+            if (p.system_prompt) {
+                html += '<div class="preset-detail-section"><h4>System Prompt</h4><pre>' + escapeHtml(p.system_prompt) + '</pre></div>';
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function renderPresetModelPicker() {
+            if (!selectedPreset) return '<p>No preset selected.</p>';
+            var models = availableModels.length > 0 ? availableModels : [
+                { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
+                { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+                { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' }
+            ];
+            var defaultModel = selectedPreset.default_model || '';
+            var opts = '';
+            models.forEach(function(m) {
+                var mid = m.id || m;
+                var mname = m.name || m.label || mid;
+                opts += '<option value="' + escapeHtml(mid) + '"' + (defaultModel === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
+            });
+            return '<div class="form-group"><label class="form-label">Model</label>' +
+                '<select class="form-select" id="preset-model-pick">' + opts + '</select></div>' +
+                '<p style="color:var(--text-muted);font-size:12px;margin-top:8px;">You can change the model later in the agent card settings.</p>';
+        }
+
+        // ----- Custom Tab -----
+        function renderCustomStep1() {
             return '<div class="form-group"><label class="form-label">Display Name</label>' +
-                '<input class="form-input" id="wiz-display-name" value="' + escapeHtml(wizardData.display_name) + '" placeholder="e.g. Product Manager" oninput="wizUpdateIdentity()"></div>' +
+                '<input class="form-input" id="wiz-display-name" value="' + escapeHtml(customData.display_name) + '" placeholder="e.g. Product Manager" oninput="wizUpdateIdentity()"></div>' +
                 '<div class="form-row">' +
                 '<div class="form-group"><label class="form-label">Role ID<span class="form-sublabel">(auto-generated)</span></label>' +
-                '<input class="form-input" id="wiz-role-id" value="' + escapeHtml(wizardData.role) + '" placeholder="auto-generated"></div>' +
+                '<input class="form-input" id="wiz-role-id" value="' + escapeHtml(customData.role) + '" placeholder="auto-generated"></div>' +
                 '<div class="form-group"><label class="form-label">Prefix<span class="form-sublabel">(2-char)</span></label>' +
-                '<input class="form-input" id="wiz-prefix" value="' + escapeHtml(wizardData.prefix) + '" maxlength="4"></div>' +
+                '<input class="form-input" id="wiz-prefix" value="' + escapeHtml(customData.prefix) + '" maxlength="4"></div>' +
                 '</div>' +
                 '<div class="form-row">' +
                 '<div class="form-group"><label class="form-label">Color</label>' +
-                '<input type="color" class="form-input" id="wiz-color" value="' + escapeHtml(wizardData.color) + '"></div>' +
+                '<input type="color" class="form-input" id="wiz-color" value="' + escapeHtml(customData.color) + '"></div>' +
                 '<div class="form-group"><label class="form-label">Emoji</label>' +
-                '<input class="form-input" id="wiz-emoji" value="' + escapeHtml(wizardData.emoji) + '" placeholder="e.g. \uD83D\uDCCB" style="font-size:18px"></div>' +
+                '<input class="form-input" id="wiz-emoji" value="' + escapeHtml(customData.emoji) + '" placeholder="e.g. \uD83D\uDCCB" style="font-size:18px"></div>' +
                 '</div>';
         }
 
@@ -3336,7 +3881,7 @@
             if (nameEl && prefixEl && !prefixEl._userEdited) prefixEl.value = autoPrefix(nameEl.value);
         }
 
-        function renderWizardStep2() {
+        function renderCustomStep2() {
             var models = availableModels.length > 0 ? availableModels : [
                 { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
                 { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
@@ -3345,139 +3890,161 @@
             var opts = '';
             models.forEach(function(m) {
                 var mid = m.id || m;
-                var mname = m.name || mid;
-                opts += '<option value="' + escapeHtml(mid) + '"' + (wizardData.model === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
+                var mname = m.name || m.label || mid;
+                opts += '<option value="' + escapeHtml(mid) + '"' + (customData.model === mid ? ' selected' : '') + '>' + escapeHtml(mname) + '</option>';
             });
 
             var html = '<div class="form-group"><label class="form-label">Model</label>' +
                 '<select class="form-select" id="wiz-model">' + opts + '</select></div>';
             html += '<div class="form-group"><label class="form-label">System Prompt</label>' +
-                '<textarea class="form-textarea" id="wiz-prompt" rows="6" placeholder="Describe this agent\'s responsibilities...">' + escapeHtml(wizardData.system_prompt) + '</textarea></div>';
+                '<textarea class="form-textarea" id="wiz-prompt" rows="6" placeholder="Describe this agent\'s responsibilities...">' + escapeHtml(customData.system_prompt) + '</textarea></div>';
             html += '<div class="form-group"><label class="form-label">Tools</label><div class="checkbox-group">';
             COMMON_TOOLS.forEach(function(tool) {
-                var checked = wizardData.tools.indexOf(tool) !== -1;
+                var checked = customData.tools.indexOf(tool) !== -1;
                 html += '<label class="checkbox-item"><input type="checkbox" value="' + escapeHtml(tool) + '"' + (checked ? ' checked' : '') + ' class="wiz-tool-cb"><label>' + escapeHtml(tool) + '</label></label>';
             });
             html += '</div></div>';
+
+            html += '<div class="form-group"><label class="form-label">Approval Mode</label>';
+            html += '<select class="form-select" id="wiz-approval-mode">';
+            ['auto', 'manual', 'first_run'].forEach(function(m) {
+                html += '<option value="' + m + '"' + (customData.approval_mode === m ? ' selected' : '') + '>' + m + '</option>';
+            });
+            html += '</select></div>';
+
+            html += '<div class="form-row">';
+            html += '<div class="form-group"><label class="form-label">Max Revision Cycles<span class="form-sublabel">(0 = unlimited)</span></label>';
+            html += '<input type="number" class="form-input" id="wiz-max-rev" value="' + (customData.max_revision_cycles || 0) + '" min="0"></div>';
+            html += '<div class="form-group"><label class="form-label">Uses Git Worktree</label>';
+            html += '<label class="toggle-switch"><input type="checkbox" id="wiz-worktree"' + (customData.uses_worktree ? ' checked' : '') + '><span class="toggle-track"></span><span class="toggle-thumb"></span></label></div>';
+            html += '</div>';
+
             return html;
         }
 
-        function renderWizardStep3() {
-            var roleNames = settingsData.roles.map(function(r) { return r; });
-            var html = '<div class="form-group"><label class="form-label">Receives From<span class="form-sublabel">(which agents route tasks to this one)</span></label>';
-            html += '<div class="checkbox-group">';
-            roleNames.forEach(function(r) {
-                var checked = wizardData.receives_from.indexOf(r.role) !== -1;
-                html += '<label class="checkbox-item"><input type="checkbox" value="' + escapeHtml(r.role) + '"' + (checked ? ' checked' : '') + ' class="wiz-recv-cb"><label>' + escapeHtml(r.emoji || '') + ' ' + escapeHtml(r.display_name || r.role) + '</label></label>';
-            });
-            html += '</div></div>';
-
-            html += '<div class="form-group"><label class="form-label">Routes To<span class="form-sublabel">(tasks types to send)</span></label>';
-            html += '<div class="checkbox-group">';
-            roleNames.forEach(function(r) {
-                var checked = wizardData.routes_to.some(function(rt) { return rt.role === r.role; });
-                html += '<label class="checkbox-item"><input type="checkbox" value="' + escapeHtml(r.role) + '"' + (checked ? ' checked' : '') + ' class="wiz-route-cb"><label>' + escapeHtml(r.emoji || '') + ' ' + escapeHtml(r.display_name || r.role) + '</label></label>';
-            });
-            html += '</div></div>';
-            return html;
+        function collectCustomStep1() {
+            var nameEl = document.getElementById('wiz-display-name');
+            var roleEl = document.getElementById('wiz-role-id');
+            var prefixEl = document.getElementById('wiz-prefix');
+            var colorEl = document.getElementById('wiz-color');
+            var emojiEl = document.getElementById('wiz-emoji');
+            if (nameEl) customData.display_name = nameEl.value;
+            if (roleEl) customData.role = roleEl.value || slugify(customData.display_name);
+            if (prefixEl) customData.prefix = prefixEl.value || autoPrefix(customData.display_name);
+            if (colorEl) customData.color = colorEl.value;
+            if (emojiEl) customData.emoji = emojiEl.value;
         }
 
-        function collectWizardData() {
-            if (wizardStep === 0) {
-                var nameEl = document.getElementById('wiz-display-name');
-                var roleEl = document.getElementById('wiz-role-id');
-                var prefixEl = document.getElementById('wiz-prefix');
-                var colorEl = document.getElementById('wiz-color');
-                var emojiEl = document.getElementById('wiz-emoji');
-                if (nameEl) wizardData.display_name = nameEl.value;
-                if (roleEl) wizardData.role = roleEl.value || slugify(wizardData.display_name);
-                if (prefixEl) wizardData.prefix = prefixEl.value || autoPrefix(wizardData.display_name);
-                if (colorEl) wizardData.color = colorEl.value;
-                if (emojiEl) wizardData.emoji = emojiEl.value;
-            } else if (wizardStep === 1) {
-                var modelEl = document.getElementById('wiz-model');
-                var promptEl = document.getElementById('wiz-prompt');
-                if (modelEl) wizardData.model = modelEl.value;
-                if (promptEl) wizardData.system_prompt = promptEl.value;
-                wizardData.tools = [];
-                document.querySelectorAll('.wiz-tool-cb:checked').forEach(function(cb) {
-                    wizardData.tools.push(cb.value);
-                });
-            } else if (wizardStep === 2) {
-                wizardData.receives_from = [];
-                document.querySelectorAll('.wiz-recv-cb:checked').forEach(function(cb) {
-                    wizardData.receives_from.push(cb.value);
-                });
-                wizardData.routes_to = [];
-                document.querySelectorAll('.wiz-route-cb:checked').forEach(function(cb) {
-                    wizardData.routes_to.push({ role: cb.value, task_types: [] });
-                });
+        function collectCustomStep2() {
+            var modelEl = document.getElementById('wiz-model');
+            var promptEl = document.getElementById('wiz-prompt');
+            var approvalEl = document.getElementById('wiz-approval-mode');
+            var maxRevEl = document.getElementById('wiz-max-rev');
+            var worktreeEl = document.getElementById('wiz-worktree');
+            if (modelEl) customData.model = modelEl.value;
+            if (promptEl) customData.system_prompt = promptEl.value;
+            if (approvalEl) customData.approval_mode = approvalEl.value;
+            if (maxRevEl) customData.max_revision_cycles = parseInt(maxRevEl.value) || 0;
+            if (worktreeEl) customData.uses_worktree = worktreeEl.checked;
+            customData.tools = [];
+            document.querySelectorAll('.wiz-tool-cb:checked').forEach(function(cb) {
+                customData.tools.push(cb.value);
+            });
+        }
+
+        function addAgentBack() {
+            if (addAgentTab === 'custom' && addAgentStep === 1) {
+                collectCustomStep2();
             }
+            if (addAgentStep > 0) { addAgentStep--; renderAddAgent(); }
         }
 
-        function wizardBack() {
-            collectWizardData();
-            if (wizardStep > 0) { wizardStep--; renderWizard(); }
-        }
+        function addAgentNext() {
+            if (addAgentTab === 'presets') {
+                if (addAgentStep === 0) {
+                    if (!selectedPreset) { showToast('Select a preset first', 'error'); return; }
+                    addAgentStep = 1;
+                    fetch('/api/presets/' + encodeURIComponent(selectedPreset.preset_id))
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) { selectedPreset = data; renderAddAgent(); })
+                        .catch(function() { renderAddAgent(); });
+                    return;
+                } else if (addAgentStep === 1) {
+                    addAgentStep = 2;
+                    renderAddAgent();
+                    return;
+                } else {
+                    var modelEl = document.getElementById('preset-model-pick');
+                    var model = modelEl ? modelEl.value : (selectedPreset.default_model || '');
+                    var roleId = selectedPreset.role || selectedPreset.preset_id;
+                    var existingIds = settingsData.roles.map(function(r) { return r.role; });
+                    var baseId = roleId;
+                    var suffix = 2;
+                    while (existingIds.indexOf(roleId) !== -1) {
+                        roleId = baseId + '_' + suffix;
+                        suffix++;
+                    }
+                    var payload = { role: roleId, preset_id: selectedPreset.preset_id, model: model };
+                    fetch('/api/settings/roles', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    }).then(function(res) {
+                        if (!res.ok) throw new Error('Server returned ' + res.status);
+                        closeAddAgent();
+                        showToast('Agent "' + (selectedPreset.display_name || roleId) + '" created from preset', 'success');
+                        return loadSettings();
+                    }).catch(function(e) {
+                        showToast('Failed to create agent: ' + e.message, 'error');
+                    });
+                    return;
+                }
+            }
 
-        function wizardNext() {
-            collectWizardData();
-            if (wizardStep < 2) {
-                if (wizardStep === 0 && !wizardData.display_name.trim()) {
+            // Custom tab
+            if (addAgentStep === 0) {
+                collectCustomStep1();
+                if (!customData.display_name.trim()) {
                     showToast('Display name is required', 'error');
                     return;
                 }
-                wizardStep++;
-                renderWizard();
+                addAgentStep = 1;
+                renderAddAgent();
             } else {
-                createNewAgent();
-            }
-        }
-
-        async function createNewAgent() {
-            if (!wizardData.role) {
-                showToast('Role ID is required', 'error');
-                return;
-            }
-            try {
+                collectCustomStep2();
+                if (!customData.role) {
+                    showToast('Role ID is required', 'error');
+                    return;
+                }
                 var payload = {
-                    role: wizardData.role,
-                    display_name: wizardData.display_name,
-                    prefix: wizardData.prefix,
-                    color: wizardData.color,
-                    emoji: wizardData.emoji,
-                    model: wizardData.model,
-                    system_prompt: wizardData.system_prompt,
-                    tools: wizardData.tools,
-                    routes_to: wizardData.routes_to,
+                    role: customData.role,
+                    display_name: customData.display_name,
+                    prefix: customData.prefix,
+                    color: customData.color,
+                    emoji: customData.emoji,
+                    model: customData.model,
+                    system_prompt: customData.system_prompt,
+                    tools: customData.tools,
+                    approval_mode: customData.approval_mode,
+                    max_revision_cycles: customData.max_revision_cycles,
+                    uses_worktree: customData.uses_worktree,
                     max_instances: 1,
                     produces: [],
                     accepts: [],
                     context_includes: ['parent_artifact', 'root_artifact']
                 };
-
-                var res = await fetch('/api/settings/roles', {
+                fetch('/api/settings/roles', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
+                }).then(function(res) {
+                    if (!res.ok) throw new Error('Server returned ' + res.status);
+                    closeAddAgent();
+                    showToast('Agent "' + customData.display_name + '" created', 'success');
+                    return loadSettings();
+                }).catch(function(e) {
+                    showToast('Failed to create agent: ' + e.message, 'error');
                 });
-
-                if (!res.ok) throw new Error('Server returned ' + res.status);
-
-                // Add "receives_from" by updating source roles
-                for (var i = 0; i < wizardData.receives_from.length; i++) {
-                    var sourceRole = getRoleByName(wizardData.receives_from[i]);
-                    if (sourceRole) {
-                        if (!sourceRole.routes_to) sourceRole.routes_to = [];
-                        sourceRole.routes_to.push({ role: wizardData.role, task_types: [] });
-                    }
-                }
-
-                closeWizard();
-                showToast('Agent "' + wizardData.display_name + '" created', 'success');
-                await loadSettings();
-            } catch (e) {
-                showToast('Failed to create agent: ' + e.message, 'error');
             }
         }
 
@@ -3521,7 +4088,7 @@
                 var resp = await fetch('/api/budgets', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ scope: scope, amount: amount, period: period })
+                    body: JSON.stringify({ scope: scope, budget_usd: amount, period: period })
                 });
 
                 if (resp.ok) {
@@ -3568,19 +4135,19 @@
             }
             // Escape
             if (e.key === 'Escape') {
-                var wizard = document.getElementById('wizardOverlay');
+                var addAgent = document.getElementById('addAgentOverlay');
                 var promptFs = document.getElementById('promptFullscreen');
                 if (promptFs && promptFs.classList.contains('open')) {
                     closePromptFullscreen();
-                } else if (wizard && wizard.classList.contains('open')) {
-                    closeWizard();
+                } else if (addAgent && addAgent.classList.contains('open')) {
+                    closeAddAgent();
                 }
             }
         });
 
-        // Close wizard on overlay click
-        document.getElementById('wizardOverlay').addEventListener('click', function(e) {
-            if (e.target === this) closeWizard();
+        // Close add-agent modal on overlay click
+        document.getElementById('addAgentOverlay').addEventListener('click', function(e) {
+            if (e.target === this) closeAddAgent();
         });
 
         // ================================================================
@@ -3591,12 +4158,138 @@
         document.head.appendChild(spinStyle);
 
         // ================================================================
+        // Action Required — Human Interaction Notifications
+        // ================================================================
+        var pendingInteractions = [];
+
+        async function loadPendingInteractions() {
+            try {
+                var resp = await fetch('/api/interactions/pending');
+                if (resp.ok) {
+                    var data = await resp.json();
+                    pendingInteractions = data.interactions || [];
+                    renderActionRequired();
+                }
+            } catch (e) { console.error('Failed to load interactions:', e); }
+        }
+
+        function renderActionRequired() {
+            var section = document.getElementById('actionRequiredSection');
+            var cards = document.getElementById('actionRequiredCards');
+            var badge = document.getElementById('actionRequiredBadge');
+            if (!section || !cards) return;
+
+            if (pendingInteractions.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+
+            section.style.display = 'block';
+            badge.textContent = pendingInteractions.length;
+
+            var html = '';
+            pendingInteractions.forEach(function(req) {
+                var isApproval = req.type === 'approval';
+                var borderColor = isApproval ? 'var(--accent-amber,#f59e0b)' : 'var(--accent-cyan,#06b6d4)';
+                var icon = isApproval ? '⏸' : '🤔';
+                var reqData = req.request_data || {};
+
+                html += '<div style="border:1px solid ' + borderColor + ';border-radius:12px;padding:16px;margin-bottom:12px;background:rgba(255,255,255,0.02);">';
+                html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">';
+                html += '<span style="font-size:18px;">' + icon + '</span>';
+                html += '<strong style="color:var(--text-primary,#f1f5f9);font-size:14px;">' + escapeHtml(req.agent_role || 'Agent') + '</strong>';
+                html += '<span style="color:var(--text-muted,#94a3b8);font-size:12px;">' + (isApproval ? 'awaiting approval' : 'needs clarification') + '</span>';
+                html += '</div>';
+
+                if (isApproval) {
+                    html += '<p style="color:var(--text-secondary,#cbd5e1);font-size:13px;margin:0 0 12px;">' + escapeHtml(reqData.summary || 'Task completed, awaiting review') + '</p>';
+                    html += '<div style="display:flex;gap:8px;align-items:center;">';
+                    html += '<textarea id="feedback-' + req.id + '" placeholder="Feedback (optional for approve, required for reject)" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border-subtle,rgba(255,255,255,0.08));background:var(--bg-primary,#05070e);color:var(--text-primary,#f1f5f9);font-size:12px;resize:none;height:36px;"></textarea>';
+                    html += '<button onclick="approveInteraction(\'' + req.id + '\')" style="padding:8px 16px;border-radius:6px;border:none;background:#22c55e;color:white;cursor:pointer;font-size:12px;font-weight:600;">Approve</button>';
+                    html += '<button onclick="rejectInteraction(\'' + req.id + '\')" style="padding:8px 16px;border-radius:6px;border:none;background:#f43f5e;color:white;cursor:pointer;font-size:12px;font-weight:600;">Reject</button>';
+                    html += '</div>';
+                } else {
+                    html += '<p style="color:var(--text-secondary,#cbd5e1);font-size:13px;margin:0 0 8px;">"' + escapeHtml(reqData.question || '') + '"</p>';
+                    if (reqData.suggested_options && reqData.suggested_options.length > 0) {
+                        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">';
+                        reqData.suggested_options.forEach(function(opt) {
+                            html += '<button onclick="respondInteraction(\'' + req.id + '\',\'' + escapeHtml(opt) + '\')" style="padding:4px 12px;border-radius:999px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:12px;">' + escapeHtml(opt) + '</button>';
+                        });
+                        html += '</div>';
+                    }
+                    html += '<div style="display:flex;gap:8px;align-items:center;">';
+                    html += '<input id="response-' + req.id + '" placeholder="Type your response..." style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border-subtle,rgba(255,255,255,0.08));background:var(--bg-primary,#05070e);color:var(--text-primary,#f1f5f9);font-size:12px;">';
+                    html += '<button onclick="respondInteraction(\'' + req.id + '\')" style="padding:8px 16px;border-radius:6px;border:none;background:var(--accent-indigo,#6366f1);color:white;cursor:pointer;font-size:12px;font-weight:600;">Respond</button>';
+                    html += '<button onclick="skipInteraction(\'' + req.id + '\')" style="padding:8px 12px;border-radius:6px;border:none;background:var(--bg-card);color:var(--text-muted);cursor:pointer;font-size:12px;">Skip</button>';
+                    html += '</div>';
+                }
+                html += '</div>';
+            });
+
+            cards.innerHTML = html;
+        }
+
+        async function approveInteraction(reqId) {
+            var feedbackEl = document.getElementById('feedback-' + reqId);
+            var notes = feedbackEl ? feedbackEl.value.trim() : '';
+            try {
+                var resp = await fetch('/api/interactions/' + reqId + '/approve', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({notes: notes || null}),
+                });
+                if (resp.ok) { showToast('Approved', 'success'); loadPendingInteractions(); }
+                else { showToast('Failed to approve', 'error'); }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        async function rejectInteraction(reqId) {
+            var feedbackEl = document.getElementById('feedback-' + reqId);
+            var feedback = feedbackEl ? feedbackEl.value.trim() : '';
+            if (!feedback) { showToast('Feedback is required for rejection', 'error'); return; }
+            try {
+                var resp = await fetch('/api/interactions/' + reqId + '/reject', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({feedback: feedback}),
+                });
+                if (resp.ok) { showToast('Rejected', 'success'); loadPendingInteractions(); }
+                else { showToast('Failed to reject', 'error'); }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        async function respondInteraction(reqId, quickResponse) {
+            var responseEl = document.getElementById('response-' + reqId);
+            var response = quickResponse || (responseEl ? responseEl.value.trim() : '');
+            if (!response) { showToast('Response is required', 'error'); return; }
+            try {
+                var resp = await fetch('/api/interactions/' + reqId + '/respond', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({response: response}),
+                });
+                if (resp.ok) { showToast('Response sent', 'success'); loadPendingInteractions(); }
+                else { showToast('Failed to respond', 'error'); }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        async function skipInteraction(reqId) {
+            try {
+                var resp = await fetch('/api/interactions/' + reqId + '/skip', { method: 'POST' });
+                if (resp.ok) { showToast('Skipped', 'success'); loadPendingInteractions(); }
+            } catch (e) { showToast('Error: ' + e.message, 'error'); }
+        }
+
+        // ================================================================
         // Init
         // ================================================================
         (async function init() {
             const hasProject = await checkProjectOrRedirect();
             if (hasProject) {
                 await loadSettings();
+                loadPendingInteractions();
+                // Poll for pending interactions every 10 seconds
+                setInterval(loadPendingInteractions, 10000);
             }
         })();
     </script>
