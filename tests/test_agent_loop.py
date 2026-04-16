@@ -280,3 +280,258 @@ async def test_build_context_provider_get_context_failure(
     # Should NOT raise
     context = await loop.build_context(task)
     assert task["id"] in context
+
+
+# ------------------------------------------------------------------
+# Stage-1 completion gate tests (Fix #1 + Fix #2)
+# ------------------------------------------------------------------
+
+
+async def _complete_architect_task_with_no_children(
+    board: TaskBoard,
+    event_bus: EventBus,
+    instance_mgr: InstanceManager,
+    *,
+    requires_fanout=None,
+    fanout_retries: int = 0,
+    task_type: str = "tech_design",
+):
+    """Helper: create an architect task in-progress and run the completion gate."""
+    group = await board.create_group(title="F", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Design something",
+        task_type=task_type,
+        assigned_to="architect",
+        created_by="human",
+        requires_fanout=requires_fanout,
+    )
+    # Move to in_progress (agent has already been working on it).
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = ?, "
+        "fanout_retries = ? WHERE id = ?",
+        ("architect-1", fanout_retries, task["id"]),
+    )
+    task_row = await board.get_task(task["id"])
+
+    role = _make_role(role="architect", display_name="Architect")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="architect-1")
+    await loop.complete_and_handoff(task_row, "I designed it.")
+    return task_row["id"]
+
+
+async def test_fanout_gate_requeues_tech_design_without_children(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """Fix #2: tech_design with zero actionable children is re-queued."""
+    task_id = await _complete_architect_task_with_no_children(
+        board, event_bus, instance_mgr,
+    )
+    row = await board.get_task(task_id)
+    assert row["status"] == "pending"
+    assert row["claimed_by"] is None
+    assert row["fanout_retries"] == 1
+
+
+async def test_fanout_gate_escalates_after_two_retries(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """Fix #2: after 2 retries with no fan-out, complete anyway and emit
+    escalation event — don't stall the queue forever."""
+    task_id = await _complete_architect_task_with_no_children(
+        board, event_bus, instance_mgr, fanout_retries=2,
+    )
+    row = await board.get_task(task_id)
+    assert row["status"] == "completed"
+
+
+async def test_fanout_gate_skips_when_requires_fanout_is_false(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """Fix #2: explicit requires_fanout=False (e.g. ADR/research) passes the
+    gate even with no children. This is the escape hatch for design-only
+    tasks."""
+    task_id = await _complete_architect_task_with_no_children(
+        board, event_bus, instance_mgr, requires_fanout=False,
+    )
+    row = await board.get_task(task_id)
+    assert row["status"] == "completed"
+
+
+async def test_fanout_gate_passes_when_actionable_child_exists(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """Fix #2: a tech_design with at least one coder child passes."""
+    group = await board.create_group(title="F", origin="pm", created_by="human")
+    parent = await board.create_task(
+        group_id=group["id"], title="Design",
+        task_type="tech_design", assigned_to="architect", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'architect-1' "
+        "WHERE id = ?", (parent["id"],),
+    )
+    await board.create_task(
+        group_id=group["id"], title="Code it",
+        task_type="implementation", assigned_to="coder",
+        created_by="architect-1", parent_id=parent["id"],
+    )
+    parent_row = await board.get_task(parent["id"])
+
+    role = _make_role(role="architect", display_name="Architect")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="architect-1")
+    await loop.complete_and_handoff(parent_row, "done")
+    row = await board.get_task(parent["id"])
+    assert row["status"] == "completed"
+
+
+async def test_fanout_gate_ignores_non_actionable_children(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """Peer-architecture-review children don't count as fan-out — they don't
+    produce code, so the gate must still re-queue."""
+    group = await board.create_group(title="F", origin="pm", created_by="human")
+    parent = await board.create_task(
+        group_id=group["id"], title="Design",
+        task_type="tech_design", assigned_to="architect", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'architect-1' "
+        "WHERE id = ?", (parent["id"],),
+    )
+    # Peer review task — same role, not coder/verifier.
+    await board.create_task(
+        group_id=group["id"], title="Review",
+        task_type="architecture_review", assigned_to="architect",
+        created_by="architect-1", parent_id=parent["id"],
+    )
+    parent_row = await board.get_task(parent["id"])
+    role = _make_role(role="architect", display_name="Architect")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="architect-1")
+    await loop.complete_and_handoff(parent_row, "done")
+    row = await board.get_task(parent["id"])
+    assert row["status"] == "pending"
+    assert row["fanout_retries"] == 1
+
+
+async def test_merge_gate_auto_creates_verifier_task(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Fix #1: completing an implementation task with no VR child and a
+    substantial diff auto-creates a verifier task."""
+    group = await board.create_group(title="F", origin="pm", created_by="human")
+    architect_task = await board.create_task(
+        group_id=group["id"], title="Design",
+        task_type="tech_design", assigned_to="architect", created_by="human",
+    )
+    impl = await board.create_task(
+        group_id=group["id"], title="Implement",
+        task_type="implementation", assigned_to="coder",
+        created_by="architect-1", parent_id=architect_task["id"],
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'coder-1' "
+        "WHERE id = ?", (impl["id"],),
+    )
+
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+
+    # Simulate a 100-LOC diff — large enough to demand verification.
+    async def fake_count(worktree_path, branch_name):
+        return 100
+    monkeypatch.setattr(loop, "_count_changed_loc", fake_count)
+
+    impl_row = await board.get_task(impl["id"])
+    await loop.complete_and_handoff(impl_row, "I wrote the feature.")
+
+    # Verify the task completed AND a verifier child was auto-created.
+    impl_after = await board.get_task(impl["id"])
+    assert impl_after["status"] == "completed"
+
+    verifier_children = await board._db.execute_fetchall(
+        "SELECT id, assigned_to, status FROM tasks "
+        "WHERE parent_id = ? AND assigned_to = 'verifier'",
+        (impl["id"],),
+    )
+    assert len(verifier_children) == 1, (
+        f"expected auto-created VR, got {verifier_children}"
+    )
+    assert verifier_children[0]["status"] == "pending"
+
+
+async def test_merge_gate_skips_tiny_diffs(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Fix #1: a <20 LOC bug-fix shouldn't force a verifier task. CD-032's
+    3-line pyproject tweak is the canonical example."""
+    group = await board.create_group(title="F", origin="pm", created_by="human")
+    impl = await board.create_task(
+        group_id=group["id"], title="3-line fix",
+        task_type="bug_fix", assigned_to="coder", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'coder-1' "
+        "WHERE id = ?", (impl["id"],),
+    )
+
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+
+    async def fake_count(worktree_path, branch_name):
+        return 3
+    monkeypatch.setattr(loop, "_count_changed_loc", fake_count)
+
+    impl_row = await board.get_task(impl["id"])
+    await loop.complete_and_handoff(impl_row, "fixed the typo")
+
+    children = await board._db.execute_fetchall(
+        "SELECT id FROM tasks WHERE parent_id = ?", (impl["id"],),
+    )
+    assert children == []
+
+
+async def test_merge_gate_does_not_double_create_when_vr_exists(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Fix #1: if the coder already created a VR, don't add a second one."""
+    group = await board.create_group(title="F", origin="pm", created_by="human")
+    impl = await board.create_task(
+        group_id=group["id"], title="Implement",
+        task_type="implementation", assigned_to="coder", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'coder-1' "
+        "WHERE id = ?", (impl["id"],),
+    )
+    # Coder manually created its VR — gate should respect it.
+    await board.create_task(
+        group_id=group["id"], title="Verify",
+        task_type="verification", assigned_to="verifier",
+        created_by="coder-1", parent_id=impl["id"],
+    )
+
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+
+    async def fake_count(worktree_path, branch_name):
+        return 500
+    monkeypatch.setattr(loop, "_count_changed_loc", fake_count)
+
+    impl_row = await board.get_task(impl["id"])
+    await loop.complete_and_handoff(impl_row, "done")
+
+    vrs = await board._db.execute_fetchall(
+        "SELECT id FROM tasks WHERE parent_id = ? AND assigned_to = 'verifier'",
+        (impl["id"],),
+    )
+    assert len(vrs) == 1

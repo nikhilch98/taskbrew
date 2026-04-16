@@ -945,3 +945,539 @@ async def test_guardrail_rejection_cycle_limit_configurable(guardrail_client):
     })
     assert resp.status_code == 409
     assert "cycle limit" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Artifact viewer: agents write flat files + output_text, read-side must union
+# structured/flat/output_text sources so the UI surfaces real content.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def artifact_client(tmp_path):
+    from taskbrew.config_loader import (
+        AutoScaleDefaults,
+        GuardrailsConfig,
+        RoleConfig,
+        TeamConfig,
+    )
+
+    project_dir = tmp_path / "project"
+    (project_dir / "artifacts").mkdir(parents=True)
+
+    roles = {
+        "architect": RoleConfig(
+            role="architect", display_name="Architect", prefix="AR",
+            color="#8b5cf6", emoji="\U0001F3D7", system_prompt="Arch prompt",
+            produces=["tech_design"], accepts=["tech_design"],
+            routes_to=[], routing_mode="open",
+        ),
+    }
+    team_config = TeamConfig(
+        team_name="artifact-test",
+        db_path=":memory:",
+        dashboard_host="0.0.0.0",
+        dashboard_port=8421,
+        artifacts_base_dir="artifacts",
+        default_max_instances=1,
+        default_poll_interval=5,
+        default_idle_timeout=300,
+        default_auto_scale=AutoScaleDefaults(enabled=False),
+        guardrails=GuardrailsConfig(
+            max_task_depth=5, max_tasks_per_group=20, rejection_cycle_limit=2,
+        ),
+    )
+
+    db = Database(str(tmp_path / "artifacts.db"))
+    await db.initialize()
+    board = TaskBoard(db, group_prefixes={"architect": "FEAT"})
+    await board.register_prefixes({"architect": "AR"})
+    event_bus = EventBus()
+    instance_mgr = InstanceManager(db)
+
+    from taskbrew.dashboard.app import create_app
+
+    app = create_app(
+        event_bus=event_bus,
+        task_board=board,
+        instance_manager=instance_mgr,
+        roles=roles,
+        team_config=team_config,
+        project_dir=str(project_dir),
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield {
+            "client": client,
+            "board": board,
+            "db": db,
+            "project_dir": project_dir,
+        }
+    await db.close()
+
+
+async def test_task_artifacts_include_flat_files_by_prefix(artifact_client):
+    """Files written flat under artifacts/ should surface for the owning task."""
+    c = artifact_client["client"]
+    board = artifact_client["board"]
+    project_dir = artifact_client["project_dir"]
+
+    group = await board.create_group(title="Docs feature", origin="architect", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Design README",
+        task_type="tech_design",
+        assigned_to="architect",
+        created_by="human",
+    )
+    task_id = task["id"]
+
+    flat_path = project_dir / "artifacts" / f"{task_id}_design.md"
+    flat_path.write_text("# Design\n\nHello from the architect.\n")
+
+    # Unrelated flat file with a prefix-collision must NOT leak in.
+    (project_dir / "artifacts" / f"{task_id}1_other.md").write_text("unrelated")
+
+    resp = await c.get(f"/api/artifacts/{group['id']}/{task_id}")
+    assert resp.status_code == 200
+    files = resp.json()["files"]
+    assert f"{task_id}_design.md" in files
+    assert f"{task_id}1_other.md" not in files
+
+    resp = await c.get(
+        f"/api/artifacts/{group['id']}/{task_id}/{task_id}_design.md"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["content"].startswith("# Design")
+
+
+async def test_task_artifacts_include_output_text_as_synthetic_file(artifact_client):
+    """tasks.output_text should surface as a synthetic agent_output.md artifact."""
+    c = artifact_client["client"]
+    board = artifact_client["board"]
+    db = artifact_client["db"]
+
+    group = await board.create_group(title="Docs feature", origin="architect", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Design README",
+        task_type="tech_design",
+        assigned_to="architect",
+        created_by="human",
+    )
+    task_id = task["id"]
+
+    summary = "Design document created at artifacts/AR-007_design.md.\n\nAll sections covered."
+    await db.execute("UPDATE tasks SET output_text = ? WHERE id = ?", (summary, task_id))
+
+    resp = await c.get(f"/api/artifacts/{group['id']}/{task_id}")
+    assert resp.status_code == 200
+    files = resp.json()["files"]
+    assert "agent_output.md" in files
+
+    resp = await c.get(
+        f"/api/artifacts/{group['id']}/{task_id}/agent_output.md"
+    )
+    assert resp.status_code == 200
+    assert resp.json()["content"] == summary
+
+
+async def test_task_artifacts_no_output_and_no_files(artifact_client):
+    """A task with no output_text and no files should list nothing (no synthetic entry)."""
+    c = artifact_client["client"]
+    board = artifact_client["board"]
+
+    group = await board.create_group(title="Empty", origin="architect", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Nothing produced",
+        task_type="tech_design",
+        assigned_to="architect",
+        created_by="human",
+    )
+
+    resp = await c.get(f"/api/artifacts/{group['id']}/{task['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["files"] == []
+
+
+async def test_list_all_artifacts_merges_flat_and_output_text(artifact_client):
+    """/api/artifacts should list tasks whose only artifact is output_text or a flat file."""
+    c = artifact_client["client"]
+    board = artifact_client["board"]
+    db = artifact_client["db"]
+    project_dir = artifact_client["project_dir"]
+
+    group = await board.create_group(title="Docs", origin="architect", created_by="human")
+    t1 = await board.create_task(
+        group_id=group["id"], title="Has flat file",
+        task_type="tech_design", assigned_to="architect", created_by="human",
+    )
+    t2 = await board.create_task(
+        group_id=group["id"], title="Has output text",
+        task_type="tech_design", assigned_to="architect", created_by="human",
+    )
+    (project_dir / "artifacts" / f"{t1['id']}_design.md").write_text("content")
+    await db.execute(
+        "UPDATE tasks SET output_text = ? WHERE id = ?",
+        ("summary", t2["id"]),
+    )
+
+    resp = await c.get("/api/artifacts")
+    assert resp.status_code == 200
+    rows = resp.json()
+    by_task = {r["task_id"]: r for r in rows}
+    assert t1["id"] in by_task
+    assert f"{t1['id']}_design.md" in by_task[t1["id"]]["files"]
+    assert t2["id"] in by_task
+    assert "agent_output.md" in by_task[t2["id"]]["files"]
+
+
+# ---------------------------------------------------------------------------
+# Stage-1 Fix #3: architect -> coder tasks must include parent_id
+# Stage-1 Fix #12: reject duplicate verification tasks for the same parent
+# Stage-1 Fix #4: group completion triggers PM goal_verification
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def stage1_client(tmp_path):
+    """App client with PM/architect/coder/verifier roles — exercises the
+    create_task validations and group completion trigger."""
+    from taskbrew.config_loader import (
+        AutoScaleDefaults,
+        GuardrailsConfig,
+        RoleConfig,
+        RouteTarget,
+        TeamConfig,
+    )
+
+    roles = {
+        "pm": RoleConfig(
+            role="pm", display_name="PM", prefix="PM", color="#3b82f6",
+            emoji="\U0001F4CB", system_prompt="PM prompt",
+            produces=["prd"],
+            accepts=["goal", "revision", "goal_verification"],
+            routes_to=[RouteTarget(role="architect", task_types=["tech_design"])],
+            routing_mode="open",
+        ),
+        "architect": RoleConfig(
+            role="architect", display_name="Architect", prefix="AR",
+            color="#8b5cf6", emoji="\U0001F3D7", system_prompt="Arch prompt",
+            produces=["tech_design"],
+            accepts=["tech_design", "architecture_review", "research"],
+            routes_to=[RouteTarget(role="coder", task_types=["implementation"])],
+            routing_mode="open",
+        ),
+        "coder": RoleConfig(
+            role="coder", display_name="Coder", prefix="CD", color="#f59e0b",
+            emoji="\U0001F4BB", system_prompt="Coder prompt",
+            produces=["implementation"],
+            accepts=["implementation", "bug_fix", "revision"],
+            routes_to=[RouteTarget(role="verifier", task_types=["verification"])],
+            routing_mode="open",
+        ),
+        "verifier": RoleConfig(
+            role="verifier", display_name="Verifier", prefix="VR",
+            color="#06b6d4", emoji="\u2705", system_prompt="Verifier prompt",
+            produces=["verification"], accepts=["verification"],
+            routes_to=[], routing_mode="open",
+        ),
+    }
+    team_config = TeamConfig(
+        team_name="stage1-test", db_path=":memory:",
+        dashboard_host="0.0.0.0", dashboard_port=8422,
+        artifacts_base_dir="artifacts",
+        default_max_instances=1, default_poll_interval=5,
+        default_idle_timeout=300,
+        default_auto_scale=AutoScaleDefaults(enabled=False),
+        guardrails=GuardrailsConfig(
+            max_task_depth=10, max_tasks_per_group=50,
+            rejection_cycle_limit=3,
+        ),
+    )
+    db = Database(str(tmp_path / "stage1.db"))
+    await db.initialize()
+    board = TaskBoard(db, group_prefixes={"pm": "FEAT"})
+    await board.register_prefixes(
+        {"pm": "PM", "architect": "AR", "coder": "CD", "verifier": "VR"}
+    )
+    event_bus = EventBus()
+    instance_mgr = InstanceManager(db)
+
+    from taskbrew.dashboard.app import create_app
+    app = create_app(
+        event_bus=event_bus, task_board=board, instance_manager=instance_mgr,
+        roles=roles, team_config=team_config,
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield {"client": client, "board": board, "db": db}
+    await db.close()
+
+
+async def test_fix3_architect_coder_task_requires_parent_id(stage1_client):
+    """Fix #3: architect-origin coder task without parent_id -> 400."""
+    c = stage1_client["client"]
+    board = stage1_client["board"]
+    group = await board.create_group(
+        title="Build it", origin="pm", created_by="human",
+    )
+
+    resp = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Write the code",
+        "assigned_to": "coder",
+        "assigned_by": "architect-1",
+        "task_type": "implementation",
+        # parent_id deliberately missing
+    })
+    assert resp.status_code == 400
+    assert "parent_id" in resp.json()["detail"].lower()
+
+
+async def test_fix3_architect_coder_task_succeeds_with_parent_id(stage1_client):
+    """Fix #3: supplying parent_id makes the same call succeed."""
+    c = stage1_client["client"]
+    board = stage1_client["board"]
+    group = await board.create_group(
+        title="Build it", origin="pm", created_by="human",
+    )
+    parent = await board.create_task(
+        group_id=group["id"], title="Design", task_type="tech_design",
+        assigned_to="architect", created_by="human",
+    )
+
+    resp = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Write the code",
+        "assigned_to": "coder",
+        "assigned_by": "architect-1",
+        "task_type": "implementation",
+        "parent_id": parent["id"],
+    })
+    assert resp.status_code == 200
+
+
+async def test_fix3_human_created_coder_task_exempt(stage1_client):
+    """Fix #3: humans (and system) can create CD tasks without parent_id."""
+    c = stage1_client["client"]
+    board = stage1_client["board"]
+    group = await board.create_group(
+        title="Ops hotfix", origin="pm", created_by="human",
+    )
+    resp = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Hotfix",
+        "assigned_to": "coder",
+        "assigned_by": "human",
+        "task_type": "bug_fix",
+    })
+    assert resp.status_code == 200
+
+
+async def test_fix12_duplicate_verifier_task_rejected(stage1_client):
+    """Fix #12: second VR for the same parent -> 409."""
+    c = stage1_client["client"]
+    board = stage1_client["board"]
+    group = await board.create_group(
+        title="F", origin="pm", created_by="human",
+    )
+    parent = await board.create_task(
+        group_id=group["id"], title="Impl",
+        task_type="implementation", assigned_to="coder", created_by="human",
+    )
+    first = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Verify",
+        "assigned_to": "verifier",
+        "assigned_by": "coder-1",
+        "task_type": "verification",
+        "parent_id": parent["id"],
+    })
+    assert first.status_code == 200
+
+    second = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Verify again",
+        "assigned_to": "verifier",
+        "assigned_by": "coder-1",
+        "task_type": "verification",
+        "parent_id": parent["id"],
+    })
+    assert second.status_code == 409
+    assert "already exists" in second.json()["detail"].lower()
+
+
+async def test_fix12_cancelled_verifier_allows_new_one(stage1_client):
+    """Fix #12: cancelled VR doesn't block a fresh verification task."""
+    c = stage1_client["client"]
+    board = stage1_client["board"]
+    db = stage1_client["db"]
+
+    group = await board.create_group(
+        title="F", origin="pm", created_by="human",
+    )
+    parent = await board.create_task(
+        group_id=group["id"], title="Impl",
+        task_type="implementation", assigned_to="coder", created_by="human",
+    )
+    first = await c.post("/api/tasks", json={
+        "group_id": group["id"], "title": "VR",
+        "assigned_to": "verifier", "assigned_by": "coder-1",
+        "task_type": "verification", "parent_id": parent["id"],
+    })
+    assert first.status_code == 200
+    # Cancel the first VR.
+    await db.execute(
+        "UPDATE tasks SET status = 'cancelled' WHERE id = ?",
+        (first.json()["id"],),
+    )
+
+    second = await c.post("/api/tasks", json={
+        "group_id": group["id"], "title": "VR again",
+        "assigned_to": "verifier", "assigned_by": "coder-1",
+        "task_type": "verification", "parent_id": parent["id"],
+    })
+    assert second.status_code == 200
+
+
+async def test_fix4_group_completion_spawns_goal_verification(stage1_client):
+    """Fix #4: when the last task in a >=5-task group goes terminal, a PM
+    goal_verification task is auto-created and blocks the group from sealing."""
+    board = stage1_client["board"]
+    db = stage1_client["db"]
+
+    group = await board.create_group(
+        title="Large feature", origin="pm", created_by="human",
+    )
+    pm_goal = await board.create_task(
+        group_id=group["id"], title="PRD",
+        task_type="goal", assigned_to="pm", created_by="human",
+    )
+    # Need >=5 tasks total to clear the trivial-goal skip.
+    tasks = [pm_goal]
+    for i in range(5):
+        tasks.append(await board.create_task(
+            group_id=group["id"], title=f"child {i}",
+            task_type="implementation", assigned_to="coder",
+            created_by="human",
+        ))
+
+    # Mark all as in_progress then complete them one by one.
+    for t in tasks:
+        await db.execute(
+            "UPDATE tasks SET status = 'in_progress' WHERE id = ?", (t["id"],),
+        )
+    for t in tasks:
+        await board.complete_task(t["id"])
+
+    # The goal_verification task should now exist, pending for PM.
+    gv = await db.execute_fetchone(
+        "SELECT id, status, assigned_to, parent_id, requires_fanout "
+        "FROM tasks WHERE group_id = ? AND task_type = 'goal_verification'",
+        (group["id"],),
+    )
+    assert gv is not None
+    assert gv["assigned_to"] == "pm"
+    assert gv["status"] == "pending"
+    assert gv["parent_id"] == pm_goal["id"]
+    # Goal-verify should NOT be subject to the fan-out gate itself.
+    assert gv["requires_fanout"] == 0
+
+    # The group must stay active while goal verification is pending.
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "active"
+
+
+async def test_fix4_small_group_skips_goal_verification(stage1_client):
+    """Fix #4: groups with <5 tasks (e.g. FEAT-002 README) don't need a
+    second PM pass — avoids token waste on trivial goals."""
+    board = stage1_client["board"]
+    db = stage1_client["db"]
+
+    group = await board.create_group(
+        title="docs", origin="pm", created_by="human",
+    )
+    t1 = await board.create_task(
+        group_id=group["id"], title="PRD",
+        task_type="goal", assigned_to="pm", created_by="human",
+    )
+    t2 = await board.create_task(
+        group_id=group["id"], title="write doc",
+        task_type="implementation", assigned_to="coder", created_by="human",
+    )
+    for t in (t1, t2):
+        await db.execute(
+            "UPDATE tasks SET status = 'in_progress' WHERE id = ?", (t["id"],),
+        )
+    for t in (t1, t2):
+        await board.complete_task(t["id"])
+
+    gv = await db.execute_fetchone(
+        "SELECT id FROM tasks WHERE group_id = ? "
+        "AND task_type = 'goal_verification'",
+        (group["id"],),
+    )
+    assert gv is None
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "completed"
+
+
+async def test_fix4_only_fires_once_per_group(stage1_client):
+    """Fix #4: completing the auto-generated goal_verification task shouldn't
+    spawn a second one — that would loop forever."""
+    board = stage1_client["board"]
+    db = stage1_client["db"]
+
+    group = await board.create_group(
+        title="F", origin="pm", created_by="human",
+    )
+    pm_goal = await board.create_task(
+        group_id=group["id"], title="PRD",
+        task_type="goal", assigned_to="pm", created_by="human",
+    )
+    children = [pm_goal]
+    for i in range(5):
+        children.append(await board.create_task(
+            group_id=group["id"], title=f"c{i}",
+            task_type="implementation", assigned_to="coder",
+            created_by="human",
+        ))
+    for t in children:
+        await db.execute(
+            "UPDATE tasks SET status = 'in_progress' WHERE id = ?", (t["id"],),
+        )
+    for t in children:
+        await board.complete_task(t["id"])
+
+    gv_rows = await db.execute_fetchall(
+        "SELECT id FROM tasks WHERE group_id = ? "
+        "AND task_type = 'goal_verification'",
+        (group["id"],),
+    )
+    assert len(gv_rows) == 1
+
+    # Complete the goal_verification task — group should seal, no second GV.
+    gv_id = gv_rows[0]["id"]
+    await db.execute(
+        "UPDATE tasks SET status = 'in_progress' WHERE id = ?", (gv_id,),
+    )
+    await board.complete_task(gv_id)
+
+    gv_after = await db.execute_fetchall(
+        "SELECT id FROM tasks WHERE group_id = ? "
+        "AND task_type = 'goal_verification'",
+        (group["id"],),
+    )
+    assert len(gv_after) == 1  # still just the one
+
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "completed"

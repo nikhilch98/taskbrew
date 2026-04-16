@@ -17,6 +17,8 @@ class CreateTaskBody(BaseModel):
     priority: str = "medium"
     parent_id: Optional[str] = None
     blocked_by: Optional[list[str]] = None
+    # None = task_type default (tech_design => required); True/False = explicit.
+    requires_fanout: Optional[bool] = None
 
 
 class SubmitGoalBody(BaseModel):

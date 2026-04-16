@@ -151,8 +151,11 @@ async def create_task(body: CreateTaskBody):
     orch = get_orch()
 
     # --- C3: Route Validation ---
-    # Validate that the creating agent's role is allowed to route to the target
-    if body.assigned_by != "human" and orch.roles:
+    # Validate that the creating agent's role is allowed to route to the target.
+    # The literal "system" creator is reserved for internal events (e.g., the
+    # goal-verification trigger) and bypasses route validation the same way
+    # humans do.
+    if body.assigned_by not in ("human", "system") and orch.roles:
         # 1. Validate assigned_to is a known role
         if body.assigned_to not in orch.roles:
             raise HTTPException(
@@ -191,6 +194,43 @@ async def create_task(body: CreateTaskBody):
                             f"(restricted routing mode)",
                         )
                 # If "open", skip route enforcement (Level 1 & 2 still apply)
+
+    # --- Stage-1 Fix #3: Architect-origin coder tasks must link to their design.
+    # Without parent_id the coder never receives the tech_design via
+    # parent_artifact context and has to re-derive the design from scratch.
+    if body.assigned_by not in ("human", "system"):
+        m = re.match(r'^(.+)-\d+$', body.assigned_by)
+        creator_role = m.group(1) if m else None
+        if (
+            creator_role == "architect"
+            and body.assigned_to == "coder"
+            and not body.parent_id
+        ):
+            raise HTTPException(
+                400,
+                "Coder tasks created by an architect must include parent_id "
+                "referencing your tech_design task. Pass parent_id=<your task id> "
+                "so the coder receives your design as context. "
+                "(See TaskBrew Stage-1 architect->coder linkage rule.)",
+            )
+
+    # --- Stage-1 Fix #12: Reject duplicate verification tasks for the same parent.
+    # Two verifier tasks for one CD (e.g. FEAT-002's VR-017 + VR-018) waste tokens
+    # and can race on the merge.
+    if body.assigned_to == "verifier" and body.parent_id:
+        existing_vr = await orch.task_board._db.execute_fetchone(
+            "SELECT id FROM tasks "
+            "WHERE parent_id = ? AND assigned_to = 'verifier' "
+            "AND status != 'cancelled' LIMIT 1",
+            (body.parent_id,),
+        )
+        if existing_vr:
+            raise HTTPException(
+                409,
+                f"A verification task already exists for parent "
+                f"'{body.parent_id}' ({existing_vr['id']}). "
+                f"Cancel it first if you really need to re-verify.",
+            )
 
     # --- Guardrails ---
     guardrails = getattr(orch.team_config, "guardrails", None)
@@ -255,6 +295,7 @@ async def create_task(body: CreateTaskBody):
         priority=body.priority,
         parent_id=body.parent_id,
         blocked_by=body.blocked_by,
+        requires_fanout=body.requires_fanout,
     )
     await orch.event_bus.emit("task.created", {"task_id": task["id"], "group_id": body.group_id})
     return task
@@ -407,24 +448,123 @@ async def batch_tasks(body: BatchTasksBody):
 # ------------------------------------------------------------------
 # Artifacts
 # ------------------------------------------------------------------
+#
+# Agents don't currently call ArtifactStore.save_artifact — they write files
+# via the generic Write tool (landing flat in <project>/artifacts/) and their
+# final summary is persisted to tasks.output_text. To surface those, the
+# handlers below union three sources per task:
+#   1. Structured layout: <base_dir>/<group_id>/<task_id>/<filename>
+#   2. Flat files in <base_dir>/ whose basename starts with "<task_id>_" or
+#      "<task_id>." (e.g., "AR-007_design.md" → task AR-007)
+#   3. tasks.output_text surfaced as a synthetic "agent_output.md"
+
+SYNTHETIC_OUTPUT_FILENAME = "agent_output.md"
+
+
+def _artifact_base_dir(orch) -> Path:
+    tc = orch.team_config
+    return Path(orch.project_dir) / (tc.artifacts_base_dir if tc else "artifacts")
+
+
+def _flat_files_for_task(base_dir: Path, task_id: str) -> list[str]:
+    """Return basenames of files directly under ``base_dir`` that belong to
+    ``task_id`` by filename prefix. Separator-aware so "AR-007" does not
+    match "AR-0071".
+    """
+    if not base_dir.is_dir():
+        return []
+    results: list[str] = []
+    for entry in sorted(base_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        name = entry.name
+        if (
+            name.startswith(f"{task_id}_")
+            or name.startswith(f"{task_id}.")
+            or name == task_id
+        ):
+            results.append(name)
+    return results
+
+
+async def _task_output_text(orch, task_id: str) -> str | None:
+    row = await orch.task_board._db.execute_fetchone(
+        "SELECT output_text FROM tasks WHERE id = ?", (task_id,)
+    )
+    if not row:
+        return None
+    text = row.get("output_text")
+    return text or None
 
 
 @router.get("/api/artifacts")
 async def list_artifacts(group_id: str | None = None):
     orch = get_orch()
     from taskbrew.orchestrator.artifact_store import ArtifactStore
-    tc = orch.team_config
-    store = ArtifactStore(base_dir=str(Path(orch.project_dir) / (tc.artifacts_base_dir if tc else "artifacts")))
-    return store.get_all_artifacts(group_id)
+
+    base = _artifact_base_dir(orch)
+    store = ArtifactStore(base_dir=str(base))
+    results = store.get_all_artifacts(group_id)
+
+    # Index structured results for merging with flat-file / output_text sources.
+    index: dict[tuple[str, str], dict] = {
+        (entry["group_id"], entry["task_id"]): entry for entry in results
+    }
+
+    db = orch.task_board._db
+    if group_id is not None:
+        rows = await db.execute_fetchall(
+            "SELECT id, group_id, output_text FROM tasks WHERE group_id = ?",
+            (group_id,),
+        )
+    else:
+        rows = await db.execute_fetchall(
+            "SELECT id, group_id, output_text FROM tasks"
+        )
+
+    for row in rows:
+        tid, gid = row["id"], row["group_id"]
+        if not tid or not gid:
+            continue
+        extras: list[str] = _flat_files_for_task(base, tid)
+        if row.get("output_text"):
+            extras.append(SYNTHETIC_OUTPUT_FILENAME)
+        if not extras:
+            continue
+        entry = index.get((gid, tid))
+        if entry is None:
+            entry = {"group_id": gid, "task_id": tid, "files": []}
+            index[(gid, tid)] = entry
+            results.append(entry)
+        existing = set(entry["files"])
+        for name in extras:
+            if name not in existing:
+                entry["files"].append(name)
+                existing.add(name)
+
+    return results
 
 
 @router.get("/api/artifacts/{group_id}/{task_id}")
 async def get_task_artifacts(group_id: str, task_id: str):
     orch = get_orch()
     from taskbrew.orchestrator.artifact_store import ArtifactStore
-    tc = orch.team_config
-    store = ArtifactStore(base_dir=str(Path(orch.project_dir) / (tc.artifacts_base_dir if tc else "artifacts")))
-    files = store.get_task_artifacts(group_id, task_id)
+
+    base = _artifact_base_dir(orch)
+    store = ArtifactStore(base_dir=str(base))
+
+    files: list[str] = list(store.get_task_artifacts(group_id, task_id))
+    seen = set(files)
+    for name in _flat_files_for_task(base, task_id):
+        if name not in seen:
+            files.append(name)
+            seen.add(name)
+
+    if SYNTHETIC_OUTPUT_FILENAME not in seen:
+        output_text = await _task_output_text(orch, task_id)
+        if output_text:
+            files.append(SYNTHETIC_OUTPUT_FILENAME)
+
     return {"group_id": group_id, "task_id": task_id, "files": files}
 
 
@@ -432,10 +572,54 @@ async def get_task_artifacts(group_id: str, task_id: str):
 async def get_artifact_content(group_id: str, task_id: str, filename: str):
     orch = get_orch()
     from taskbrew.orchestrator.artifact_store import ArtifactStore
-    tc = orch.team_config
-    store = ArtifactStore(base_dir=str(Path(orch.project_dir) / (tc.artifacts_base_dir if tc else "artifacts")))
-    content = store.load_artifact(group_id, task_id, filename)
-    return {"filename": filename, "content": content, "group_id": group_id, "task_id": task_id}
+
+    base = _artifact_base_dir(orch)
+    store = ArtifactStore(base_dir=str(base))
+
+    if filename == SYNTHETIC_OUTPUT_FILENAME:
+        output_text = await _task_output_text(orch, task_id)
+        return {
+            "filename": filename,
+            "content": output_text or "",
+            "group_id": group_id,
+            "task_id": task_id,
+        }
+
+    structured_path = base / group_id / task_id / filename
+    if structured_path.is_file():
+        content = store.load_artifact(group_id, task_id, filename)
+        return {
+            "filename": filename,
+            "content": content,
+            "group_id": group_id,
+            "task_id": task_id,
+        }
+
+    if filename in _flat_files_for_task(base, task_id):
+        flat_path = base / filename
+        base_resolved = base.resolve()
+        flat_resolved = flat_path.resolve()
+        try:
+            flat_resolved.relative_to(base_resolved)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Path traversal detected")
+        try:
+            content = flat_path.read_text()
+        except OSError:
+            content = ""
+        return {
+            "filename": filename,
+            "content": content,
+            "group_id": group_id,
+            "task_id": task_id,
+        }
+
+    return {
+        "filename": filename,
+        "content": "",
+        "group_id": group_id,
+        "task_id": task_id,
+    }
 
 
 # ------------------------------------------------------------------

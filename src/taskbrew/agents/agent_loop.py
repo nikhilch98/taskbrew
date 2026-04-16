@@ -362,12 +362,95 @@ class AgentLoop:
 
         return output
 
-    async def complete_and_handoff(self, task: dict, output: str) -> None:
+    async def complete_and_handoff(
+        self,
+        task: dict,
+        output: str,
+        worktree_path: str | None = None,
+        branch_name: str | None = None,
+    ) -> None:
         """Mark task complete, store output, and emit event.
+
+        Before completing, applies Stage-1 gates:
+          * Fix #2 — if this was a tech_design that should have fanned out to
+            coder/verifier children and didn't, re-queue it (up to 2 retries,
+            then escalate).
+          * Fix #1 — if this was a substantial implementation task with no
+            verifier child task, auto-create one so the merge never slips
+            past review.
 
         Before completing, checks for existing downstream/handoff tasks to
         prevent duplicates when this method is reached after a retry.
         """
+        # --- Stage-1 Fix #2: Architect fan-out gate -------------------------
+        if await self._should_require_fanout(task):
+            actionable = await self._count_actionable_children(task["id"])
+            if actionable == 0:
+                retries = task.get("fanout_retries") or 0
+                if retries < 2:
+                    await self._requeue_for_fanout(task, retries)
+                    return
+                # Exhausted retries — surface for human, fall through to
+                # complete so the queue doesn't stall; the event + parent-row
+                # state marks the task as needing human attention.
+                await self.event_bus.emit(
+                    "task.escalation_required",
+                    {
+                        "task_id": task["id"],
+                        "group_id": task["group_id"],
+                        "reason": "fanout_missing_after_retries",
+                        "retries": retries,
+                    },
+                )
+                logger.error(
+                    "Task %s still has no actionable children after %d "
+                    "fan-out retries; completing anyway and escalating.",
+                    task["id"], retries,
+                )
+
+        # --- Stage-1 Fix #1: Auto-create verifier task if one is required ---
+        # Unlike the fan-out gate, we don't re-queue here — the coder already
+        # did the work. We just make sure a VR row exists so the merge flow
+        # can't be skipped. confido lost 17 branches because coder tasks
+        # self-marked complete without VR.
+        if await self._should_require_verification(
+            task, worktree_path=worktree_path, branch_name=branch_name,
+        ):
+            if not await self._has_verification_child(task["id"]):
+                try:
+                    vr = await self.board.create_task(
+                        group_id=task["group_id"],
+                        title=f"Verify {task['id']}: {task['title'][:80]}",
+                        task_type="verification",
+                        assigned_to="verifier",
+                        created_by=self.instance_id,
+                        parent_id=task["id"],
+                        priority=task.get("priority", "high"),
+                        description=(
+                            f"Auto-generated verification task for {task['id']} "
+                            f"(coder did not create one). Review the branch "
+                            f"`{branch_name or 'main'}` and merge if correct."
+                        ),
+                    )
+                    await self.event_bus.emit(
+                        "task.auto_verification_created",
+                        {
+                            "task_id": task["id"],
+                            "vr_id": vr["id"],
+                            "reason": "coder_omitted_verification",
+                        },
+                    )
+                    logger.warning(
+                        "Auto-created verification task %s for %s "
+                        "(coder did not create one)",
+                        vr["id"], task["id"],
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to auto-create verification task for %s",
+                        task["id"], exc_info=True,
+                    )
+
         # Guard against duplicate handoff tasks created by retries
         existing = await self.board._db.execute_fetchone(
             "SELECT id FROM tasks WHERE parent_id = ? AND status != 'cancelled'",
@@ -450,6 +533,144 @@ class AgentLoop:
                     )
             except Exception:
                 logger.debug("Cost attribution failed for %s", task["id"], exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Stage-1 completion gate helpers (Fix #1 + Fix #2)
+    # ------------------------------------------------------------------
+
+    _FANOUT_REQUIRED_TASK_TYPES = {"tech_design"}
+    _VERIFICATION_REQUIRED_TASK_TYPES = {"implementation", "bug_fix", "revision"}
+    _VR_DIFF_LOC_THRESHOLD = 20
+
+    async def _should_require_fanout(self, task: dict) -> bool:
+        """Return True when the fan-out gate should enforce a child task.
+
+        Explicit ``requires_fanout`` wins over the task_type default so
+        research/ADR/docs-only designs can opt out at creation time.
+        """
+        rf = task.get("requires_fanout")
+        if rf is not None:
+            # SQLite stores bool as INTEGER — 0/1 or already bool.
+            return bool(rf)
+        return task.get("task_type") in self._FANOUT_REQUIRED_TASK_TYPES
+
+    async def _count_actionable_children(self, task_id: str) -> int:
+        """Count non-cancelled children that represent actual downstream work.
+
+        "Actionable" means the child is routed to a role that does work
+        against the parent's design (coder, verifier, reviewer, integrator).
+        Peer architect reviews don't count — they don't produce code.
+        """
+        row = await self.board._db.execute_fetchone(
+            "SELECT COUNT(*) AS n FROM tasks "
+            "WHERE parent_id = ? AND status != 'cancelled' "
+            "AND assigned_to IN ('coder', 'verifier', 'reviewer', 'integrator')",
+            (task_id,),
+        )
+        return int(row["n"] or 0) if row else 0
+
+    async def _requeue_for_fanout(self, task: dict, current_retries: int) -> None:
+        """Return a design task to ``pending`` so the architect gets another
+        chance to create coder tasks. Bumps ``fanout_retries`` so we cap at 2.
+        """
+        await self.board._db.execute(
+            "UPDATE tasks "
+            "SET status = 'pending', claimed_by = NULL, started_at = NULL, "
+            "    fanout_retries = ? "
+            "WHERE id = ?",
+            (current_retries + 1, task["id"]),
+        )
+        await self.event_bus.emit(
+            "task.completion_blocked",
+            {
+                "task_id": task["id"],
+                "group_id": task["group_id"],
+                "reason": "fanout_required",
+                "retries": current_retries + 1,
+                "agent_id": self.instance_id,
+            },
+        )
+        logger.warning(
+            "Task %s returned without creating coder/verifier tasks; "
+            "re-queued for fan-out (attempt %d/2).",
+            task["id"], current_retries + 1,
+        )
+
+    async def _should_require_verification(
+        self,
+        task: dict,
+        worktree_path: str | None,
+        branch_name: str | None,
+    ) -> bool:
+        """Return True when the merge gate should demand a verifier child.
+
+        Cheap task types (documentation, research) and tiny diffs (<20 LOC)
+        are exempt. When we can't reach git (no worktree), we fall back to
+        output-length heuristic — err on the side of requiring a VR.
+        """
+        if task.get("task_type") not in self._VERIFICATION_REQUIRED_TASK_TYPES:
+            return False
+
+        loc = await self._count_changed_loc(worktree_path, branch_name)
+        if loc is None:
+            # Unknown diff — assume substantial and require VR.
+            return True
+        if loc < self._VR_DIFF_LOC_THRESHOLD:
+            return False
+        return True
+
+    async def _count_changed_loc(
+        self, worktree_path: str | None, branch_name: str | None,
+    ) -> int | None:
+        """Count added + removed lines on the current branch vs main.
+
+        Returns None when the call fails (dirty worktree, detached head,
+        no git, etc.) so the caller can decide the conservative default.
+        """
+        cwd = worktree_path or self.project_dir
+        if not cwd:
+            return None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", "--numstat", "main...HEAD",
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                return None
+        except (asyncio.TimeoutError, FileNotFoundError, OSError):
+            return None
+
+        total = 0
+        for line in stdout.decode(errors="replace").splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            added, removed = parts[0], parts[1]
+            # Binary files report "-" for both counts — skip them.
+            if added == "-" or removed == "-":
+                continue
+            try:
+                total += int(added) + int(removed)
+            except ValueError:
+                continue
+        return total
+
+    async def _has_verification_child(self, task_id: str) -> bool:
+        """True when a non-cancelled verification/reviewer task already exists
+        for this task. Also matches the ``reviewer``/``integrator`` split in
+        case a project upgraded to the Stage-2 role layout.
+        """
+        row = await self.board._db.execute_fetchone(
+            "SELECT id FROM tasks "
+            "WHERE parent_id = ? AND status != 'cancelled' "
+            "AND assigned_to IN ('verifier', 'reviewer', 'integrator') "
+            "LIMIT 1",
+            (task_id,),
+        )
+        return row is not None
 
     async def _heartbeat_loop(self):
         """Background heartbeat that runs during task execution."""
@@ -567,7 +788,11 @@ class AgentLoop:
                     pass
 
             task_logger.info("Agent %s completed task %s", self.instance_id, task["id"])
-            await self.complete_and_handoff(task, output)
+            await self.complete_and_handoff(
+                task, output,
+                worktree_path=worktree_path,
+                branch_name=branch_name,
+            )
         except Exception as e:
             task_logger.error("Agent %s failed task %s: %s", self.instance_id, task["id"], e, exc_info=True)
             await self.board.fail_task(task["id"])

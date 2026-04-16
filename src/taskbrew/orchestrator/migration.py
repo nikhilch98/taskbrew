@@ -1237,6 +1237,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_compliance_checks_file ON compliance_checks(file_path);
         CREATE INDEX IF NOT EXISTS idx_compliance_exemptions_rule ON compliance_exemptions(rule_id, file_path);
     """),
+    (29, "add_stage1_completion_gate_columns", """
+        -- Stage-1 completion gates (agent_loop fan-out + merge checks).
+        -- requires_fanout: task-level opt-in/out for the architect fan-out gate.
+        --   NULL  = use task_type default (tech_design => required)
+        --   0     = gate skipped (design-only, research, ADR, etc.)
+        --   1     = gate enforced regardless of task_type
+        -- fanout_retries: how many times complete_and_handoff has re-queued this
+        --   task after detecting missing fan-out. Capped at 2 before escalation.
+        ALTER TABLE tasks ADD COLUMN requires_fanout INTEGER;
+        ALTER TABLE tasks ADD COLUMN fanout_retries INTEGER DEFAULT 0;
+    """),
 ]
 
 

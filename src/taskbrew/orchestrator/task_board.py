@@ -133,6 +133,7 @@ class TaskBoard:
         parent_id: str | None = None,
         revision_of: str | None = None,
         blocked_by: list[str] | None = None,
+        requires_fanout: bool | None = None,
     ) -> dict:
         """Create a new task with an auto-generated ID.
 
@@ -147,11 +148,18 @@ class TaskBoard:
         now = _utcnow()
         status = "blocked" if blocked_by else "pending"
 
+        rf_stored: int | None
+        if requires_fanout is None:
+            rf_stored = None
+        else:
+            rf_stored = 1 if requires_fanout else 0
+
         await self._db.execute(
             "INSERT INTO tasks "
             "(id, group_id, parent_id, title, description, task_type, "
-            " priority, assigned_to, status, created_by, created_at, revision_of) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " priority, assigned_to, status, created_by, created_at, "
+            " revision_of, requires_fanout) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 group_id,
@@ -165,6 +173,7 @@ class TaskBoard:
                 created_by,
                 now,
                 revision_of,
+                rf_stored,
             ),
         )
 
@@ -197,6 +206,8 @@ class TaskBoard:
             "completed_at": None,
             "rejection_reason": None,
             "revision_of": revision_of,
+            "requires_fanout": rf_stored,
+            "fanout_retries": 0,
         }
 
     async def get_task(self, task_id: str) -> dict | None:
@@ -403,7 +414,8 @@ class TaskBoard:
 
         If every task in the group has status ``completed``, ``failed``, or
         ``cancelled``, the group is marked as ``completed`` with the current
-        timestamp.
+        timestamp. Also triggers Stage-1 Fix #4 (PM goal-verification) before
+        the group is sealed.
         """
         # Look up the group_id for this task.
         task = await self._db.execute_fetchone(
@@ -423,6 +435,16 @@ class TaskBoard:
         if non_terminal:
             return
 
+        # --- Stage-1 Fix #4: PM goal-verification trigger ---
+        # Before we seal the group, spawn a final PM task that re-reads every
+        # child output and confirms the original goal was actually met.
+        # confido shipped FEAT-001 "complete" despite AR-006 never creating the
+        # CLI coder tasks — this gate would have caught that.
+        if await self._maybe_spawn_goal_verification(group_id):
+            # A new pending task was just created, so the group is no longer
+            # fully terminal; bail out and let the next completion re-check.
+            return
+
         # All tasks are terminal -- mark the group as completed.
         now = _utcnow()
         await self._db.execute(
@@ -430,6 +452,63 @@ class TaskBoard:
             "WHERE id = ? AND status = 'active'",
             (now, group_id),
         )
+
+    async def _maybe_spawn_goal_verification(self, group_id: str) -> bool:
+        """Create a PM ``goal_verification`` task if the conditions are met.
+
+        Returns True if a new task was spawned (caller should treat the group
+        as still active). Returns False when skipped — no verification needed
+        or already performed.
+        """
+        # Dedup: never spawn more than one goal_verification per group.
+        already = await self._db.execute_fetchone(
+            "SELECT id FROM tasks WHERE group_id = ? "
+            "AND task_type = 'goal_verification' LIMIT 1",
+            (group_id,),
+        )
+        if already:
+            return False
+
+        # Need a PM goal task to verify against.
+        pm_goal = await self._db.execute_fetchone(
+            "SELECT id, title, description FROM tasks "
+            "WHERE group_id = ? AND task_type = 'goal' LIMIT 1",
+            (group_id,),
+        )
+        if not pm_goal:
+            return False
+
+        # Skip trivial groups — a docs-only goal like FEAT-002 ("create README")
+        # has 4-5 tasks and doesn't need a second PM pass.
+        group_size_row = await self._db.execute_fetchone(
+            "SELECT COUNT(*) AS n FROM tasks WHERE group_id = ?",
+            (group_id,),
+        )
+        if not group_size_row or (group_size_row["n"] or 0) < 5:
+            return False
+
+        await self.create_task(
+            group_id=group_id,
+            title=f"Goal verification for {pm_goal['id']}",
+            task_type="goal_verification",
+            assigned_to="pm",
+            created_by="system",
+            parent_id=pm_goal["id"],
+            priority="high",
+            description=(
+                f"Every task in group {group_id} has reached a terminal state.\n\n"
+                f"Re-read the original PRD (task {pm_goal['id']}), then walk the "
+                f"child task outputs and on-disk artifacts. Confirm that each "
+                f"deliverable named in the original goal actually exists and is "
+                f"wired up end-to-end. For every gap, create a revision task "
+                f"routed to the correct role.\n\n"
+                f"This verification task itself does NOT need to fan out further "
+                f"if everything checks out — complete with a short summary."
+            ),
+            # Goal-verification is itself a design/review task; no sub-fan-out.
+            requires_fanout=False,
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Dependency resolution

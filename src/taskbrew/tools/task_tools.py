@@ -31,6 +31,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         priority: str = "medium",
         parent_id: str = "",
         blocked_by: str = "",
+        requires_fanout: str = "",
     ) -> str:
         """Create a new task on the task board and assign it to an agent role.
 
@@ -40,14 +41,25 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             assigned_to: Role that should pick up the task: pm, architect, coder, verifier.
             assigned_by: Your agent instance ID (e.g. pm-1) — who is creating this task.
             task_type: Task type the target role accepts.
-                - pm: goal, revision
-                - architect: tech_design, architecture_review, rejection
+                - pm: goal, revision, goal_verification
+                - architect: tech_design, architecture_review, rejection, research, adr
                 - coder: implementation, bug_fix, revision
                 - verifier: verification
             description: Detailed description with acceptance criteria, file references, etc.
             priority: Task priority — critical, high, medium (default), or low.
-            parent_id: Optional parent task ID to link this task in the hierarchy.
+            parent_id: Parent task ID to link this task in the hierarchy.
+                REQUIRED when an architect creates a coder task — so the coder
+                receives your design as context via parent_artifact. Omitting
+                it on an architect->coder route returns HTTP 400.
             blocked_by: Comma-separated list of task IDs that must complete before this one starts. Leave empty if not blocked.
+            requires_fanout: Optional override for the fan-out gate.
+                - Leave empty ("") to use the task_type default (tech_design
+                  requires fan-out; everything else does not).
+                - "false" to opt out — use this for design-only deliverables
+                  like research notes, ADRs, or documentation plans where no
+                  downstream coder task is expected.
+                - "true" to opt in — rare; forces the gate on a task_type
+                  that normally wouldn't require fan-out.
         """
         payload: dict = {
             "group_id": group_id,
@@ -63,6 +75,12 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             payload["parent_id"] = parent_id
         if blocked_by:
             payload["blocked_by"] = [t.strip() for t in blocked_by.split(",") if t.strip()]
+        rf = requires_fanout.strip().lower()
+        if rf in ("true", "1", "yes"):
+            payload["requires_fanout"] = True
+        elif rf in ("false", "0", "no"):
+            payload["requires_fanout"] = False
+        # empty string => omit, API will apply task_type default
 
         data = json.dumps(payload).encode()
         req = urllib.request.Request(

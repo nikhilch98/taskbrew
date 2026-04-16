@@ -68,13 +68,25 @@ async def test_full_task_flow(system):
     rv_updated = await board.get_task(rv_task["id"])
     assert rv_updated["status"] == "pending"
 
-    # 6. Reviewer completes -> done
+    # 6. Reviewer completes -> Stage-1 Fix #4: group completion triggers
+    # an auto-generated PM goal_verification task (group has 5+ tasks, so it
+    # is not considered trivial).
     await board.claim_task("reviewer", "reviewer-1")
     await board.complete_task(rv_task["id"])
 
-    # Verify all tasks completed with same group
     all_tasks = await board.get_group_tasks(group["id"])
-    assert len(all_tasks) == 5
+    assert len(all_tasks) == 6
+    gv = [t for t in all_tasks if t["task_type"] == "goal_verification"]
+    assert len(gv) == 1
+    assert gv[0]["assigned_to"] == "pm"
+    assert gv[0]["status"] == "pending"
+
+    # 7. PM completes the goal verification -> group seals.
+    await board.claim_task("pm", "pm-1")
+    await board.complete_task(gv[0]["id"])
+
+    all_tasks = await board.get_group_tasks(group["id"])
+    assert len(all_tasks) == 6
     assert all(t["status"] == "completed" for t in all_tasks)
     assert all(t["group_id"] == group["id"] for t in all_tasks)
 
