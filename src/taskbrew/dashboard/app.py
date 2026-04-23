@@ -425,8 +425,38 @@ def create_app(
 
     app.include_router(tasks_router, tags=["Tasks"])
     app.include_router(agents_router, tags=["Agents"])
-    app.include_router(intelligence_router, tags=["Intelligence V1"])
-    app.include_router(intelligence_v2_router, tags=["Intelligence V2"])
+
+    # audit 12a / cross-cutting: v1 and v2 Intelligence routers are
+    # deprecated in favour of v3. We add a middleware that stamps
+    # ``Deprecation: true`` / ``Sunset`` headers on every v1+v2
+    # response so HTTP clients (dashboard, operator scripts, CI)
+    # can see the deprecation without removing the routes yet.
+    # Pick a conservative sunset date: 12 months from the current
+    # version's release -- operators have a year to migrate.
+    from datetime import datetime, timezone, timedelta
+    _intel_sunset = (
+        datetime.now(timezone.utc) + timedelta(days=365)
+    ).strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+    @app.middleware("http")
+    async def _intel_deprecation_headers(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/api/v2/") or (
+            path.startswith("/api/")
+            and not path.startswith("/api/v2/")
+            and not path.startswith("/api/v3/")
+            and "intelligence" in path
+        ):
+            response.headers["Deprecation"] = "true"
+            response.headers["Sunset"] = _intel_sunset
+            response.headers["Link"] = (
+                '</api/v3>; rel="successor-version"'
+            )
+        return response
+
+    app.include_router(intelligence_router, tags=["Intelligence V1 (deprecated)"])
+    app.include_router(intelligence_v2_router, tags=["Intelligence V2 (deprecated)"])
     app.include_router(intelligence_v3_router, tags=["Intelligence V3"])
     app.include_router(costs_router, tags=["Costs"])
     app.include_router(exports_router, tags=["Export & Reports"])
