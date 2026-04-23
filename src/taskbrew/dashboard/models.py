@@ -348,8 +348,12 @@ class RecordFixBody(BaseModel):
 
 
 class CodeSearchBody(BaseModel):
-    query: str
-    limit: int = 10
+    # audit 12a F#6: the query string is inlined into a
+    # semantic-search prompt; limit lands on LIMIT in SQL. Both need
+    # hard caps or a caller can submit a multi-MB query and burn
+    # tokens/CPU per request.
+    query: str = Field(max_length=2_000)
+    limit: int = Field(default=10, ge=1, le=100)
 
 
 class DebtScoreBody(BaseModel):
