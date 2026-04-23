@@ -357,12 +357,35 @@ class Database:
         await self._conn.commit()
 
         # --- Migrations for existing databases ---
+        # audit 03 F#6: the ALTER TABLE calls below mean to add columns
+        # that older databases are missing; re-running them on a newer
+        # DB raises "duplicate column name X". That is the ONLY expected
+        # failure. The previous bare ``except Exception: pass`` also
+        # swallowed disk-full errors, syntax bugs introduced by future
+        # edits, and permission errors -- silent half-migrations that
+        # then exploded as "no such column" on the next write.
+        #
+        # We now match the specific SQLite error text ("duplicate column")
+        # and re-raise anything else.
+        async def _alter_add_column_if_missing(sql: str, col: str) -> None:
+            try:
+                await self._conn.execute(sql)
+                await self._conn.commit()
+            except Exception as exc:  # noqa: BLE001 -- narrowed below
+                msg = str(exc).lower()
+                if "duplicate column" in msg or "already exists" in msg:
+                    logger.debug("Column %s already present (benign): %s", col, exc)
+                    return
+                logger.error(
+                    "ALTER TABLE failed for column %s: %s", col, exc,
+                )
+                raise
+
         # Add output_text column if missing (backwards compat)
-        try:
-            await self._conn.execute("ALTER TABLE tasks ADD COLUMN output_text TEXT")
-            await self._conn.commit()
-        except Exception as exc:
-            logger.debug("output_text column already exists: %s", exc)
+        await _alter_add_column_if_missing(
+            "ALTER TABLE tasks ADD COLUMN output_text TEXT",
+            "output_text",
+        )
 
         # Add HITL columns to tasks table if missing (backwards compat)
         for col, col_type, default in [
@@ -371,20 +394,27 @@ class Database:
             ("instance_token", "TEXT", None),
             ("config_snapshot", "TEXT", None),
         ]:
-            try:
-                default_clause = f" DEFAULT {default}" if default else ""
-                await self._conn.execute(
-                    f"ALTER TABLE tasks ADD COLUMN {col} {col_type}{default_clause}"
-                )
-                await self._conn.commit()
-            except Exception:
-                pass  # Column already exists
+            default_clause = f" DEFAULT {default}" if default else ""
+            await _alter_add_column_if_missing(
+                f"ALTER TABLE tasks ADD COLUMN {col} {col_type}{default_clause}",
+                col,
+            )
 
-        # Create indexes that depend on ALTER TABLE columns
+        # Create indexes that depend on ALTER TABLE columns. If the
+        # columns truly don't exist (first-boot old DB), SQLite raises
+        # 'no such column' -- that's recoverable, so catch it. Any other
+        # failure (syntax, IO) is fatal.
         try:
             await self._conn.executescript(_DEFERRED_INDEX_SQL)
-        except Exception:
-            pass  # Columns may not exist yet on very old databases
+        except Exception as exc:  # noqa: BLE001 -- narrowed below
+            msg = str(exc).lower()
+            if "no such column" in msg or "already exists" in msg:
+                logger.debug(
+                    "Deferred index SQL skipped (benign schema state): %s", exc,
+                )
+            else:
+                logger.error("Deferred index SQL failed: %s", exc)
+                raise
 
         # Apply pending schema migrations
         from taskbrew.orchestrator.migration import MigrationManager

@@ -32,32 +32,50 @@ _logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
+    """WebSocket connection registry and broadcast fan-out.
+
+    audit 10 F#13: append/remove/iterate on ``self.active`` now runs
+    under ``self._lock`` so concurrent connect/disconnect cannot leave a
+    stale reference in-flight during broadcast.
+    """
+
     def __init__(self):
         self.active: list[WebSocket] = []
+        self._lock = asyncio.Lock()
 
-    async def connect(self, ws: WebSocket):
-        await ws.accept()
-        self.active.append(ws)
+    async def connect(self, ws: WebSocket, subprotocol: str | None = None):
+        # Caller must have already validated origin + auth. subprotocol
+        # is echoed back so browser clients can confirm negotiation.
+        await ws.accept(subprotocol=subprotocol)
+        async with self._lock:
+            self.active.append(ws)
 
-    def disconnect(self, ws: WebSocket):
-        try:
-            self.active.remove(ws)
-        except ValueError:
-            pass  # already removed
+    async def disconnect(self, ws: WebSocket):
+        async with self._lock:
+            try:
+                self.active.remove(ws)
+            except ValueError:
+                pass  # already removed
 
     async def broadcast(self, data: dict[str, Any]):
         message = json.dumps(data)
+        # Snapshot under the lock so a disconnect mid-iteration doesn't
+        # mutate the list we're iterating.
+        async with self._lock:
+            targets = list(self.active)
         dead: list[WebSocket] = []
-        for ws in list(self.active):
+        for ws in targets:
             try:
                 await ws.send_text(message)
             except Exception:
                 dead.append(ws)
-        for ws in dead:
-            try:
-                self.active.remove(ws)
-            except ValueError:
-                pass
+        if dead:
+            async with self._lock:
+                for ws in dead:
+                    try:
+                        self.active.remove(ws)
+                    except ValueError:
+                        pass
 
 
 def create_app(
@@ -341,7 +359,15 @@ def create_app(
     system_router.set_auth_deps(verify_admin)
     system_router.set_project_deps(project_manager, broadcast_event)
     comparison_router.set_comparison_deps(project_manager)
-    ws_router.set_ws_deps(ws_manager, chat_manager)
+    # audit 10 F#4/F#7: wire auth_manager + cors_origins into the WS
+    # router so it can validate the Origin header and the bearer token
+    # on handshake.
+    ws_router.set_ws_deps(
+        ws_manager,
+        chat_manager,
+        auth_manager=_auth_manager,
+        allowed_origins=cors_origins,
+    )
 
     # audit 11a F#16: gate the /api/usage/* CLI-spawning endpoints.
     from taskbrew.dashboard.routers import usage as usage_router

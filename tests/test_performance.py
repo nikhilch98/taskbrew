@@ -374,8 +374,9 @@ class TestEventBusPerformance:
         start = time.monotonic()
         for ws in connections:
             await mgr.connect(ws)
+        # disconnect became async as part of the audit 10 F#13 locking fix.
         for ws in connections:
-            mgr.disconnect(ws)
+            await mgr.disconnect(ws)
         elapsed = time.monotonic() - start
 
         assert len(mgr.active) == 0
