@@ -120,6 +120,20 @@ class AdvancedPlanningManager:
         Reads the ``depends_on`` field (comma-separated task IDs or NULL) from
         the tasks table, performs a topological sort, and persists the ordered
         schedule into the ``scheduling_graph`` table.
+
+        audit 06a F#3: a dependency cycle used to be "detected" by
+        emitting a warning log and assigning every remaining task the
+        same ``current_order``. Downstream executors saw what looked
+        like a valid schedule and marched dependency-violating work.
+        A cycle now raises ``ValueError`` with the offending member
+        set so the caller can surface a real error instead of running
+        silently broken code.
+
+        audit 06a F#9: the DELETE + per-row INSERT pair ran as separate
+        statements with no transaction; a crash mid-loop left an
+        empty scheduling_graph for the group. Everything now runs
+        inside ``self._db.transaction()`` so a partial failure rolls
+        back.
         """
         now = _utcnow()
 
@@ -151,45 +165,46 @@ class AdvancedPlanningManager:
                 if all(d in assigned for d in dep_map[tid]):
                     ready.append(tid)
             if not ready:
-                # Cycle detected - assign remaining at current_order but flag it
+                # audit 06a F#3: raise a real error rather than silently
+                # emitting a schedule that violates dependencies.
                 logger.warning(
                     "Dependency cycle detected involving tasks: %s",
                     list(remaining),
                 )
-                for tid in remaining:
-                    assigned[tid] = current_order
-                remaining.clear()
-                break
+                raise ValueError(
+                    f"Dependency cycle in group {group_id!r}: {sorted(remaining)}"
+                )
             for tid in ready:
                 assigned[tid] = current_order
                 remaining.discard(tid)
             current_order += 1
 
-        # Clear old schedule for this group
-        await self._db.execute(
-            "DELETE FROM scheduling_graph WHERE group_id = ?", (group_id,),
-        )
-
-        # Persist and build result
+        # audit 06a F#9: wrap the delete + per-row insert in one
+        # transaction so a crash mid-loop rolls back the whole
+        # schedule instead of leaving scheduling_graph empty.
         schedule: list[dict] = []
-        for t in sorted(tasks, key=lambda x: assigned.get(x["id"], 0)):
-            tid = t["id"]
-            sid = _new_id()
-            deps_str = ",".join(dep_map[tid]) if dep_map[tid] else None
-            order = assigned[tid]
-            await self._db.execute(
-                "INSERT INTO scheduling_graph (id, group_id, task_id, depends_on, scheduled_order, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (sid, group_id, tid, deps_str, order, now),
+        async with self._db.transaction() as conn:
+            await conn.execute(
+                "DELETE FROM scheduling_graph WHERE group_id = ?", (group_id,),
             )
-            schedule.append({
-                "id": sid,
-                "group_id": group_id,
-                "task_id": tid,
-                "depends_on": deps_str,
-                "scheduled_order": order,
-                "created_at": now,
-            })
+            for t in sorted(tasks, key=lambda x: assigned.get(x["id"], 0)):
+                tid = t["id"]
+                sid = _new_id()
+                deps_str = ",".join(dep_map[tid]) if dep_map[tid] else None
+                order = assigned[tid]
+                await conn.execute(
+                    "INSERT INTO scheduling_graph (id, group_id, task_id, depends_on, scheduled_order, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (sid, group_id, tid, deps_str, order, now),
+                )
+                schedule.append({
+                    "id": sid,
+                    "group_id": group_id,
+                    "task_id": tid,
+                    "depends_on": deps_str,
+                    "scheduled_order": order,
+                    "created_at": now,
+                })
 
         return schedule
 
