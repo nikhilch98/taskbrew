@@ -5,9 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+
+# audit 12a F#4: shared clamp for the ``limit: int = N`` params. Using
+# an Annotated alias keeps validation consistent without changing
+# call-site semantics beyond enforcing ``1 <= limit <= 500``.
+SafeLimit = Annotated[int, Query(ge=1, le=500)]
 
 from taskbrew.dashboard.models import (
     # Autonomous
@@ -155,7 +160,7 @@ async def discover_work(agent_id: str, project_dir: str):
 
 
 @router.get("/api/v2/autonomous/discoveries")
-async def get_discoveries(status: Optional[str] = None, limit: int = 20):
+async def get_discoveries(status: Optional[str] = None, limit: SafeLimit = 20):
     orch = get_orch()
     if not orch.autonomous_manager:
         raise HTTPException(503, "Autonomous manager not initialized")
@@ -267,7 +272,7 @@ async def detect_patterns(file_path: str):
 
 
 @router.get("/api/v2/code-intel/patterns")
-async def get_patterns(pattern_type: Optional[str] = None, limit: int = 20):
+async def get_patterns(pattern_type: Optional[str] = None, limit: SafeLimit = 20):
     orch = get_orch()
     if not orch.code_intel_manager:
         raise HTTPException(503, "Code intel manager not initialized")
@@ -295,7 +300,7 @@ async def score_debt(body: DebtScoreBody):
 
 
 @router.get("/api/v2/code-intel/debt")
-async def get_debt_report(limit: int = 20):
+async def get_debt_report(limit: SafeLimit = 20):
     orch = get_orch()
     if not orch.code_intel_manager:
         raise HTTPException(503, "Code intel manager not initialized")
@@ -382,7 +387,7 @@ async def store_cross_project(body: CrossProjectKnowledgeBody):
 
 
 @router.get("/api/v2/learning/cross-project")
-async def find_applicable(knowledge_type: Optional[str] = None, limit: int = 20):
+async def find_applicable(knowledge_type: Optional[str] = None, limit: SafeLimit = 20):
     orch = get_orch()
     if not orch.learning_manager:
         raise HTTPException(503, "Learning manager not initialized")
@@ -453,7 +458,7 @@ async def get_conventions():
 
 
 @router.post("/api/v2/learning/errors/cluster")
-async def cluster_errors(lookback_limit: int = 100):
+async def cluster_errors(lookback_limit: SafeLimit = 100):
     orch = get_orch()
     if not orch.learning_manager:
         raise HTTPException(503, "Learning manager not initialized")
@@ -486,7 +491,7 @@ async def generate_standup(agent_id: str):
 
 
 @router.get("/api/v2/coordination/standups")
-async def get_standups(agent_id: Optional[str] = None, limit: int = 10):
+async def get_standups(agent_id: Optional[str] = None, limit: SafeLimit = 10):
     orch = get_orch()
     if not orch.coordination_manager:
         raise HTTPException(503, "Coordination manager not initialized")
@@ -540,7 +545,7 @@ async def create_digest(body: CreateDigestBody):
 
 
 @router.get("/api/v2/coordination/digests")
-async def get_digests(role: Optional[str] = None, limit: int = 10):
+async def get_digests(role: Optional[str] = None, limit: SafeLimit = 10):
     orch = get_orch()
     if not orch.coordination_manager:
         raise HTTPException(503, "Coordination manager not initialized")
@@ -630,7 +635,7 @@ async def record_heartbeat(body: RecordHeartbeatBody):
 
 
 @router.get("/api/v2/coordination/heartbeats/{task_id}")
-async def get_heartbeats(task_id: str, limit: int = 20):
+async def get_heartbeats(task_id: str, limit: SafeLimit = 20):
     orch = get_orch()
     if not orch.coordination_manager:
         raise HTTPException(503, "Coordination manager not initialized")
@@ -874,7 +879,7 @@ async def detect_anomalies(agent_id: str):
 
 
 @router.get("/api/v2/observability/anomalies")
-async def get_anomalies(agent_id: Optional[str] = None, limit: int = 50):
+async def get_anomalies(agent_id: Optional[str] = None, limit: SafeLimit = 50):
     mgr = await _ensure_obs()
     return await mgr.get_anomalies(agent_id=agent_id, limit=limit)
 
@@ -977,6 +982,6 @@ async def generate_post_mortem(body: GeneratePostMortemBody):
 
 
 @router.get("/api/v2/planning/post-mortems")
-async def get_post_mortems(limit: int = 20):
+async def get_post_mortems(limit: SafeLimit = 20):
     mgr = await _ensure_planning()
     return await mgr.get_post_mortems(limit=limit)
