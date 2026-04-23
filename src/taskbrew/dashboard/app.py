@@ -461,7 +461,17 @@ def create_app(
     app.include_router(costs_router, tags=["Costs"])
     app.include_router(exports_router, tags=["Export & Reports"])
     app.include_router(search_router, tags=["Search"])
-    app.include_router(git_router, tags=["Git"])
+    # audit 11a F#15: git endpoints expose the full commit log, the
+    # working-tree diff, and the staged diff. A credentialed
+    # middleware already fails closed on every route when
+    # AUTH_ENABLED is set, but belt-and-suspenders: bind an explicit
+    # verify_admin dep at include time so these routes refuse to
+    # serve even if the middleware is ever removed.
+    app.include_router(
+        git_router,
+        tags=["Git"],
+        dependencies=[Depends(verify_admin)],
+    )
     app.include_router(analytics_router, tags=["Analytics"])
     app.include_router(pipelines_router, tags=["Pipelines"])
     app.include_router(comparison_router_obj, tags=["Comparison"])
