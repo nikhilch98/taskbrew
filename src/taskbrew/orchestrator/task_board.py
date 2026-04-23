@@ -241,14 +241,26 @@ class TaskBoard:
         """Atomically claim the highest-priority pending task for *role*.
 
         Implemented as a single ``UPDATE ... WHERE id = (SELECT ... LIMIT 1)
-        RETURNING *`` statement so the SELECT and UPDATE cannot interleave
-        between two concurrent claimers. This is the audit 03 F#1 fix:
-        the previous SELECT-then-UPDATE pair ran on an autocommit aiosqlite
-        connection (``isolation_level=None``), so the wrapping
-        ``transaction()`` context was a BEGIN/COMMIT around already-committed
-        statements -- two agents could observe the same pending row and both
-        UPDATE it. A single UPDATE is atomic at the SQLite engine level
-        regardless of the outer autocommit setting.
+        AND status='pending' AND claimed_by IS NULL RETURNING *`` statement.
+        Atomicity comes from SQLite's statement-level write lock: the entire
+        UPDATE (including its nested SELECT and the belt-and-suspenders
+        predicate re-check on the outer WHERE) runs inside one implicit
+        write transaction, so two concurrent claimers cannot both win the
+        same row.
+
+        This is the audit 03 F#1 fix. The previous SELECT-then-UPDATE pair
+        ran on an autocommit aiosqlite connection (``isolation_level=None``
+        in Database._create_connection) where the wrapping
+        ``transaction()`` context opened a real BEGIN/COMMIT but, because
+        the SELECT and UPDATE were two separate statements, another writer
+        could interleave between them. A single-statement UPDATE avoids
+        that class of race entirely; the outer AND-predicate guards the
+        narrow window where the row could transition between the nested
+        SELECT and the apply phase on the same statement under WAL.
+
+        Scope note: the broader autocommit refactor flagged in audit 03 F#5
+        is deferred. See Database._create_connection and Database.transaction
+        for related hazards.
 
         Returns the claimed task dict, or ``None`` when the queue is empty.
         """

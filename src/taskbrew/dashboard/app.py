@@ -173,8 +173,13 @@ def create_app(
         team_ok = False
         if team_requires and _tc and _tc.auth_tokens:
             import hmac as _hmac
+            # isinstance guard: YAML scalars that look like numbers are
+            # parsed as int by PyYAML unless quoted. hmac.compare_digest
+            # TypeErrors on mixed types, so silently skip non-string
+            # candidates. (Operators should quote tokens in team.yaml.)
             team_ok = any(
-                _hmac.compare_digest(token, candidate)
+                isinstance(candidate, str)
+                and _hmac.compare_digest(token, candidate)
                 for candidate in _tc.auth_tokens
             )
         if not (env_ok or team_ok):
@@ -207,7 +212,8 @@ def create_app(
         if team_requires and _tc and _tc.auth_tokens:
             import hmac as _hmac
             team_ok = any(
-                _hmac.compare_digest(token, candidate)
+                isinstance(candidate, str)
+                and _hmac.compare_digest(token, candidate)
                 for candidate in _tc.auth_tokens
             )
         if not (env_ok or team_ok):
@@ -337,7 +343,7 @@ def create_app(
         from taskbrew.dashboard.routers.interactions import set_interaction_deps
         from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
         interaction_mgr = InteractionManager(orch_obj.task_board._db)
-        set_interaction_deps(interaction_mgr)
+        set_interaction_deps(interaction_mgr, verify_admin=verify_admin)
         set_mcp_deps(
             interaction_mgr,
             get_pipeline,
@@ -392,11 +398,13 @@ def create_app(
         dependencies=[Depends(verify_admin)],
     )
     app.include_router(mcp_tools_router, tags=["MCP Tools"])
-    app.include_router(
-        interactions_router,
-        tags=["Interactions"],
-        dependencies=[Depends(verify_admin)],
-    )
+    # interactions_router splits auth per-endpoint: the four POST routes
+    # (approve/reject/respond/skip) carry Depends(_verify_admin_dep)
+    # inline; the two GET polling routes stay open so UI polling does not
+    # require a token under default configuration. This was flipped from
+    # a blanket include-time dep after review identified the polling
+    # regression.
+    app.include_router(interactions_router, tags=["Interactions"])
     app.include_router(
         system_router.router,
         tags=["System"],
