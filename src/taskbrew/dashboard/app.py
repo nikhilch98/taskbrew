@@ -106,13 +106,26 @@ def create_app(
     )
 
     from starlette.middleware.cors import CORSMiddleware
-    cors_origins = [
-        origin.strip()
-        for origin in os.environ.get(
-            "CORS_ORIGINS", "http://localhost:8000,http://localhost:3000"
-        ).split(",")
-        if origin.strip()
-    ]
+    raw_cors = os.environ.get(
+        "CORS_ORIGINS", "http://localhost:8000,http://localhost:3000"
+    )
+    cors_origins = [origin.strip() for origin in raw_cors.split(",") if origin.strip()]
+    # audit 10 F#8: refuse the ``*`` wildcard when we ship
+    # allow_credentials=True. Browsers reject this combination anyway,
+    # but a mis-configured ``CORS_ORIGINS=*`` would previously run in
+    # "permissive" mode at server boot with no warning; hard-fail with
+    # a clear message so operators catch it at startup.
+    if any(origin == "*" for origin in cors_origins):
+        raise RuntimeError(
+            "CORS_ORIGINS cannot contain '*' while allow_credentials=True. "
+            "Either list the explicit origins you trust, or clear "
+            "CORS_ORIGINS for dev defaults (http://localhost:8000,3000)."
+        )
+    for origin in cors_origins:
+        if not (origin.startswith("http://") or origin.startswith("https://")):
+            raise RuntimeError(
+                f"CORS_ORIGINS entry {origin!r} missing http(s):// scheme"
+            )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
