@@ -1,12 +1,25 @@
-"""Human interaction request management — approvals and clarifications."""
+"""Human interaction request management — approvals and clarifications.
+
+Audit 03 F#17: request_data was serialised verbatim into the DB with
+no size cap. LLM agents writing huge approval payloads would inflate
+the row, slow list queries, and echo the raw blob through every
+poll reply. Cap the serialised JSON at 16 KiB; oversized payloads
+are replaced with a structured truncation marker that preserves the
+shape but hides the body.
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 
 from taskbrew.orchestrator.database import Database
+
+logger = logging.getLogger(__name__)
+
+_MAX_PAYLOAD_BYTES = 16 * 1024  # audit 03 F#17
 
 
 class InteractionManager:
@@ -41,11 +54,29 @@ class InteractionManager:
         # Store group_id and agent_role inside the payload JSON so they
         # survive the round-trip (the table has no dedicated columns for them).
         enriched_payload = {**request_data, "_group_id": group_id, "_agent_role": agent_role}
+        payload_json = json.dumps(enriched_payload, default=str)
+        # audit 03 F#17: refuse to persist a blob that would bloat the
+        # row. Replace with a structured truncation marker the operator
+        # can read, preserving task context without the original body.
+        if len(payload_json.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+            logger.warning(
+                "InteractionManager.create_request: payload for %s (%s) "
+                "exceeds cap (%d bytes); storing truncation marker.",
+                req_id, req_type, len(payload_json),
+            )
+            truncated = {
+                "_truncated": True,
+                "_original_size": len(payload_json),
+                "_cap": _MAX_PAYLOAD_BYTES,
+                "_group_id": group_id,
+                "_agent_role": agent_role,
+            }
+            payload_json = json.dumps(truncated)
         await self._db.execute(
             "INSERT INTO human_interaction_requests "
             "(id, request_key, task_id, instance_token, request_type, status, payload, created_at) "
             "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
-            (req_id, request_key, task_id, instance_token, req_type, json.dumps(enriched_payload), now),
+            (req_id, request_key, task_id, instance_token, req_type, payload_json, now),
         )
         return {
             "id": req_id,
