@@ -357,7 +357,12 @@ class ProcessIntelligenceManager:
 
         score = round(clamp(total_score, 0.0, 100.0), 2)
 
-        rec_id = f"RA-{new_id(8)}"
+        # audit 08b F#10: RA- used to collide with VerificationManager's
+        # ``RA-`` review-annotation prefix. Rename this one to RD-
+        # (Readiness-aDvice) so ID-prefix traceability is unambiguous.
+        # The underlying schema is still ``readiness_assessments`` so
+        # existing rows keep working; only the new-row prefix changes.
+        rec_id = f"RD-{new_id(8)}"
         now = utcnow()
         await self._db.execute(
             "INSERT INTO readiness_assessments "
