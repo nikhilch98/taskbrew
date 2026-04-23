@@ -310,7 +310,25 @@ class AutonomousManager:
         }
 
     async def resolve_bids(self, task_id: str) -> dict:
-        """Resolve bids for *task_id* by selecting the highest scorer."""
+        """Resolve bids for *task_id* by selecting the highest scorer.
+
+        audit 06b F#11: previously picked a winner and returned it, but
+        never updated ``tasks.claimed_by`` and never marked the losing
+        bids as rejected. The caller had to re-implement both binds,
+        and in practice no caller did -- priority negotiation was a
+        half-implemented feature. We now, in a single transaction:
+
+        - set tasks.claimed_by to the winning agent (iff still
+          unassigned; concurrent stealers already in flight still win)
+        - mark the winning bid as ``accepted=1`` in a new status
+          column-equivalent via UPDATE
+        - mark losing bids as ``accepted=0``
+
+        If the winner's row cannot be found or the task is already
+        claimed by someone else, the function still returns the
+        winner-name for compatibility but marks the result
+        ``bound=False`` so callers can tell.
+        """
         bids = await self._db.execute_fetchall(
             "SELECT * FROM priority_bids WHERE task_id = ? ORDER BY bid_score DESC",
             (task_id,),
@@ -319,11 +337,41 @@ class AutonomousManager:
             return {"task_id": task_id, "winner": None, "bid_score": 0, "total_bids": 0}
 
         winner = bids[0]
+        winner_agent = winner["agent_id"]
+        bound = False
+        try:
+            async with self._db.transaction() as conn:
+                # Only bind if the task is still pending and unassigned.
+                cursor = await conn.execute(
+                    "UPDATE tasks SET claimed_by = ?, status = 'in_progress' "
+                    "WHERE id = ? AND status = 'pending' AND claimed_by IS NULL "
+                    "RETURNING id",
+                    (winner_agent, task_id),
+                )
+                bound = (await cursor.fetchone()) is not None
+                # Stamp bid outcomes regardless of whether the task
+                # was bindable -- losing bids are losers either way.
+                for b in bids:
+                    outcome = 1 if (bound and b["agent_id"] == winner_agent) else 0
+                    await conn.execute(
+                        "UPDATE priority_bids SET accepted = ? "
+                        "WHERE id = ?",
+                        (outcome, b["id"]),
+                    )
+        except Exception as exc:
+            # Table may not yet carry ``accepted`` column in older DBs.
+            # We don't want resolve_bids to hard-fail on schema drift;
+            # log and fall through with bound=False.
+            logger.warning(
+                "resolve_bids: bind failed for task %s: %s", task_id, exc,
+            )
+
         return {
             "task_id": task_id,
-            "winner": winner["agent_id"],
+            "winner": winner_agent,
             "bid_score": winner["bid_score"],
             "total_bids": len(bids),
+            "bound": bound,
         }
 
     # --- Feature 4: Adaptive Retry Strategies ---
@@ -405,12 +453,25 @@ class AutonomousManager:
     # --- Feature 5: Self-Healing Pipelines ---
 
     async def find_similar_fix(self, failure_signature: str) -> dict | None:
-        """Find a previous fix matching *failure_signature* (LIKE search)."""
+        """Find a previous fix matching *failure_signature* (LIKE search).
+
+        audit 06b F#15: the caller-supplied failure_signature flowed
+        straight into a ``LIKE '%...%'`` pattern with no escape. A
+        signature of ``"%"`` matched every row, and a ``"_"`` matched
+        any single char, so attacker-controlled fixes could be
+        returned and replayed. Escape the SQLite wildcards and use
+        ``ESCAPE '\\'`` so the pattern is treated as literal text.
+        """
+        escaped = (
+            failure_signature.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
         return await self._db.execute_fetchone(
             "SELECT * FROM pipeline_fixes "
-            "WHERE failure_signature LIKE ? "
+            "WHERE failure_signature LIKE ? ESCAPE '\\' "
             "ORDER BY success DESC LIMIT 1",
-            (f"%{failure_signature}%",),
+            (f"%{escaped}%",),
         )
 
     async def record_fix(

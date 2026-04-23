@@ -7,7 +7,7 @@ import io
 import json
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from starlette.responses import Response
 
 from taskbrew.dashboard.routers._deps import get_orch
@@ -154,6 +154,17 @@ async def export_tasks(
         clauses.append("priority = ?")
         params.append(priority)
     if since:
+        # audit 11a F#19: reject malformed timestamps BEFORE they reach
+        # SQLite; a stray free-text value could silently match every
+        # row or produce a cast error surfaced to the client as 500.
+        try:
+            datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid 'since' value {since!r}; expected ISO-8601 "
+                       "date or datetime (e.g. 2026-01-01 or 2026-01-01T00:00:00Z)",
+            )
         clauses.append("created_at >= ?")
         params.append(since)
 

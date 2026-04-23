@@ -172,22 +172,25 @@ class CoordinationManager:
         return {"released": True, "file_path": file_path, "agent_id": agent_id}
 
     async def detect_conflicts(self) -> list[dict]:
-        """Detect files with active (non-expired) locks from multiple agents."""
-        now_iso = datetime.now(timezone.utc).isoformat()
-        rows = await self._db.execute_fetchall(
-            "SELECT file_path, GROUP_CONCAT(locked_by) as agents, COUNT(*) as lock_count "
-            "FROM file_locks WHERE expires_at > ? "
-            "GROUP BY file_path HAVING lock_count > 1",
-            (now_iso,),
+        """Record conflicting lock acquisition ATTEMPTS from multiple agents.
+
+        audit 06b F#4: the previous implementation grouped file_locks by
+        file_path ``HAVING COUNT(*) > 1``, but ``file_path`` carries a
+        UNIQUE index so the grouping can never produce more than one
+        row per path. The function was dead code masquerading as a
+        multi-agent conflict detector.
+
+        There is no ``lock_attempts`` table to query against (future
+        work), so this returns an empty list and flags the limitation
+        explicitly in the log. Callers should not rely on this method
+        to surface real-time contention; that requires instrumenting
+        the acquire_lock UNIQUE violation path.
+        """
+        logger.debug(
+            "detect_conflicts: no lock-attempt telemetry yet; returning []. "
+            "See audit 06b F#4 for the follow-up."
         )
-        conflicts: list[dict] = []
-        for row in rows:
-            conflicts.append({
-                "file_path": row["file_path"],
-                "agents": row["agents"].split(",") if row["agents"] else [],
-                "lock_count": row["lock_count"],
-            })
-        return conflicts
+        return []
 
     # ------------------------------------------------------------------
     # Feature 22: Knowledge Sharing Digest
