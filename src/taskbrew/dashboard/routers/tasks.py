@@ -837,6 +837,11 @@ async def get_metrics_timeseries(
     else:
         fmt = "%Y-%m-%dT00:00:00"
 
+    # audit 11a F#12: cap the number of buckets returned per
+    # series so a long-lived project with many distinct models
+    # doesn't blow up the JSON response. 5000 is ~7 months of
+    # hourly data per model -- generous but bounded.
+    _MAX_TIMESERIES_ROWS = 5000
     usage_rows = await orch.task_board._db.execute_fetchall(
         "SELECT strftime(?, recorded_at) AS bucket, "
         "  model, "
@@ -845,17 +850,25 @@ async def get_metrics_timeseries(
         "  SUM(output_tokens) AS output_tokens, "
         "  COUNT(*) AS task_count "
         "FROM task_usage WHERE recorded_at >= ? "
-        "GROUP BY bucket, model ORDER BY bucket",
+        "GROUP BY bucket, model ORDER BY bucket "
+        f"LIMIT {_MAX_TIMESERIES_ROWS + 1}",
         (fmt, since),
     )
+    usage_truncated = len(usage_rows) > _MAX_TIMESERIES_ROWS
+    if usage_truncated:
+        usage_rows = usage_rows[:_MAX_TIMESERIES_ROWS]
 
     task_rows = await orch.task_board._db.execute_fetchall(
         "SELECT strftime(?, completed_at) AS bucket, "
         "  status, COUNT(*) AS count "
         "FROM tasks WHERE completed_at IS NOT NULL AND completed_at >= ? "
-        "GROUP BY bucket, status ORDER BY bucket",
+        "GROUP BY bucket, status ORDER BY bucket "
+        f"LIMIT {_MAX_TIMESERIES_ROWS + 1}",
         (fmt, since),
     )
+    tasks_truncated = len(task_rows) > _MAX_TIMESERIES_ROWS
+    if tasks_truncated:
+        task_rows = task_rows[:_MAX_TIMESERIES_ROWS]
 
     status_totals = await orch.task_board._db.execute_fetchall(
         "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status"
@@ -867,6 +880,11 @@ async def get_metrics_timeseries(
         "status_totals": {r["status"]: r["count"] for r in status_totals},
         "since": since,
         "granularity": granularity,
+        "truncated": {
+            "usage": usage_truncated,
+            "tasks": tasks_truncated,
+        },
+        "max_rows": _MAX_TIMESERIES_ROWS,
     }
 
 
