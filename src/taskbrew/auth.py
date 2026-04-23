@@ -84,6 +84,7 @@ class AuthManager:
         rate_limit_attempts: int = 10,
         rate_limit_window: int = 60,
         rate_limit_lockout: int = 300,
+        trusted_proxies: list[str] | None = None,
     ) -> None:
         self.enabled = enabled
         self._db = db
@@ -120,6 +121,9 @@ class AuthManager:
         self.rate_limit_attempts = rate_limit_attempts
         self.rate_limit_window = rate_limit_window
         self.rate_limit_lockout = rate_limit_lockout
+        # audit 01 F#2: only consult X-Forwarded-For when the deployer
+        # has explicitly declared which proxies are trusted to set it.
+        self.trusted_proxies = tuple(trusted_proxies or ())
 
         # {ip: [timestamp, ...]} – records of failed auth attempts
         self._failed_attempts: dict[str, list[float]] = {}
@@ -258,14 +262,20 @@ class AuthManager:
         if self._call_count % 100 == 0:
             self._cleanup(now)
 
-        # Resolve client IP
-        client_ip: str = getattr(
-            getattr(request, "client", None), "host", "unknown"
-        )
+        client_ip = self._resolve_client_ip(request)
 
         # Check lockout **before** validating the token
         if self.rate_limit_attempts > 0 and self._is_locked_out(client_ip, now):
             logger.warning("Rejected request from locked-out IP %s", client_ip)
+            return False
+
+        # audit 01 F#2: also guard a global failure counter so an
+        # attacker who rotates spoofed X-Forwarded-For values (or
+        # legitimately distributed clients behind a proxy we don't
+        # trust) can't bypass the per-IP lockout. A global cap kicks
+        # in at attempts * 10 failures in window.
+        if self.rate_limit_attempts > 0 and self._is_global_locked_out(now):
+            logger.warning("Rejected request -- global auth failure budget exceeded")
             return False
 
         auth_header = request.headers.get("Authorization", "")
@@ -279,7 +289,53 @@ class AuthManager:
         # Authentication failed – record if rate limiting is active
         if self.rate_limit_attempts > 0:
             self._record_failure(client_ip, now)
+            self._record_global_failure(now)
         return False
+
+    def _resolve_client_ip(self, request) -> str:
+        """Pick the client IP honouring trusted-proxy config.
+
+        audit 01 F#2: when ``trusted_proxies`` is set, parse the
+        right-most element of the ``X-Forwarded-For`` chain that is
+        NOT in the trusted list; otherwise fall back to the socket
+        peer. Without trusted_proxies configured we intentionally do
+        NOT consult forwarded headers -- they are attacker-controlled
+        on direct deployments.
+        """
+        trusted = getattr(self, "trusted_proxies", None) or ()
+        peer = getattr(getattr(request, "client", None), "host", "unknown")
+        if not trusted:
+            return peer
+        fwd = request.headers.get("X-Forwarded-For", "").strip()
+        if not fwd:
+            return peer
+        chain = [ip.strip() for ip in fwd.split(",") if ip.strip()]
+        for ip in reversed(chain):
+            if ip not in trusted:
+                return ip
+        return peer
+
+    # Global failure budget state -- initialised lazily.
+    def _is_global_locked_out(self, now: float) -> bool:
+        expiry = getattr(self, "_global_lockout_until", 0.0)
+        return now < expiry
+
+    def _record_global_failure(self, now: float) -> None:
+        attempts = getattr(self, "_global_failures", None)
+        if attempts is None:
+            attempts = []
+            self._global_failures = attempts
+        attempts.append(now)
+        cutoff = now - self.rate_limit_window
+        attempts[:] = [t for t in attempts if t > cutoff]
+        global_cap = self.rate_limit_attempts * 10
+        if global_cap > 0 and len(attempts) >= global_cap:
+            self._global_lockout_until = now + self.rate_limit_lockout
+            self._global_failures = []
+            logger.warning(
+                "Global auth failure budget exhausted -- locked out for %ds",
+                self.rate_limit_lockout,
+            )
 
     def generate_token(self) -> str:
         """Create and store a new bearer token (in-memory only).
