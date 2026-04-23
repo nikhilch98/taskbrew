@@ -125,15 +125,49 @@ class WorktreeManager:
     # Git helpers
     # ------------------------------------------------------------------
 
-    async def _run_git(self, *args: str, cwd: str | None = None) -> str:
-        """Run a git command and return stdout."""
+    # audit 05 F#5: 30 s upper bound keeps a hung git (credential prompt,
+    # network stall) from freezing the orchestrator. Individual call
+    # sites can pass a smaller value when appropriate.
+    _DEFAULT_GIT_TIMEOUT_S = 30.0
+
+    async def _run_git(
+        self,
+        *args: str,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> str:
+        """Run a git command and return stdout.
+
+        GIT_TERMINAL_PROMPT / GIT_ASKPASS are forced so the child never
+        blocks waiting for interactive credentials. A wall-clock timeout
+        kills the child cleanly and surfaces RuntimeError to the caller.
+        """
+        env = dict(os.environ)
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env.setdefault("GIT_ASKPASS", "/bin/true")
+        env.setdefault("SSH_ASKPASS", "/bin/true")
         proc = await asyncio.create_subprocess_exec(
             "git", *args,
             cwd=cwd or self.repo_dir,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        wait = timeout_seconds if timeout_seconds is not None else self._DEFAULT_GIT_TIMEOUT_S
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=wait,
+            )
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await proc.wait()
+            except Exception:
+                pass
+            raise RuntimeError(f"git {' '.join(args)} timed out after {wait}s")
         if proc.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed: {stderr.decode()}")
         return stdout.decode().strip()
