@@ -134,11 +134,25 @@ class TaskBoard:
         revision_of: str | None = None,
         blocked_by: list[str] | None = None,
         requires_fanout: bool | None = None,
+        branch_name: str | None = None,
+        parent_branch: str | None = None,
     ) -> dict:
         """Create a new task with an auto-generated ID.
 
         The ID prefix is derived from the *assigned_to* role using the
         ``_role_to_prefix`` mapping populated by :meth:`register_prefixes`.
+
+        Branch fields (``branch_name`` / ``parent_branch``) are
+        minted here rather than reconstructed in the agent_loop:
+        - ``branch_name`` defaults to ``feat/<task_id.lower()>`` so
+          worker code has a single typed handle to the branch.
+        - ``parent_branch`` defaults to ``main`` for a fresh task;
+          for a revision (``revision_of`` set) it inherits the
+          original task's ``branch_name`` so the fixer builds on
+          the existing work instead of diverging from main.
+        Callers can override either by passing an explicit value --
+        the integrator role will want to pass ``parent_branch`` set
+        to ``integration/<group_id>`` once that layer exists.
         """
         prefix = self._role_to_prefix.get(assigned_to, assigned_to.upper()[:2])
         # Ensure the prefix is registered.
@@ -154,12 +168,28 @@ class TaskBoard:
         else:
             rf_stored = 1 if requires_fanout else 0
 
+        # Mint branch metadata. The default name matches what
+        # agent_loop used to compute inline, so existing deployments
+        # see no behaviour change; the field just becomes
+        # authoritative instead of reconstructed.
+        if branch_name is None:
+            branch_name = f"feat/{task_id.lower()}"
+        if parent_branch is None and revision_of is not None:
+            orig = await self._db.execute_fetchone(
+                "SELECT branch_name FROM tasks WHERE id = ?",
+                (revision_of,),
+            )
+            if orig and orig.get("branch_name"):
+                parent_branch = orig["branch_name"]
+        if parent_branch is None:
+            parent_branch = "main"
+
         await self._db.execute(
             "INSERT INTO tasks "
             "(id, group_id, parent_id, title, description, task_type, "
             " priority, assigned_to, status, created_by, created_at, "
-            " revision_of, requires_fanout) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " revision_of, requires_fanout, branch_name, parent_branch) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 group_id,
@@ -174,6 +204,8 @@ class TaskBoard:
                 now,
                 revision_of,
                 rf_stored,
+                branch_name,
+                parent_branch,
             ),
         )
 

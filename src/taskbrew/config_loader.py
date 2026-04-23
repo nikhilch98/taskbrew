@@ -457,7 +457,13 @@ class RoleConfig:
     max_revision_cycles: int = 0  # 0 = unlimited
     max_clarification_requests: int = 10
     max_route_tasks: int = 100
-    uses_worktree: bool = False
+    # ``None`` means "auto-detect from tools": a role with any file-
+    # mutating tool (Bash/Edit/Write/NotebookEdit) gets a worktree.
+    # Explicit ``True`` forces a worktree on (e.g. a plan-only role
+    # that still needs an isolated scratch checkout); explicit
+    # ``False`` opts out (e.g. an architect role that just writes
+    # task rows and must never touch git state).
+    uses_worktree: bool | None = None
     capabilities: list[str] = field(default_factory=list)
     artifact_exclude_patterns: list[str] = field(default_factory=list)
 
@@ -514,7 +520,9 @@ def _parse_role(data: dict) -> RoleConfig:
         max_revision_cycles=data.get("max_revision_cycles", 0),
         max_clarification_requests=data.get("max_clarification_requests", 10),
         max_route_tasks=data.get("max_route_tasks", 100),
-        uses_worktree=data.get("uses_worktree", False),
+        # Preserve the three-state semantics: missing key means
+        # "auto-detect" (None), not "disabled" (False).
+        uses_worktree=data.get("uses_worktree"),
         capabilities=data.get("capabilities", []),
         artifact_exclude_patterns=data.get("artifact_exclude_patterns", []),
     )

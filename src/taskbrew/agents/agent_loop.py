@@ -805,14 +805,21 @@ class AgentLoop:
                 )
                 return True
 
-        # Create worktree ONCE, outside the retry loop
+        # Create worktree ONCE, outside the retry loop. branch_name
+        # and parent_branch are now authoritative fields on the task
+        # row, minted by TaskBoard.create_task. We fall back to the
+        # legacy computed name only for tasks created before
+        # migration 30 where the column is NULL.
         worktree_path: str | None = None
-        branch_name: str | None = None
+        branch_name: str | None = task.get("branch_name") or (
+            f"feat/{task['id'].lower()}" if self.worktree_manager else None
+        )
+        parent_branch: str | None = task.get("parent_branch") or "main"
         if self.worktree_manager:
-            branch_name = f"feat/{task['id'].lower()}"
             worktree_path = await self.worktree_manager.create_worktree(
                 agent_name=self.instance_id,
                 branch_name=branch_name,
+                base_branch=parent_branch,
             )
             logger.info(
                 "Agent %s using worktree %s (branch %s)",
