@@ -609,16 +609,54 @@ class CodeIntelligenceManager:
 
         Excludes ``__init__``, ``__main__``, test files, and decorated functions
         (e.g. ``@app.get``).
+
+        audit 07a F#2: rglob by default follows directory symlinks, so a
+        symlink loop or a symlink pointing outside the tree could cause
+        infinite recursion or an arbitrary-directory scan. We now walk
+        only regular files under the resolved directory and refuse to
+        descend into anything that isn't a real directory.
         """
         dir_path = Path(directory)
         if not dir_path.is_dir():
             return []
 
+        try:
+            dir_real = dir_path.resolve()
+        except (OSError, ValueError):
+            return []
+
+        def _walk_py(root: Path):
+            stack = [root]
+            seen: set[str] = set()
+            while stack:
+                current = stack.pop()
+                try:
+                    if current.is_symlink() or not current.is_dir():
+                        continue
+                    real = str(current.resolve())
+                    if real in seen:
+                        continue
+                    seen.add(real)
+                    # Refuse to descend outside the original tree.
+                    try:
+                        current.resolve().relative_to(dir_real)
+                    except ValueError:
+                        continue
+                    for child in current.iterdir():
+                        if child.is_symlink():
+                            continue
+                        if child.is_dir():
+                            stack.append(child)
+                        elif child.suffix == ".py":
+                            yield child
+                except OSError:
+                    continue
+
         # Phase 1: collect all defined functions and all called names
         all_defs: list[dict] = []  # {"name", "file_path", "lineno", "decorated"}
         all_calls: set[str] = set()
 
-        for py_file in dir_path.rglob("*.py"):
+        for py_file in _walk_py(dir_path):
             if py_file.name.startswith("test_"):
                 continue
             try:
