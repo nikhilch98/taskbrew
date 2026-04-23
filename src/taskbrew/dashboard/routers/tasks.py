@@ -8,8 +8,16 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
+from fastapi import APIRouter, HTTPException, Query
 from starlette.responses import Response
+
+# audit 11a F#4 / F#6: shared clamps for task endpoint pagination and
+# batch operations. 500 is generous for UI pagination; 200 tasks per
+# batch is plenty and stops a single request from walking the whole
+# board.
+SafeLimit = Annotated[int, Query(ge=1, le=500)]
+MAX_BATCH_SIZE = 200
 
 from taskbrew.dashboard.models import (
     BatchTasksBody,
@@ -314,8 +322,8 @@ async def search_tasks(
     assigned_to: str | None = None,
     task_type: str | None = None,
     priority: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: SafeLimit = 50,
+    offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
 ):
     orch = get_orch()
     return await orch.task_board.search_tasks(
@@ -465,6 +473,14 @@ async def batch_tasks(body: BatchTasksBody):
     params = body.params
     if not task_ids or not action:
         raise HTTPException(status_code=400, detail="task_ids and action are required")
+    # audit 11a F#4: refuse oversized batches. Tasks are individually
+    # touched on SQLite which holds the connection for the duration of
+    # the batch; a 10k-id batch would block every other writer.
+    if len(task_ids) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch too large: {len(task_ids)} task_ids (max {MAX_BATCH_SIZE})",
+        )
     result = await orch.task_board.batch_update_tasks(task_ids, action, params)
     await orch.event_bus.emit("tasks.batch_updated", {"action": action, "count": result["updated"]})
     return result
