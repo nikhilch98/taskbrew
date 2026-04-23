@@ -189,10 +189,20 @@ def register_chat_routes(app, chat_manager):
 
     @app.websocket("/ws/chat/{agent_name}")
     async def chat_websocket(ws: WebSocket, agent_name: str):
+        """Chat channel for a single agent instance.
+
+        audit 10 F#27: the ``stop_session(agent_name)`` call in
+        ``finally`` used to fire on every disconnect regardless of
+        which WS connection started the session. A second connection
+        to the same agent_name would terminate the first user's
+        session on its own disconnect. We now only stop the session
+        if this connection is the one that started it.
+        """
         ok, subproto = await _ws_accept_or_reject(ws)
         if not ok:
             return
         await ws.accept(subprotocol=subproto)
+        _this_connection_started = False
         try:
             while True:
                 data = await ws.receive_text()
@@ -210,7 +220,14 @@ def register_chat_routes(app, chat_manager):
                         orch = get_orch_optional()
                         config_roles = getattr(orch, "roles", None) if orch else None
                         config = get_agent_config(agent_name, config_roles=config_roles)
+                        existing = chat_manager.get_session(agent_name)
                         session = await chat_manager.start_session(agent_name, config)
+                        # Only this connection "owns" the session if
+                        # ``start_session`` actually created a new one;
+                        # otherwise we attached to a session started
+                        # by another WS connection and must not tear
+                        # it down on our disconnect.
+                        _this_connection_started = existing is None
                         await ws.send_text(json.dumps({
                             "type": "session_started",
                             "agent": agent_name,
@@ -269,6 +286,7 @@ def register_chat_routes(app, chat_manager):
 
                 elif msg_type == "stop_session":
                     await chat_manager.stop_session(agent_name)
+                    _this_connection_started = False
                     await ws.send_text(json.dumps({
                         "type": "session_stopped",
                         "agent": agent_name,
@@ -276,4 +294,8 @@ def register_chat_routes(app, chat_manager):
                     break
 
         except WebSocketDisconnect:
-            await chat_manager.stop_session(agent_name)
+            # audit 10 F#27: only tear down the session if this
+            # connection is the one that started it; otherwise the
+            # first user keeps their session when a second WS closes.
+            if _this_connection_started:
+                await chat_manager.stop_session(agent_name)

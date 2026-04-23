@@ -53,29 +53,54 @@ class MessagingManager:
         return msg
 
     async def broadcast(self, from_agent: str, content: str, tag: str = "announcement") -> list[dict]:
-        """Broadcast a message to all agents (stored as message_type='broadcast')."""
+        """Broadcast a message to all agents (stored as message_type='broadcast').
+
+        audit 09 F#7: previously issued one INSERT per recipient with
+        no transaction, so a broadcast to N agents was N + 1 round
+        trips and a crash mid-loop left partial inboxes. We now
+        collect the rows up front and use ``executemany`` inside one
+        transaction so either every inbox receives the broadcast or
+        none do.
+        """
         now = datetime.now(timezone.utc).isoformat()
-        # Get all known agent instances
         instances = await self._db.execute_fetchall(
             "SELECT DISTINCT instance_id FROM agent_instances"
         )
-        messages = []
-        for inst in instances:
-            if inst["instance_id"] != from_agent:
-                try:
-                    await self._db.execute(
-                        "INSERT INTO agent_messages (from_agent, to_agent, content, message_type, priority, created_at) "
-                        "VALUES (?, ?, ?, 'broadcast', 'normal', ?)",
-                        (from_agent, inst["instance_id"], content, now),
-                    )
-                except Exception:
-                    # Fallback if migration 4 enhanced columns don't exist yet
-                    await self._db.execute(
-                        "INSERT INTO agent_messages (from_agent, to_agent, content, created_at) "
-                        "VALUES (?, ?, ?, ?)",
-                        (from_agent, inst["instance_id"], content, now),
-                    )
-                messages.append({"to_agent": inst["instance_id"]})
+        recipients = [
+            inst["instance_id"] for inst in instances
+            if inst["instance_id"] != from_agent
+        ]
+        if not recipients:
+            return []
+
+        # Try the enhanced schema first (migration 4 columns). If it
+        # fails, fall through to the legacy schema on the same
+        # transaction.
+        enhanced_rows = [
+            (from_agent, to_agent, content, "broadcast", "normal", now)
+            for to_agent in recipients
+        ]
+        legacy_rows = [
+            (from_agent, to_agent, content, now)
+            for to_agent in recipients
+        ]
+        messages = [{"to_agent": to_agent} for to_agent in recipients]
+        try:
+            async with self._db.transaction() as conn:
+                await conn.executemany(
+                    "INSERT INTO agent_messages (from_agent, to_agent, content, message_type, priority, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    enhanced_rows,
+                )
+        except Exception:
+            # Enhanced schema missing -- retry with legacy columns in
+            # its own transaction.
+            async with self._db.transaction() as conn:
+                await conn.executemany(
+                    "INSERT INTO agent_messages (from_agent, to_agent, content, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    legacy_rows,
+                )
         if self._event_bus:
             await self._event_bus.emit("message.broadcast", {"from_agent": from_agent, "tag": tag, "recipients": len(messages)})
         return messages
