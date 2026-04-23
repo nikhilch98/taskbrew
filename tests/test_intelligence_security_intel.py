@@ -208,6 +208,29 @@ async def test_scan_dependencies_no_file(mgr: SecurityIntelManager):
     assert results == []
 
 
+async def test_scan_dependencies_suppresses_patched_pin(
+    mgr: SecurityIntelManager, tmp_path
+):
+    """audit 08a F#1: when the pinned version is at or above the
+    recorded fix_version, the finding should be suppressed."""
+    req = tmp_path / "requirements.txt"
+    # requests fix_version is 2.25.0; this pin is strictly above.
+    req.write_text("requests==2.32.0\n")
+    results = await mgr.scan_dependencies()
+    assert results == []
+
+
+async def test_scan_dependencies_still_flags_vulnerable_pin(
+    mgr: SecurityIntelManager, tmp_path
+):
+    """Pins that allow versions below the fix still get flagged."""
+    req = tmp_path / "requirements.txt"
+    req.write_text("requests==2.0.0\n")
+    results = await mgr.scan_dependencies()
+    assert len(results) >= 1
+    assert results[0]["package_name"] == "requests"
+
+
 async def test_get_vulnerabilities_severity_filter(mgr: SecurityIntelManager, tmp_path):
     """get_vulnerabilities filters by severity."""
     req = tmp_path / "requirements.txt"
