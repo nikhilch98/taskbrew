@@ -433,6 +433,37 @@ def create_app(
         dependencies=[Depends(verify_admin)],
     )
 
+    # audit 14 F#1 + 10 F#12: emit a conservative set of security
+    # response headers on every request. CSP is declared
+    # permissively enough to keep the existing inline <script>
+    # blocks working (unsafe-inline) while blocking framing and
+    # MIME sniffing. When the inline scripts are extracted to
+    # /static/js/*.js the CSP should drop 'unsafe-inline' from
+    # script-src.
+    _SECURITY_HEADERS = {
+        "Content-Security-Policy": (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+            "font-src 'self' https://fonts.gstatic.com data:; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' ws: wss:; "
+            "frame-ancestors 'none'; "
+            "object-src 'none'; "
+            "base-uri 'self'"
+        ),
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+    }
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for k, v in _SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        return response
+
     # audit 12a / cross-cutting: v1 and v2 Intelligence routers are
     # deprecated in favour of v3. We add a middleware that stamps
     # ``Deprecation: true`` / ``Sunset`` headers on every v1+v2
