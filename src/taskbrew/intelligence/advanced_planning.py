@@ -250,7 +250,15 @@ class AdvancedPlanningManager:
         return snapshots
 
     async def plan_with_resources(self, group_id: str) -> list[dict]:
-        """Assign pending tasks in a group to the least-busy agents."""
+        """Assign pending tasks in a group to the least-busy agents.
+
+        audit 06a F#4: previously computed assignments and returned
+        them without ever persisting, so resource-aware planning was
+        lost on restart and subsequent calls kept recomputing from
+        stale ``tasks.assigned_to`` state. Now write the chosen
+        ``assigned_to`` back to each task atomically inside one
+        transaction, so the plan actually takes effect.
+        """
         # Snapshot current resources
         snapshots = await self.snapshot_resources()
 
@@ -285,6 +293,13 @@ class AdvancedPlanningManager:
                 "task_id": task["id"],
                 "assigned_to": least_busy,
             })
+
+        if assignments:
+            async with self._db.transaction() as conn:
+                await conn.executemany(
+                    "UPDATE tasks SET assigned_to = ? WHERE id = ?",
+                    [(a["assigned_to"], a["task_id"]) for a in assignments],
+                )
 
         return assignments
 
