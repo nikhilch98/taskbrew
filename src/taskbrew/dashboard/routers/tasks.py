@@ -852,15 +852,26 @@ async def get_metrics_roles():
         "  SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed "
         "FROM tasks GROUP BY assigned_to ORDER BY total DESC"
     )
+    # audit 11a F#13: SUBSTR + INSTR on agent_ids that have no '-'
+    # (e.g. a legacy agent_id stored as bare ``"pm"``) returns
+    # INSTR()=0, which means SUBSTR(..., 1, -1) = '' -- every such
+    # row rolls up into an empty-string role bucket that the UI
+    # rendered as a mystery row. Filter out empty roles and fall
+    # back to the full agent_id when no '-' separator is present.
     role_costs = await orch.task_board._db.execute_fetchall(
         "SELECT "
-        "  SUBSTR(agent_id, 1, INSTR(agent_id, '-') - 1) AS role, "
+        "  CASE WHEN INSTR(agent_id, '-') > 0 "
+        "       THEN SUBSTR(agent_id, 1, INSTR(agent_id, '-') - 1) "
+        "       ELSE agent_id "
+        "  END AS role, "
         "  SUM(cost_usd) AS cost, "
         "  SUM(input_tokens) AS input_tokens, "
         "  SUM(output_tokens) AS output_tokens, "
         "  AVG(duration_api_ms) AS avg_duration_ms, "
         "  SUM(num_turns) AS total_turns "
-        "FROM task_usage GROUP BY role ORDER BY cost DESC"
+        "FROM task_usage "
+        "WHERE agent_id IS NOT NULL AND agent_id != '' "
+        "GROUP BY role ORDER BY cost DESC"
     )
     return {"task_stats": role_tasks, "cost_stats": role_costs}
 
