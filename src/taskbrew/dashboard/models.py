@@ -169,24 +169,33 @@ class CreateWebhookBody(BaseModel):
     secret: Optional[str] = Field(default=None, max_length=512)
 
 
+# audit 11a F#20: templates/workflows get persisted into TEXT
+# columns and their title/description strings are later
+# interpolated into agent prompts. An unbounded POST body could
+# OOM the DB row or smuggle multi-KB instructions into every
+# task spawned from the template (prompt injection). Cap
+# everything that ends up on an agent prompt surface.
 class CreateTemplateBody(BaseModel):
-    name: str
-    title_template: str
-    description_template: Optional[str] = None
-    task_type: Optional[str] = None
-    assigned_to: Optional[str] = None
-    priority: str = "medium"
+    name: str = Field(max_length=128)
+    title_template: str = Field(max_length=2_000)
+    description_template: Optional[str] = Field(default=None, max_length=20_000)
+    task_type: Optional[str] = Field(default=None, max_length=64)
+    assigned_to: Optional[str] = Field(default=None, max_length=64)
+    priority: str = Field(default="medium", max_length=16)
 
 
 class InstantiateTemplateBody(BaseModel):
-    group_id: str
-    variables: dict[str, Any] = {}
+    group_id: str = Field(max_length=128)
+    variables: dict[str, Any] = Field(default_factory=dict)
 
 
 class CreateWorkflowBody(BaseModel):
-    name: str
-    description: Optional[str] = None
-    steps: list[dict[str, Any]]
+    name: str = Field(max_length=128)
+    description: Optional[str] = Field(default=None, max_length=20_000)
+    # cap the steps array so a caller can't POST 10k steps; each step
+    # is also capped below at the dict level by pydantic's default
+    # JSON-size handling, but the list length cap is explicit here.
+    steps: list[dict[str, Any]] = Field(max_length=200)
 
 
 class StartWorkflowBody(BaseModel):
