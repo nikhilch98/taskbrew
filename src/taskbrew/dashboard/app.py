@@ -455,9 +455,28 @@ def create_app(
             )
         return response
 
-    app.include_router(intelligence_router, tags=["Intelligence V1 (deprecated)"])
-    app.include_router(intelligence_v2_router, tags=["Intelligence V2 (deprecated)"])
-    app.include_router(intelligence_v3_router, tags=["Intelligence V3"])
+    # audit 12a F#1 / 12b F#1: the intel v1/v2/v3 routers mutate
+    # prediction / analysis tables and, for v3, fan out to the
+    # various intelligence managers that issue tool calls. The
+    # global AUTH_ENABLED middleware already gates these paths,
+    # but belt-and-suspenders: bind Depends(verify_admin) at
+    # include time so they fail closed even if middleware is
+    # later weakened.
+    app.include_router(
+        intelligence_router,
+        tags=["Intelligence V1 (deprecated)"],
+        dependencies=[Depends(verify_admin)],
+    )
+    app.include_router(
+        intelligence_v2_router,
+        tags=["Intelligence V2 (deprecated)"],
+        dependencies=[Depends(verify_admin)],
+    )
+    app.include_router(
+        intelligence_v3_router,
+        tags=["Intelligence V3"],
+        dependencies=[Depends(verify_admin)],
+    )
     app.include_router(costs_router, tags=["Costs"])
     app.include_router(exports_router, tags=["Export & Reports"])
     app.include_router(search_router, tags=["Search"])
