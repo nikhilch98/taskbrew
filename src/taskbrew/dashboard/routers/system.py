@@ -824,10 +824,36 @@ async def create_budget(body: CreateBudgetBody):
     period = body.period
     scope_id = body.scope_id
 
+    # audit 11b F#12: reset boundaries are now aligned to UTC day/week
+    # boundaries rather than "now + N days". The previous approach drifted
+    # a few seconds per reset on long-lived deployments and produced DST-
+    # confusing values for locally-displayed budgets. Weekly resets align
+    # to Monday 00:00 UTC.
     if period == "daily":
-        reset_at = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0).isoformat()
+        tomorrow = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        reset_at = tomorrow.isoformat()
     elif period == "weekly":
-        reset_at = (now + timedelta(days=7)).isoformat()
+        # Next Monday 00:00 UTC; weekday() is 0=Monday.
+        days_until_monday = (7 - now.weekday()) % 7 or 7
+        next_monday = (now + timedelta(days=days_until_monday)).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        reset_at = next_monday.isoformat()
+    elif period == "monthly":
+        # First day of next month, 00:00 UTC.
+        if now.month == 12:
+            next_month = now.replace(
+                year=now.year + 1, month=1, day=1,
+                hour=0, minute=0, second=0, microsecond=0,
+            )
+        else:
+            next_month = now.replace(
+                month=now.month + 1, day=1,
+                hour=0, minute=0, second=0, microsecond=0,
+            )
+        reset_at = next_month.isoformat()
     else:
         reset_at = None
 
