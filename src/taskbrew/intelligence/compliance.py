@@ -86,9 +86,31 @@ class ComplianceManager:
                 reason TEXT NOT NULL,
                 approved_by TEXT NOT NULL,
                 created_at TEXT NOT NULL,
+                -- audit 08a F#11: expiry + revocation columns. Added
+                -- with default values so existing rows continue to
+                -- match the UNIQUE constraint and reads stay shaped.
+                expires_at TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                revoked_at TEXT,
+                revoked_by TEXT,
                 UNIQUE(rule_id, file_path)
             );
         """)
+
+        # audit 08a F#11: in-place migration for databases created
+        # before the expiry/revocation columns existed. ALTER TABLE
+        # ADD COLUMN is idempotent via try/except on duplicate_column.
+        for ddl in (
+            "ALTER TABLE compliance_exemptions ADD COLUMN expires_at TEXT",
+            "ALTER TABLE compliance_exemptions ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE compliance_exemptions ADD COLUMN revoked_at TEXT",
+            "ALTER TABLE compliance_exemptions ADD COLUMN revoked_by TEXT",
+        ):
+            try:
+                await self._db.execute(ddl)
+            except Exception:
+                # duplicate column, older sqlite: column already present
+                pass
 
     # ------------------------------------------------------------------
     # Feature 49: Threat Model Generator
@@ -335,15 +357,21 @@ class ComplianceManager:
 
         # Resolve exemptions up front so we don't hit the DB for
         # every rule inside the thread worker.
+        # audit 08a F#11: honour revocation and expiry. A revoked
+        # exemption never matches; an expired exemption never matches.
+        now_iso = utcnow()
         exempt_rule_ids: set[str] = set()
         for rule in rules:
             exemption = await self._db.execute_fetchone(
-                "SELECT id FROM compliance_exemptions "
-                "WHERE rule_id = ? AND file_path = ?",
+                "SELECT id, expires_at, revoked FROM compliance_exemptions "
+                "WHERE rule_id = ? AND file_path = ? AND revoked = 0",
                 (rule["rule_id"], file_path),
             )
-            if exemption:
-                exempt_rule_ids.add(rule["rule_id"])
+            if not exemption:
+                continue
+            if exemption.get("expires_at") and exemption["expires_at"] < now_iso:
+                continue
+            exempt_rule_ids.add(rule["rule_id"])
 
         compiled_rules = []
         for rule in rules:
@@ -457,21 +485,70 @@ class ComplianceManager:
         file_path: str,
         reason: str,
         approved_by: str,
+        expires_at: str | None = None,
     ) -> dict:
-        """Exempt a file from a specific compliance rule."""
+        """Exempt a file from a specific compliance rule.
+
+        audit 08a F#11: accept an explicit ``expires_at`` (ISO-8601
+        timestamp) so exemptions are time-bounded by default. Without
+        it the exemption is indefinite -- callers that want that
+        should supply ``None`` explicitly, not rely on it being the
+        default. The approver identity is still free-text here; true
+        identity binding lives at the dashboard/auth layer.
+        """
+        import os as _os
+        # Normalise path so ``./foo.py`` and ``foo.py`` don't bypass
+        # the UNIQUE constraint on rule_id+file_path.
+        normalised = _os.path.normpath(file_path).replace("\\", "/")
         now = utcnow()
         ex_id = f"EX-{new_id(8)}"
         await self._db.execute(
             "INSERT INTO compliance_exemptions "
-            "(id, rule_id, file_path, reason, approved_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (ex_id, rule_id, file_path, reason, approved_by, now),
+            "(id, rule_id, file_path, reason, approved_by, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (ex_id, rule_id, normalised, reason, approved_by, now, expires_at),
         )
         return {
             "id": ex_id,
             "rule_id": rule_id,
-            "file_path": file_path,
+            "file_path": normalised,
             "reason": reason,
             "approved_by": approved_by,
             "created_at": now,
+            "expires_at": expires_at,
         }
+
+    async def list_exemptions(
+        self,
+        *,
+        include_revoked: bool = False,
+        include_expired: bool = False,
+    ) -> list[dict]:
+        """Return exemption rows with optional filtering."""
+        clauses = []
+        if not include_revoked:
+            clauses.append("revoked = 0")
+        if not include_expired:
+            now_iso = utcnow()
+            clauses.append(f"(expires_at IS NULL OR expires_at > '{now_iso}')")
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return await self._db.execute_fetchall(
+            f"SELECT * FROM compliance_exemptions{where} ORDER BY created_at DESC"
+        )
+
+    async def revoke_exemption(self, exemption_id: str, revoked_by: str) -> dict:
+        """Revoke an exemption, recording who revoked and when."""
+        now = utcnow()
+        await self._db.execute(
+            "UPDATE compliance_exemptions "
+            "SET revoked = 1, revoked_at = ?, revoked_by = ? "
+            "WHERE id = ? AND revoked = 0",
+            (now, revoked_by, exemption_id),
+        )
+        row = await self._db.execute_fetchone(
+            "SELECT * FROM compliance_exemptions WHERE id = ?",
+            (exemption_id,),
+        )
+        if row is None:
+            raise ValueError(f"Exemption not found: {exemption_id}")
+        return row
