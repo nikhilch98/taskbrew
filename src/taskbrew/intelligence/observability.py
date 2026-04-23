@@ -117,6 +117,27 @@ class ObservabilityManager:
     # Feature 39: Decision Audit Trail
     # ------------------------------------------------------------------
 
+    # audit 08b F#6: the decision / reasoning / context fields were
+    # written verbatim. LLM-authored content could inject CRLF /
+    # ANSI escapes into logs, and contain secrets pasted into
+    # ``context``. Cap each field at a reasonable size and strip
+    # control bytes before persist.
+    _DECISION_MAX_CHARS = 4096
+    _CONTEXT_MAX_CHARS = 16384
+
+    @staticmethod
+    def _scrub_log_field(value: str | None, *, max_chars: int) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            value = str(value)
+        # Strip NUL, CR, and ANSI escape starter; clients should not
+        # see these bytes in audit-trail exports.
+        value = value.replace("\x00", "").replace("\r", " ").replace("\x1b", "")
+        if len(value) > max_chars:
+            value = value[:max_chars] + f" ...[truncated to {max_chars} chars]"
+        return value
+
     async def log_decision(
         self,
         agent_id: str,
@@ -126,10 +147,25 @@ class ObservabilityManager:
         task_id: str | None = None,
         context: dict | None = None,
     ) -> dict:
-        """Record a decision in the audit log."""
+        """Record a decision in the audit log.
+
+        audit 08b F#6: decision / reasoning / context are scrubbed for
+        CRLF / ANSI / NUL bytes and capped in size so log-forwarding
+        downstream cannot be poisoned and ``context`` dicts containing
+        massive task-output blobs cannot bloat the DB row.
+        """
         now = _utcnow()
         record_id = _new_id()
-        context_json = json.dumps(context) if context else None
+        decision = self._scrub_log_field(decision, max_chars=self._DECISION_MAX_CHARS)
+        reasoning = self._scrub_log_field(reasoning, max_chars=self._DECISION_MAX_CHARS)
+        # context is serialised; we cap the JSON form.
+        context_json: str | None = None
+        if context is not None:
+            try:
+                raw = json.dumps(context, default=str)
+            except (TypeError, ValueError):
+                raw = str(context)
+            context_json = self._scrub_log_field(raw, max_chars=self._CONTEXT_MAX_CHARS)
         await self._db.execute(
             "INSERT INTO decision_audit_log (id, agent_id, task_id, decision_type, decision, reasoning, context, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
