@@ -6,7 +6,7 @@ import os
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ._deps import get_orch
 
@@ -321,8 +321,11 @@ class RecordVelocityBody(BaseModel):
     duration_days: float | None = None
 
 class ForecastBody(BaseModel):
-    remaining_points: int
-    num_simulations: int = 1000
+    # audit 12b F#4: Monte-Carlo forecast default was 1000 sims with
+    # no ceiling, so a caller could request millions and hang the
+    # event loop. Pin to a reasonable range.
+    remaining_points: int = Field(ge=0, le=10_000)
+    num_simulations: int = Field(default=1000, ge=1, le=5_000)
 
 class ScoreFileBody(BaseModel):
     file_path: str
@@ -1486,9 +1489,23 @@ async def record_mapping(body: RecordMappingBody):
     )
 
 
+_MAX_CHANGED_FILES = 500
+
+
 @router.get("/verification/test-mappings/affected")
 async def get_affected_tests(changed_files: str):
-    file_list = [_validate_path(f.strip()) for f in changed_files.split(",")]
+    """audit 12b F#3: cap the CSV length, drop empties (trailing
+    commas), and reject the bare ``.`` that normpath would otherwise
+    produce. Previously an unbounded caller could pass arbitrarily
+    many paths, and a trailing comma silently added ``.`` to the
+    scan."""
+    raw = [f.strip() for f in changed_files.split(",")]
+    parts = [f for f in raw if f and f != "."]
+    if len(parts) > _MAX_CHANGED_FILES:
+        raise HTTPException(
+            400, f"too many paths in changed_files; limit is {_MAX_CHANGED_FILES}"
+        )
+    file_list = [_validate_path(f) for f in parts]
     mgr = await _ensure_verification()
     return await mgr.get_affected_tests(changed_files=file_list)
 
