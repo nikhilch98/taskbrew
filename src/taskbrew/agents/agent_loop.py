@@ -124,6 +124,33 @@ class AgentLoop:
         if task.get("description"):
             parts.append(f"\n## Description\n{task['description']}")
 
+        # If this is a verification retry, surface the previous failures
+        # at the top of the prompt so the agent knows what to fix.
+        # Design: docs/superpowers/specs/2026-04-24-per-task-completion-checks-design.md
+        verif_retries = task.get("verification_retries") or 0
+        if verif_retries > 0:
+            import json as _json
+            raw_checks = task.get("completion_checks") or "{}"
+            try:
+                prior = _json.loads(raw_checks) if isinstance(raw_checks, str) else (raw_checks or {})
+            except _json.JSONDecodeError:
+                prior = {}
+            failed = {n: c for n, c in prior.items()
+                      if isinstance(c, dict) and c.get("status") == "fail"}
+            if failed:
+                parts.append(
+                    f"\n## Previous verification failed (attempt {verif_retries}/2)"
+                )
+                parts.append(
+                    "The following checks failed on the last run. Fix these "
+                    "and re-run `record_check` for each before completing:"
+                )
+                for name, entry in failed.items():
+                    line = f"- **{name}**: {entry.get('details') or 'no details'}"
+                    if entry.get("command"):
+                        line += f" (command: `{entry['command']}`)"
+                    parts.append(line)
+
         if (
             task.get("parent_id")
             and "parent_artifact" in self.role_config.context_includes
@@ -486,6 +513,63 @@ class AgentLoop:
                     )
                     raise
 
+        # --- Verification gate (per-task completion_checks) ----------------
+        # The agent records build/test/lint outcomes via the record_check
+        # MCP tool during its work. Here we read them and decide:
+        #   - any check == fail -> re-queue up to 2x, then escalate
+        #   - empty -> merge as merged_unverified (fail-open default)
+        #   - all pass -> merge as merged
+        # Design: docs/superpowers/specs/2026-04-24-per-task-completion-checks-design.md
+        import json as _json
+        raw_checks = task.get("completion_checks") or "{}"
+        try:
+            checks_map = _json.loads(raw_checks) if isinstance(raw_checks, str) else (raw_checks or {})
+        except _json.JSONDecodeError:
+            checks_map = {}
+        failed_checks = [
+            name for name, c in checks_map.items()
+            if isinstance(c, dict) and c.get("status") == "fail"
+        ]
+
+        merge_status: str | None = None
+        if failed_checks:
+            retries = task.get("verification_retries") or 0
+            if retries < 2:
+                await self._requeue_for_verification(
+                    task, retries, failed_checks, checks_map,
+                )
+                return
+            # Exhausted — escalate, fall through to complete so the queue
+            # doesn't stall. Dashboard surfaces via merge_status.
+            await self.event_bus.emit(
+                "task.escalation_required",
+                {
+                    "task_id": task["id"],
+                    "group_id": task["group_id"],
+                    "reason": "verification_failed_after_retries",
+                    "failed_checks": failed_checks,
+                    "retries": retries,
+                },
+            )
+            logger.error(
+                "Task %s still has failing checks %s after %d retries; "
+                "completing with merge_status=verification_failed and escalating.",
+                task["id"], failed_checks, retries,
+            )
+            merge_status = "verification_failed"
+        elif not checks_map:
+            merge_status = "merged_unverified"
+            await self.event_bus.emit(
+                "task.unverified_merge",
+                {
+                    "task_id": task["id"],
+                    "group_id": task["group_id"],
+                    "agent_id": self.instance_id,
+                },
+            )
+        else:
+            merge_status = "merged"
+
         # Guard against duplicate handoff tasks created by retries
         existing = await self.board._db.execute_fetchone(
             "SELECT id FROM tasks WHERE parent_id = ? AND status != 'cancelled'",
@@ -501,6 +585,13 @@ class AgentLoop:
 
         # Always complete the current task, even if downstream tasks already exist
         await self.board.complete_task_with_output(task["id"], output)
+        if merge_status is not None:
+            # Persist the gate's decision on the task row so the dashboard
+            # can filter / count without re-running the gate logic.
+            await self.board._db.execute(
+                "UPDATE tasks SET merge_status = ? WHERE id = ?",
+                (merge_status, task["id"]),
+            )
         await self.event_bus.emit(
             "task.completed",
             {
@@ -619,6 +710,49 @@ class AgentLoop:
             "    fanout_retries = ? "
             "WHERE id = ? AND status = 'in_progress'",
             (current_retries + 1, task["id"]),
+        )
+
+    async def _requeue_for_verification(
+        self,
+        task: dict,
+        current_retries: int,
+        failed_checks: list[str],
+        checks_map: dict,
+    ) -> None:
+        """Return a task to ``pending`` so the coder can fix failing checks.
+
+        Mirrors ``_requeue_for_fanout`` in every important respect: the
+        ``AND status = 'in_progress'`` predicate prevents a concurrent
+        cancel / fail from being silently resurrected, and
+        ``verification_retries`` caps the loop at 2 before escalation.
+
+        ``failed_checks`` is the list of check names that had
+        ``status=fail``; ``checks_map`` is the full check dict.  Both
+        are echoed into the emitted event and used when the next
+        ``build_context`` call formats a ``## Previous verification
+        failed`` block for the agent to read.
+        """
+        await self.board._db.execute(
+            "UPDATE tasks "
+            "SET status = 'pending', claimed_by = NULL, started_at = NULL, "
+            "    verification_retries = ? "
+            "WHERE id = ? AND status = 'in_progress'",
+            (current_retries + 1, task["id"]),
+        )
+        await self.event_bus.emit(
+            "task.completion_blocked",
+            {
+                "task_id": task["id"],
+                "group_id": task["group_id"],
+                "reason": "verification_failed",
+                "failed_checks": failed_checks,
+                "retries": current_retries + 1,
+                "agent_id": self.instance_id,
+            },
+        )
+        logger.warning(
+            "Task %s has failing checks %s; re-queued for fix (attempt %d/2).",
+            task["id"], failed_checks, current_retries + 1,
         )
         await self.event_bus.emit(
             "task.completion_blocked",

@@ -399,6 +399,7 @@ def create_app(
             get_pipeline,
             orch_obj.task_board,
             auth_manager=_auth_manager,
+            event_bus=orch_obj.event_bus,
         )
 
     # ------------------------------------------------------------------

@@ -1376,6 +1376,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE tasks ADD COLUMN branch_name TEXT;
         ALTER TABLE tasks ADD COLUMN parent_branch TEXT;
     """),
+    (31, "add_task_completion_checks", """
+        -- Per-task verification fingerprint.
+        --
+        -- completion_checks is a JSON object keyed by freeform check
+        -- name, written by agents via the record_check MCP tool. Shape:
+        --   {"build": {"status": "pass|fail|skipped", "details": "...",
+        --              "duration_ms": N, "command": "..."}, ...}
+        -- The verification gate in complete_and_handoff reads this and
+        -- re-queues tasks with any failed check, up to verification_retries
+        -- times (cap mirrors fanout_retries at 2).
+        --
+        -- merge_status records the gate's decision once the task reaches
+        -- completion:
+        --   merged              - all recorded checks passed
+        --   merged_unverified   - no checks recorded (fail-open default)
+        --   verification_failed - retries exhausted, escalated to human
+        --   NULL                - gate hasn't run yet
+        ALTER TABLE tasks ADD COLUMN completion_checks TEXT DEFAULT '{}';
+        ALTER TABLE tasks ADD COLUMN merge_status TEXT;
+        ALTER TABLE tasks ADD COLUMN verification_retries INTEGER DEFAULT 0;
+    """),
 ]
 
 

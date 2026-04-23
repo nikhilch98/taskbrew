@@ -29,6 +29,23 @@ system_prompt: |
   - NEVER branch from another feature/fix branch
   - Before starting work: git checkout main && git pull
 
+  Verification (required, non-optional):
+  - After you finish your work, run the project's build, tests,
+    and linter -- whatever applies to this repo.
+  - For EACH check you run, call the `record_check` MCP tool with
+    the result (pass / fail / skipped + details + command).
+    Example: record_check(task_id=..., check_name="build",
+             status="pass", command="npm run build", duration_ms=2300)
+  - If a check can't be run (no build command, no test suite),
+    record it as `skipped` with a reason -- don't silently omit.
+  - If a check fails, FIX the code and re-run `record_check` with
+    the new result before completing. A task with a failed check
+    will be re-queued to you up to 2 times; after that it
+    escalates.
+  - A task with NO checks recorded will merge as unverified and
+    surface in the dashboard -- prefer recording a `skipped`
+    with a reason over recording nothing.
+
 tools: [Read, Write, Edit, Bash, Glob, Grep, mcp__task-tools__create_task]
 model: claude-sonnet-4-6
 produces: [implementation, bug_fix, revision]

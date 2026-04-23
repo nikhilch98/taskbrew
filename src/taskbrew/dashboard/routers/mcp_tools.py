@@ -21,10 +21,17 @@ _interaction_mgr = None
 _pipeline_getter = None
 _task_board = None
 _auth_manager = None
+_event_bus = None
 _auth_warning_emitted = False
 
 
-def set_mcp_deps(interaction_mgr, pipeline_getter, task_board=None, auth_manager=None):
+def set_mcp_deps(
+    interaction_mgr,
+    pipeline_getter,
+    task_board=None,
+    auth_manager=None,
+    event_bus=None,
+):
     """Set dependencies. Called from app.py startup.
 
     *auth_manager* is optional for backward compatibility. When supplied
@@ -32,12 +39,18 @@ def set_mcp_deps(interaction_mgr, pipeline_getter, task_board=None, auth_manager
     against the configured AuthManager; without it, a log warning is
     emitted on first use and any non-empty suffix is accepted (legacy
     behavior).
+
+    *event_bus* is used by record_check to emit task.check_recorded
+    events; if omitted the tool still writes to the DB but the WS
+    consumer won't see live updates.
     """
-    global _interaction_mgr, _pipeline_getter, _task_board, _auth_manager
+    global _interaction_mgr, _pipeline_getter, _task_board
+    global _auth_manager, _event_bus
     _interaction_mgr = interaction_mgr
     _pipeline_getter = pipeline_getter
     _task_board = task_board
     _auth_manager = auth_manager
+    _event_bus = event_bus
 
 
 def _get_token(authorization: Optional[str] = Header(None)) -> str:
@@ -209,6 +222,113 @@ async def mcp_route_task(
     # Fallback when no task board is configured
     import uuid
     return {"status": "ok", "task_id": f"routed-{uuid.uuid4().hex[:8]}", "target": target_agent}
+
+
+_VALID_CHECK_STATUS = frozenset({"pass", "fail", "skipped"})
+_MAX_CHECK_NAME_LEN = 64
+_MAX_CHECK_DETAILS_LEN = 20_000
+_MAX_CHECK_COMMAND_LEN = 2_000
+
+
+@router.post("/mcp/tools/record_check")
+async def mcp_record_check(
+    body: dict,
+    authorization: Optional[str] = Header(None),
+):
+    """Record a per-task verification check.
+
+    Writes a ``{check_name: {status, details, duration_ms, command}}``
+    entry into ``tasks.completion_checks`` (JSON object column). The
+    verification gate in ``complete_and_handoff`` reads this and decides
+    whether to merge, re-queue on fail, or flag the task as
+    ``merged_unverified`` when nothing was recorded.
+
+    Idempotent by check_name: a second call with the same check_name
+    overwrites the prior entry rather than appending, so the agent can
+    safely re-run a check after a fix.
+    """
+    _get_token(authorization)
+    task_id = body.get("task_id", "")
+    check_name = body.get("check_name", "")
+    status = body.get("status", "")
+    details = body.get("details")
+    duration_ms = body.get("duration_ms")
+    command = body.get("command")
+
+    if not isinstance(task_id, str) or not task_id:
+        raise HTTPException(400, "task_id is required")
+    if (
+        not isinstance(check_name, str)
+        or not check_name
+        or len(check_name) > _MAX_CHECK_NAME_LEN
+    ):
+        raise HTTPException(
+            400, f"check_name must be a non-empty string of at most {_MAX_CHECK_NAME_LEN} chars",
+        )
+    if status not in _VALID_CHECK_STATUS:
+        raise HTTPException(
+            400, f"status must be one of {sorted(_VALID_CHECK_STATUS)}",
+        )
+    if details is not None and (
+        not isinstance(details, str) or len(details) > _MAX_CHECK_DETAILS_LEN
+    ):
+        raise HTTPException(
+            400, f"details must be a string of at most {_MAX_CHECK_DETAILS_LEN} chars",
+        )
+    if duration_ms is not None and (
+        not isinstance(duration_ms, int) or duration_ms < 0
+    ):
+        raise HTTPException(400, "duration_ms must be a non-negative int")
+    if command is not None and (
+        not isinstance(command, str) or len(command) > _MAX_CHECK_COMMAND_LEN
+    ):
+        raise HTTPException(
+            400, f"command must be a string of at most {_MAX_CHECK_COMMAND_LEN} chars",
+        )
+
+    if not _task_board:
+        raise HTTPException(503, "task_board not configured")
+
+    db = _task_board._db
+    existing = await db.execute_fetchone(
+        "SELECT completion_checks FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+    if existing is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+
+    import json
+    raw = existing.get("completion_checks") or "{}"
+    try:
+        current = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except json.JSONDecodeError:
+        # Corrupt prior state -- start fresh rather than silently lose the new check.
+        current = {}
+
+    entry: dict = {"status": status}
+    if details is not None:
+        entry["details"] = details
+    if duration_ms is not None:
+        entry["duration_ms"] = duration_ms
+    if command is not None:
+        entry["command"] = command
+    current[check_name] = entry
+
+    await db.execute(
+        "UPDATE tasks SET completion_checks = ? WHERE id = ?",
+        (json.dumps(current), task_id),
+    )
+
+    if _event_bus:
+        try:
+            await _event_bus.emit(
+                "task.check_recorded",
+                {"task_id": task_id, "check_name": check_name, "status": status},
+            )
+        except Exception:
+            logger.debug("task.check_recorded event emit failed", exc_info=True)
+
+    return {"status": "ok", "task_id": task_id, "checks": current}
 
 
 @router.post("/mcp/tools/get_my_connections")
