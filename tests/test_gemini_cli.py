@@ -66,8 +66,22 @@ class TestBuildCommand:
 
 
 class TestFindCli:
-    def test_explicit_path(self):
-        assert _find_cli("/custom/gemini") == "/custom/gemini"
+    def test_explicit_path(self, tmp_path):
+        """Explicit cli_path is honoured when it resolves to an executable.
+
+        audit 02 F#4: _find_cli now validates the override via os.path
+        and returns the realpath (symlinks followed). Use sys.executable
+        (the python running the test) as a guaranteed-executable target
+        and compare against its own realpath.
+        """
+        import os
+        import sys
+        expected = os.path.realpath(sys.executable)
+        assert _find_cli(sys.executable) == expected
+
+    def test_explicit_path_rejected_when_missing(self):
+        with pytest.raises(GeminiCLINotFoundError, match="does not resolve"):
+            _find_cli("/no/such/binary-12345")
 
     @patch("shutil.which", return_value=None)
     def test_not_found(self, mock_which):
@@ -75,8 +89,12 @@ class TestFindCli:
             _find_cli(None)
 
     @patch("shutil.which", return_value="/opt/homebrew/bin/gemini")
-    def test_found_via_which(self, mock_which):
-        assert _find_cli(None) == "/opt/homebrew/bin/gemini"
+    def test_found_via_which_returns_validated_path(self, mock_which):
+        # Path doesn't actually exist on test runners, so validation
+        # should reject it; the test asserts the validation path is
+        # exercised rather than bypassed.
+        with pytest.raises(GeminiCLINotFoundError, match="does not resolve"):
+            _find_cli(None)
 
 
 # ---------------------------------------------------------------------------

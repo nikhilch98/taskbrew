@@ -1,4 +1,13 @@
-"""Async event bus for inter-component communication."""
+"""Async event bus for inter-component communication.
+
+Audit 03 F#11: handlers used to be fire-and-forget via
+``asyncio.create_task(...)`` with the task reference discarded. Loop
+shutdown would cancel in-flight DB writes (e.g. NotificationService
+persisting a row) because the garbage collector had no strong ref to
+keep the task alive. ``_pending`` is a set that retains every spawned
+handler task until it completes; ``drain()`` awaits all pending at
+shutdown so mutating handlers cannot be interrupted.
+"""
 
 import asyncio
 import logging
@@ -6,6 +15,8 @@ from collections import defaultdict
 from typing import Any, Callable, Coroutine
 
 EventHandler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
+
+logger = logging.getLogger(__name__)
 
 
 class EventBus:
@@ -16,6 +27,9 @@ class EventBus:
     def __init__(self):
         self._handlers: dict[str, list[EventHandler]] = defaultdict(list)
         self._history: list[dict[str, Any]] = []
+        # Strong refs to in-flight dispatch tasks. Discarded via
+        # add_done_callback so the set does not grow unboundedly.
+        self._pending: set[asyncio.Task] = set()
 
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         self._handlers[event_type].append(handler)
@@ -25,6 +39,11 @@ class EventBus:
             self._handlers[event_type] = [
                 h for h in self._handlers[event_type] if h is not handler
             ]
+
+    def _spawn(self, handler: EventHandler, event: dict[str, Any]) -> None:
+        task = asyncio.create_task(self._safe_dispatch(handler, event))
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
 
     async def emit(self, event_type: str, data: dict[str, Any]) -> None:
         event = {"type": event_type, **data}
@@ -37,7 +56,7 @@ class EventBus:
         handlers.extend(self._handlers.get("*", []))
 
         for handler in handlers:
-            asyncio.create_task(self._safe_dispatch(handler, event))
+            self._spawn(handler, event)
 
     async def send_message(self, from_agent: str, to_agent: str, content: str) -> None:
         """Send a direct message between agents.
@@ -58,16 +77,40 @@ class EventBus:
         handlers = list(self._handlers.get("agent.message", []))
         handlers.extend(self._handlers.get("*", []))
         for handler in handlers:
-            asyncio.create_task(self._safe_dispatch(handler, event))
+            self._spawn(handler, event)
 
     async def _safe_dispatch(self, handler: EventHandler, event: dict[str, Any]) -> None:
         """Dispatch an event to a handler with error handling."""
         try:
             await handler(event)
         except Exception:
-            logging.getLogger(__name__).exception(
+            logger.exception(
                 "Event handler error for %s", event.get("type", "unknown")
             )
+
+    async def drain(self, timeout: float = 10.0) -> int:
+        """Wait for all currently-pending handler tasks to complete.
+
+        Called at orchestrator shutdown so a task cancellation does not
+        interrupt a handler mid-write (audit 03 F#11). Returns the
+        number of tasks that were drained. Tasks that are still running
+        after *timeout* seconds are not cancelled here -- callers that
+        want hard-cancel semantics should do so themselves after the
+        drain timeout.
+        """
+        pending = list(self._pending)
+        if not pending:
+            return 0
+        done, still_pending = await asyncio.wait(
+            pending, timeout=timeout, return_when=asyncio.ALL_COMPLETED,
+        )
+        drained = len(done)
+        if still_pending:
+            logger.warning(
+                "EventBus.drain: %d handler task(s) did not complete within %.1fs",
+                len(still_pending), timeout,
+            )
+        return drained
 
     def get_history(self, event_type: str | None = None) -> list[dict[str, Any]]:
         if event_type is None:

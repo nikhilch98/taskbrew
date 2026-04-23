@@ -70,24 +70,58 @@ def _cleanup_role_from_pipeline(role_name: str) -> None:
 # ------------------------------------------------------------------
 
 
+@router.post("/api/pipeline/migrate")
+async def migrate_pipeline_from_routes():
+    """Explicit migration endpoint for the deprecated routes_to field.
+
+    Kept as POST (side-effect write) so the mutation is auditable and
+    cannot be triggered by accidental GETs. Falls under the admin dep
+    applied at include_router(dependencies=[Depends(verify_admin)]) time.
+    """
+    pc = get_pipeline()
+    orch = get_orch_optional()
+    if not orch or not orch.roles:
+        return {"status": "noop", "reason": "no orchestrator / no roles"}
+    if pc.edges:
+        return {"status": "noop", "reason": "pipeline already has edges"}
+    has_routes = any(len(rc.routes_to) > 0 for rc in orch.roles.values())
+    if not has_routes:
+        return {"status": "noop", "reason": "no routes_to to migrate"}
+    from taskbrew.config_loader import (
+        migrate_routes_to_pipeline,
+        save_pipeline as _save_pipeline,
+    )
+    pc = migrate_routes_to_pipeline(orch.roles)
+    set_pipeline_deps(pc)
+    if orch.project_dir:
+        team_yaml = Path(orch.project_dir) / "config" / "team.yaml"
+        if team_yaml.exists():
+            _save_pipeline(team_yaml, pc)
+    return {
+        "status": "migrated",
+        "edges": len(pc.edges),
+    }
+
+
 @router.get("/api/pipeline")
 async def get_pipeline_config():
+    """Return the configured pipeline.
+
+    audit 11b F#16: the previous implementation silently migrated
+    routes_to into a pipeline and WROTE team.yaml from inside a GET
+    handler. Two problems:
+    (1) GET requests MUST be idempotent; writing to disk is a side
+        effect HTTP clients and middleware will not expect.
+    (2) Concurrent GETs could race with a PUT /api/pipeline, corrupting
+        team.yaml (the atomic-write fix in system.py does not apply
+        here yet).
+
+    Pipeline bootstrap now happens at ``create_app()`` startup in
+    app.py; this handler is read-only. Callers that need the migration
+    explicitly should POST to ``/api/pipeline/migrate`` (added below)
+    which does the same work behind the admin-dep gate.
+    """
     pc = get_pipeline()
-    # Auto-migrate from routes_to if pipeline is empty but roles have routes
-    if not pc.edges:
-        orch = get_orch_optional()
-        if orch and orch.roles:
-            has_routes = any(
-                len(rc.routes_to) > 0 for rc in orch.roles.values()
-            )
-            if has_routes:
-                from taskbrew.config_loader import migrate_routes_to_pipeline, save_pipeline as _save_pipeline
-                pc = migrate_routes_to_pipeline(orch.roles)
-                set_pipeline_deps(pc)
-                if orch.project_dir:
-                    team_yaml = Path(orch.project_dir) / "config" / "team.yaml"
-                    if team_yaml.exists():
-                        _save_pipeline(team_yaml, pc)
     return {
         "id": pc.id,
         "name": pc.name,

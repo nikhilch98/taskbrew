@@ -210,7 +210,17 @@ class Orchestrator:
         except Exception:
             self._logger.exception("Error during worktree cleanup")
 
-        # Phase 4 — close database
+        # Phase 4 — drain event-bus dispatches so a handler persisting
+        # notifications / webhook deliveries is not cancelled mid-write
+        # (audit 03 F#11).
+        try:
+            if self.event_bus and hasattr(self.event_bus, "drain"):
+                self._logger.info("Phase 4: Draining event bus")
+                await self.event_bus.drain(timeout=5.0)
+        except Exception:
+            self._logger.exception("Error draining event bus")
+
+        # Phase 5 — close database
         try:
             self._logger.info("Closing database connection")
             await self.db.close()

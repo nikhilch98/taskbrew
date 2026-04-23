@@ -98,16 +98,47 @@ _WELL_KNOWN_PATHS = [
 ]
 
 
+def _validate_cli_binary(candidate: str) -> str:
+    """Validate that *candidate* is safe to spawn as a subprocess.
+
+    audit 02 F#4: previously cli_path flowed straight into
+    ``create_subprocess_exec`` with zero validation. A mis-configured
+    role (or any config-injection sink) could point cli_path at an
+    arbitrary executable, or at a symlink to a non-executable file that
+    would hang on open. We now require:
+
+    - candidate resolves via os.path.realpath (follows symlinks) to an
+      EXISTING regular file
+    - candidate is os.access()-executable by this process
+
+    Returns the resolved absolute path so the caller gets a stable
+    binary handle. Raises GeminiCLINotFoundError on failure.
+    """
+    import os
+    if not candidate:
+        raise GeminiCLINotFoundError("cli_path is empty")
+    resolved = os.path.realpath(candidate)
+    if not os.path.isfile(resolved):
+        raise GeminiCLINotFoundError(
+            f"cli_path {candidate!r} does not resolve to a regular file (realpath={resolved!r})"
+        )
+    if not os.access(resolved, os.X_OK):
+        raise GeminiCLINotFoundError(
+            f"cli_path {resolved!r} is not executable by this process"
+        )
+    return resolved
+
+
 def _find_cli(cli_path: str | None = None) -> str:
     """Locate the gemini CLI binary."""
     if cli_path:
-        return cli_path
+        return _validate_cli_binary(cli_path)
     found = shutil.which("gemini")
     if found:
-        return found
+        return _validate_cli_binary(found)
     for path in _WELL_KNOWN_PATHS:
         if shutil.which(path):
-            return path
+            return _validate_cli_binary(path)
     raise GeminiCLINotFoundError(
         "Gemini CLI not found. Install it with: npm install -g @google/gemini-cli"
     )
