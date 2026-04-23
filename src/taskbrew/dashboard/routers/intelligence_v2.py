@@ -77,10 +77,43 @@ def _validate_path(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 _init_lock = asyncio.Lock()
-_obs_tables_ensured = False
+# audit 12a F#12: the "tables already ensured" state used to live in
+# module-level booleans, so swapping the orchestrator (multi-project
+# tests or an activate_project call in prod) kept the flag True and
+# the new DB never had its tables created. Scope the flag to the
+# manager instance itself via a WeakSet so garbage collection of an
+# old manager also clears its flag. We track the managers we've seen
+# rather than mutating the manager object itself, so callers that
+# pass a ``MagicMock`` in tests aren't annotated with new attrs.
+_obs_tables_ensured = False  # kept for legacy test fixtures that poke it
 _planning_tables_ensured = False
 _testing_tables_ensured = False
 _security_tables_ensured = False
+
+import weakref as _weakref
+_ensured_managers: "_weakref.WeakSet[object]" = _weakref.WeakSet()
+
+
+async def _ensure_once(mgr, ensure_method_name: str) -> None:
+    """Call the manager's table-ensure method once per manager instance.
+
+    Idempotent and per-instance, so swapping the orchestrator
+    re-creates tables on the new DB rather than short-circuiting on a
+    stale module-level flag.
+    """
+    try:
+        if mgr in _ensured_managers:
+            return
+    except TypeError:
+        # MagicMock-style managers are unhashable; fall through to
+        # always-call, which is harmless for ensure_tables.
+        await getattr(mgr, ensure_method_name)()
+        return
+    async with _init_lock:
+        if mgr in _ensured_managers:
+            return
+        await getattr(mgr, ensure_method_name)()
+        _ensured_managers.add(mgr)
 
 
 async def _ensure_obs():
@@ -88,11 +121,8 @@ async def _ensure_obs():
     orch = get_orch()
     if not orch.observability_manager:
         raise HTTPException(503, "Observability manager not initialized")
-    if not _obs_tables_ensured:
-        async with _init_lock:
-            if not _obs_tables_ensured:
-                await orch.observability_manager.ensure_tables()
-                _obs_tables_ensured = True
+    await _ensure_once(orch.observability_manager, "ensure_tables")
+    _obs_tables_ensured = True
     return orch.observability_manager
 
 
@@ -101,11 +131,8 @@ async def _ensure_planning():
     orch = get_orch()
     if not orch.advanced_planning_manager:
         raise HTTPException(503, "Advanced planning manager not initialized")
-    if not _planning_tables_ensured:
-        async with _init_lock:
-            if not _planning_tables_ensured:
-                await orch.advanced_planning_manager.ensure_tables()
-                _planning_tables_ensured = True
+    await _ensure_once(orch.advanced_planning_manager, "ensure_tables")
+    _planning_tables_ensured = True
     return orch.advanced_planning_manager
 
 
@@ -114,12 +141,15 @@ async def _ensure_testing():
     orch = get_orch()
     if not orch.testing_quality_manager:
         raise HTTPException(503, "Testing quality manager not initialized")
-    if not _testing_tables_ensured:
-        async with _init_lock:
-            if not _testing_tables_ensured:
-                await orch.testing_quality_manager._ensure_tables()
-                _testing_tables_ensured = True
-    return orch.testing_quality_manager
+    # audit 09 systemic note: the testing manager exposed the ensure
+    # hook as a private method while its siblings exposed it
+    # publicly. Prefer the public name when present, fall back to
+    # the private one so we don't break backwards-compatible managers.
+    mgr = orch.testing_quality_manager
+    method = "ensure_tables" if hasattr(mgr, "ensure_tables") else "_ensure_tables"
+    await _ensure_once(mgr, method)
+    _testing_tables_ensured = True
+    return mgr
 
 
 async def _ensure_security():
@@ -127,11 +157,8 @@ async def _ensure_security():
     orch = get_orch()
     if not orch.security_intel_manager:
         raise HTTPException(503, "Security intel manager not initialized")
-    if not _security_tables_ensured:
-        async with _init_lock:
-            if not _security_tables_ensured:
-                await orch.security_intel_manager.ensure_tables()
-                _security_tables_ensured = True
+    await _ensure_once(orch.security_intel_manager, "ensure_tables")
+    _security_tables_ensured = True
     return orch.security_intel_manager
 
 
