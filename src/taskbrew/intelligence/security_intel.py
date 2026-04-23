@@ -258,7 +258,17 @@ class SecurityIntelManager:
     # ------------------------------------------------------------------
 
     async def scan_dependencies(self) -> list[dict]:
-        """Parse requirements.txt/pyproject.toml and check against known vulnerabilities."""
+        """Parse requirements.txt/pyproject.toml and check against known vulnerabilities.
+
+        audit 08a F#1: previously every package whose name appeared
+        in the hardcoded table was flagged, regardless of version --
+        `requests>=2.32` got tagged with CVE-2018-18074 that was
+        fixed in 2.25. Now parse the pinned version and skip the
+        finding when the installed version is at or beyond the
+        recorded fix_version. Specs we can't parse (complex markers,
+        git refs, etc.) still report the finding so unknown pins
+        fail-safe, but the reason is logged.
+        """
         await self.ensure_tables()
         deps = self._get_dependencies()
         now = _utcnow()
@@ -267,6 +277,8 @@ class SecurityIntelManager:
         for dep_name, version_spec in deps:
             vulns = _KNOWN_VULNERABILITIES.get(dep_name, [])
             for vuln in vulns:
+                if self._is_patched(version_spec, vuln.get("fix_version")):
+                    continue
                 rec_id = _new_id()
                 finding = {
                     "id": rec_id,
@@ -294,6 +306,63 @@ class SecurityIntelManager:
                 findings.append(finding)
 
         return findings
+
+    @staticmethod
+    def _is_patched(version_spec: str | None, fix_version: str | None) -> bool:
+        """Return True iff the installed pin is known to be at or beyond fix_version.
+
+        Fails open (returns False) for unparseable specs so that the
+        caller still emits a finding -- unknown pins should not be
+        silently marked safe.
+        """
+        if not fix_version or not version_spec:
+            return False
+        try:
+            from packaging.specifiers import SpecifierSet
+            from packaging.version import Version, InvalidVersion
+        except ImportError:
+            return False
+
+        stripped = version_spec.strip()
+        if not stripped:
+            return False
+        try:
+            fix_v = Version(fix_version)
+        except InvalidVersion:
+            return False
+
+        # Bare version like "2.25.0" -- installed >= fix means patched.
+        if stripped[:1] not in (">", "<", "=", "!", "~"):
+            try:
+                return Version(stripped) >= fix_v
+            except InvalidVersion:
+                return False
+
+        # Specifier chain: extract each comparator's version. A pin is
+        # patched iff its effective lower bound is >= fix_v. Walk each
+        # sub-specifier and take the max of ==/>= anchors as the lower
+        # bound; any ">" bound excludes its own version but we still
+        # use it as the bound.
+        try:
+            spec = SpecifierSet(stripped)
+        except Exception:
+            return False
+
+        lower_bound: Version | None = None
+        for s in spec:
+            op, raw = s.operator, s.version
+            try:
+                v = Version(raw)
+            except InvalidVersion:
+                return False
+            if op in ("==", ">=", ">", "~="):
+                if lower_bound is None or v > lower_bound:
+                    lower_bound = v
+            # "<"/"<="/"!=" don't establish a lower bound we can trust.
+
+        if lower_bound is None:
+            return False
+        return lower_bound >= fix_v
 
     async def get_vulnerabilities(self, severity: str | None = None) -> list[dict]:
         """Query vulnerability_scans, optionally filtered by severity."""
