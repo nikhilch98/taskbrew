@@ -479,6 +479,14 @@ class VerificationManager:
             (limit,),
         )
 
+    # audit 08b F#9: the previous implementation opened any file handed
+    # in, read it unbounded, and emitted one INSERT per finding. A
+    # multi-MB file with thousands of TODOs caused thousands of awaited
+    # INSERTs in a tight loop. We now cap the read at 2 MiB via the
+    # shared safe_read_text helper and cap the number of annotations
+    # emitted per call.
+    _AUTO_ANNOTATE_MAX_FINDINGS = 200
+
     async def auto_annotate(
         self, file_path: str, content: str | None = None
     ) -> list[dict]:
@@ -488,21 +496,25 @@ class VerificationManager:
         - TODO/FIXME/HACK comments
         - Deeply nested code (4+ levels of indentation)
         - Long functions (50+ lines)
+
+        audit 08b F#9: caps file size at 2 MiB and emits at most
+        _AUTO_ANNOTATE_MAX_FINDINGS annotations per call so a
+        pathological input cannot DoS the DB with per-finding INSERTs.
         """
         if content is None:
+            from taskbrew.intelligence._utils import safe_read_text
             full_path = os.path.join(self._project_dir, file_path)
-            try:
-                with open(full_path, "r", errors="replace") as f:
-                    content = f.read()
-            except OSError as exc:
-                logger.warning("Cannot read %s: %s", full_path, exc)
+            content = safe_read_text(full_path)
+            if not content:
                 return []
 
-        annotations = []
+        annotations: list[dict] = []
         lines = content.splitlines()
 
         # Detect TODO/FIXME/HACK
         for i, line in enumerate(lines, 1):
+            if len(annotations) >= self._AUTO_ANNOTATE_MAX_FINDINGS:
+                break
             for marker in ("TODO", "FIXME", "HACK"):
                 if marker in line:
                     ann = await self.annotate(
