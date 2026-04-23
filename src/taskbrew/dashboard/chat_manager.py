@@ -57,36 +57,56 @@ class ChatManager:
         self.project_dir = project_dir
         self.sessions: dict[str, ChatSession] = {}
         self._semaphore = asyncio.Semaphore(max_concurrent_chats)
+        # audit 10 F#25: per-agent lock so two ``start_session`` calls
+        # racing for the same agent_name cannot both spawn a subprocess.
+        self._start_locks: dict[str, asyncio.Lock] = {}
+        self._start_locks_mutex = asyncio.Lock()
+
+    async def _get_start_lock(self, agent_name: str) -> asyncio.Lock:
+        async with self._start_locks_mutex:
+            lock = self._start_locks.get(agent_name)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._start_locks[agent_name] = lock
+            return lock
 
     async def start_session(self, agent_name: str, agent_config: AgentConfig) -> ChatSession:
-        """Start a new chat session for an agent."""
-        if agent_name in self.sessions:
-            raise ValueError(f"Chat session for '{agent_name}' already exists")
+        """Start a new chat session for an agent.
 
-        session_id = str(uuid.uuid4())[:8]
-        opts = ClaudeAgentOptions(
-            system_prompt=agent_config.system_prompt,
-            allowed_tools=agent_config.allowed_tools,
-            permission_mode=agent_config.permission_mode,
-            env={"CLAUDECODE": ""},
-        )
-        if self.cli_path:
-            opts.cli_path = self.cli_path
-        if self.project_dir:
-            opts.cwd = self.project_dir
+        audit 10 F#25: take a per-agent lock around the
+        check-then-spawn window so two concurrent callers for the same
+        agent_name cannot both pass the ``if agent_name in self.sessions``
+        check and then both spawn an SDK client (leaking the first one).
+        """
+        lock = await self._get_start_lock(agent_name)
+        async with lock:
+            if agent_name in self.sessions:
+                raise ValueError(f"Chat session for '{agent_name}' already exists")
 
-        client = ClaudeSDKClient(options=opts)
-        await client.connect()
+            session_id = str(uuid.uuid4())[:8]
+            opts = ClaudeAgentOptions(
+                system_prompt=agent_config.system_prompt,
+                allowed_tools=agent_config.allowed_tools,
+                permission_mode=agent_config.permission_mode,
+                env={"CLAUDECODE": ""},
+            )
+            if self.cli_path:
+                opts.cli_path = self.cli_path
+            if self.project_dir:
+                opts.cwd = self.project_dir
 
-        session = ChatSession(
-            session_id=session_id,
-            agent_name=agent_name,
-            agent_config=agent_config,
-            client=client,
-            is_connected=True,
-        )
-        self.sessions[agent_name] = session
-        return session
+            client = ClaudeSDKClient(options=opts)
+            await client.connect()
+
+            session = ChatSession(
+                session_id=session_id,
+                agent_name=agent_name,
+                agent_config=agent_config,
+                client=client,
+                is_connected=True,
+            )
+            self.sessions[agent_name] = session
+            return session
 
     async def send_message(
         self,
