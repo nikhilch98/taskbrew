@@ -283,7 +283,12 @@ async def test_query_process_error():
         json.dumps({"type": "init", "session_id": "s4"}),
     ]
     process = _make_mock_process(lines, returncode=1)
-    process.stderr.read = AsyncMock(return_value=b"Something went wrong")
+    # audit 02 F#2: the stderr drainer in gemini_cli.query() reads stderr
+    # in a loop until it returns b"" (EOF). Mock the chunks returned by
+    # successive read(4096) calls accordingly.
+    process.stderr.read = AsyncMock(
+        side_effect=[b"Something went wrong", b""]
+    )
 
     with patch("taskbrew.agents.gemini_cli._find_cli", return_value="/usr/bin/gemini"), \
          patch("asyncio.create_subprocess_exec", return_value=process):
