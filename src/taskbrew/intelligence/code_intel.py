@@ -111,18 +111,36 @@ class CodeIntelligenceManager:
             )
 
     async def search_by_intent(self, query: str, limit: int = 10) -> list[dict]:
-        """Search indexed symbols by keyword matching on description and name."""
+        """Search indexed symbols by keyword matching on description and name.
+
+        audit 07a F#5: the previous implementation joined keyword
+        conditions with OR, so ``"user login"`` matched rows that
+        mentioned EITHER "user" OR "login". That turned every search
+        into a noisy bag-of-tokens full scan, sorted only by recency.
+        We now AND the per-keyword conditions (tokens must all
+        appear) and escape LIKE wildcards in the caller-supplied
+        input so ``%`` / ``_`` are literal.
+        """
         keywords = [k.strip() for k in query.lower().split() if k.strip()]
         if not keywords:
             return []
 
+        def _escape(s: str) -> str:
+            return (
+                s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+
         conditions = []
         params: list = []
         for kw in keywords:
-            conditions.append("(LOWER(description) LIKE ? OR LOWER(symbol_name) LIKE ?)")
-            params.extend([f"%{kw}%", f"%{kw}%"])
+            esc = _escape(kw)
+            conditions.append(
+                "(LOWER(description) LIKE ? ESCAPE '\\' OR "
+                "LOWER(symbol_name) LIKE ? ESCAPE '\\')"
+            )
+            params.extend([f"%{esc}%", f"%{esc}%"])
 
-        where = " OR ".join(conditions)
+        where = " AND ".join(conditions)
         params.append(limit)
         return await self._db.execute_fetchall(
             f"SELECT * FROM code_embeddings WHERE {where} "

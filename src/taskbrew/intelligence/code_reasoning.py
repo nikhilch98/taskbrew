@@ -140,20 +140,31 @@ class CodeReasoningManager:
         }
 
     async def search_by_intent(self, query: str, limit: int = 10) -> list[dict]:
-        """Keyword match on intent_description and keywords."""
+        """Keyword match on intent_description and keywords.
+
+        audit 07a F#5: tokens are joined with AND, not OR, so every
+        supplied word must appear. LIKE wildcards are escaped.
+        """
         tokens = [t.strip().lower() for t in query.split() if t.strip()]
         if not tokens:
             return []
 
+        def _escape(s: str) -> str:
+            return (
+                s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+
         conditions = []
         params: list = []
         for token in tokens:
+            esc = _escape(token)
             conditions.append(
-                "(LOWER(intent_description) LIKE ? OR LOWER(keywords) LIKE ?)"
+                "(LOWER(intent_description) LIKE ? ESCAPE '\\' OR "
+                "LOWER(keywords) LIKE ? ESCAPE '\\')"
             )
-            params.extend([f"%{token}%", f"%{token}%"])
+            params.extend([f"%{esc}%", f"%{esc}%"])
 
-        where = " OR ".join(conditions)
+        where = " AND ".join(conditions)
         params.append(limit)
         return await self._db.execute_fetchall(
             f"SELECT * FROM semantic_index WHERE {where} "
