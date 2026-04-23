@@ -56,7 +56,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- TaskBoard.create_task so agent_loop reads the authoritative
     -- branch rather than reconstructing it from task_id.
     branch_name      TEXT,
-    parent_branch    TEXT
+    parent_branch    TEXT,
+    -- Per-task verification fingerprint (migration 31). completion_checks
+    -- is a freeform JSON object; the verification gate in
+    -- complete_and_handoff reads it and re-queues tasks with any failed
+    -- check, emitting merged_unverified events for tasks with no checks.
+    completion_checks      TEXT DEFAULT '{}',
+    merge_status           TEXT,
+    verification_retries   INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS task_dependencies (

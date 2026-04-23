@@ -535,3 +535,176 @@ async def test_merge_gate_does_not_double_create_when_vr_exists(
         (impl["id"],),
     )
     assert len(vrs) == 1
+
+
+# ------------------------------------------------------------------
+# Per-task verification gate (completion_checks)
+# docs/superpowers/specs/2026-04-24-per-task-completion-checks-design.md
+# ------------------------------------------------------------------
+
+
+async def _impl_task_in_progress(
+    board: TaskBoard,
+    *,
+    completion_checks: dict | None = None,
+    verification_retries: int = 0,
+) -> dict:
+    """Helper: create a tiny in-progress coder task with preloaded checks.
+
+    Uses task_type="bug_fix" so the VR auto-create gate doesn't fire
+    (it only triggers on substantial implementation diffs, which
+    _count_changed_loc is mocked below to return 0 for anyway).
+    """
+    import json as _json
+    group = await board.create_group(title="F", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="Implement",
+        task_type="bug_fix", assigned_to="coder", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'coder-1', "
+        "completion_checks = ?, verification_retries = ? WHERE id = ?",
+        (_json.dumps(completion_checks or {}), verification_retries, task["id"]),
+    )
+    return await board.get_task(task["id"])
+
+
+async def _no_diff(*a, **kw):
+    return 0
+
+
+async def test_verification_gate_requeues_on_fail(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Any check with status=fail sends the task back to pending with
+    verification_retries incremented. Mirrors the fanout re-queue."""
+    task_row = await _impl_task_in_progress(
+        board,
+        completion_checks={
+            "build": {"status": "pass", "command": "make"},
+            "tests": {"status": "fail", "details": "3 tests failed"},
+        },
+    )
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+    monkeypatch.setattr(loop, "_count_changed_loc", _no_diff)
+
+    await loop.complete_and_handoff(task_row, "done")
+
+    row = await board.get_task(task_row["id"])
+    assert row["status"] == "pending", (
+        f"expected re-queue on fail, got status={row['status']}"
+    )
+    assert row["claimed_by"] is None
+    assert row["verification_retries"] == 1
+    # merge_status must NOT have been set on a re-queued task.
+    assert row["merge_status"] is None
+
+
+async def test_verification_gate_escalates_after_two_retries(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """After 2 retries with a still-failing check, complete anyway with
+    merge_status=verification_failed and emit escalation event."""
+    task_row = await _impl_task_in_progress(
+        board,
+        completion_checks={"tests": {"status": "fail"}},
+        verification_retries=2,
+    )
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+    monkeypatch.setattr(loop, "_count_changed_loc", _no_diff)
+
+    await loop.complete_and_handoff(task_row, "done")
+
+    row = await board.get_task(task_row["id"])
+    assert row["status"] == "completed"
+    assert row["merge_status"] == "verification_failed"
+
+
+async def test_verification_gate_no_checks_merges_unverified(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Fail-open for the new-user experience: no checks recorded merges
+    as merged_unverified (not blocked) but surfaces via the event."""
+    task_row = await _impl_task_in_progress(board, completion_checks={})
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+    monkeypatch.setattr(loop, "_count_changed_loc", _no_diff)
+
+    emitted_events = []
+    orig_emit = event_bus.emit
+
+    async def capture_emit(name, payload):
+        emitted_events.append((name, payload))
+        await orig_emit(name, payload)
+
+    monkeypatch.setattr(event_bus, "emit", capture_emit)
+
+    await loop.complete_and_handoff(task_row, "done")
+
+    row = await board.get_task(task_row["id"])
+    assert row["status"] == "completed"
+    assert row["merge_status"] == "merged_unverified"
+    names = [n for n, _ in emitted_events]
+    assert "task.unverified_merge" in names
+
+
+async def test_verification_gate_all_pass_merges(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Happy path: every recorded check passes, task merges with
+    merge_status=merged."""
+    task_row = await _impl_task_in_progress(
+        board,
+        completion_checks={
+            "build": {"status": "pass"},
+            "tests": {"status": "pass", "details": "42 passed"},
+            "lint":  {"status": "skipped", "details": "no linter"},
+        },
+    )
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+    monkeypatch.setattr(loop, "_count_changed_loc", _no_diff)
+
+    await loop.complete_and_handoff(task_row, "done")
+
+    row = await board.get_task(task_row["id"])
+    assert row["status"] == "completed"
+    assert row["merge_status"] == "merged"
+
+
+async def test_verification_requeue_respects_status_predicate(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """Regression: a concurrent cancel_task / fail_task must not be
+    silently resurrected back to pending by the verification re-queue.
+    The `AND status = 'in_progress'` predicate on the UPDATE is load-
+    bearing (same fix as _requeue_for_fanout)."""
+    task_row = await _impl_task_in_progress(
+        board,
+        completion_checks={"build": {"status": "fail"}},
+    )
+    # Externally cancel the task between the gate's read and the re-queue.
+    await board._db.execute(
+        "UPDATE tasks SET status = 'cancelled' WHERE id = ?",
+        (task_row["id"],),
+    )
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+    await loop._requeue_for_verification(
+        task_row, current_retries=0,
+        failed_checks=["build"], checks_map={"build": {"status": "fail"}},
+    )
+    row = await board.get_task(task_row["id"])
+    # Must still be cancelled -- not resurrected to pending.
+    assert row["status"] == "cancelled"
