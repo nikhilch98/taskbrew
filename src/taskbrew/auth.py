@@ -44,6 +44,37 @@ class AuthManager:
     def _hash_token(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
 
+    @staticmethod
+    def _persist_auto_token_to_disk(token: str):
+        """Write *token* to ~/.taskbrew/auth-token.txt with 0600 perms.
+
+        Returns the path (as a string) on success, or None on failure.
+        Never raises: a failure to persist must not kill the boot. The
+        operator can always read AuthManager.auto_generated_token in
+        process instead.
+        """
+        try:
+            from pathlib import Path
+            import os
+            path = Path.home() / ".taskbrew" / "auth-token.txt"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Write atomically: write to .tmp then rename.
+            tmp = path.with_suffix(".txt.tmp")
+            tmp.write_text(token + "\n", encoding="utf-8")
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
+            os.replace(tmp, path)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            return str(path)
+        except Exception as exc:  # noqa: BLE001 -- never fatal
+            logger.warning("Could not persist auto-generated token to disk: %s", exc)
+            return None
+
     def __init__(
         self,
         enabled: bool = False,
@@ -59,15 +90,31 @@ class AuthManager:
         self._tokens: set[str] = {self._hash_token(t) for t in (tokens or [])}
         self.auto_generated_token: str | None = None
         if enabled and not self._tokens:
-            # Auto-generate a token on first run
+            # Auto-generate a token on first run.
+            # audit 01: the previous implementation print()ed the token
+            # to stdout, but `taskbrew start` redirects stdout/stderr to
+            # /dev/null for the daemon, so the token was unrecoverable
+            # and the daemon was unreachable. Persist the full token to
+            # ~/.taskbrew/auth-token.txt (0600) so the operator can find
+            # it; emit only the 8-char prefix to the log so it does not
+            # leak via log-forwarding pipelines.
             token = secrets.token_urlsafe(32)
             self._tokens.add(self._hash_token(token))
             self.auto_generated_token = token
-            logger.warning(
-                "AUTH ENABLED - API Token generated (%s...)",
-                token[:8],
-            )
-            print(f"\n  API Token: {token}\n  Add header: Authorization: Bearer {token}\n")
+            token_path = self._persist_auto_token_to_disk(token)
+            if token_path is not None:
+                logger.warning(
+                    "AUTH ENABLED - API Token auto-generated (%s...). Full token "
+                    "written to %s (chmod 600). Add header: 'Authorization: Bearer <token>'.",
+                    token[:8], token_path,
+                )
+            else:
+                logger.warning(
+                    "AUTH ENABLED - API Token auto-generated (%s...). Could not "
+                    "persist token to disk; read AuthManager.auto_generated_token "
+                    "programmatically or configure tokens explicitly in team.yaml.",
+                    token[:8],
+                )
 
         # Rate-limiting configuration
         self.rate_limit_attempts = rate_limit_attempts

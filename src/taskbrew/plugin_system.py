@@ -143,26 +143,78 @@ class PluginRegistry:
     def load_plugins(self, plugins_dir: Path) -> list[str]:
         """Load all plugins from a directory.
 
-        Each plugin should be a Python file or package with a `register(registry)` function.
+        Each plugin should be a Python file or package with a ``register(registry)``
+        function. ``exec_module`` below runs the plugin code verbatim --
+        this IS the trust boundary for third-party code dropped into the
+        project. Only the ``plugins/`` directory itself is trusted, so we
+        refuse to follow any symlink or any path whose resolved location
+        escapes the plugins directory (audit 01 F#1).
 
         Returns list of loaded plugin names.
         """
-        loaded = []
+        loaded: list[str] = []
         if not plugins_dir.is_dir():
             return loaded
 
+        try:
+            resolved_root = plugins_dir.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Could not resolve plugins dir %s: %s", plugins_dir, exc)
+            return loaded
+
         for path in sorted(plugins_dir.iterdir()):
+            # 1. Refuse symlinks outright. A symlink at plugins/foo.py
+            #    pointing at /etc/passwd would let an attacker have the
+            #    importer exec_module arbitrary files.
+            if path.is_symlink():
+                logger.warning(
+                    "Skipping symlinked plugin candidate %s (symlinks are not loaded)",
+                    path,
+                )
+                continue
+
+            # 2. Resolve and require containment in plugins_dir to catch
+            #    any symlink found within subdirectories during the walk.
+            try:
+                resolved_path = path.resolve(strict=True)
+                resolved_path.relative_to(resolved_root)
+            except (OSError, ValueError):
+                logger.warning(
+                    "Skipping plugin candidate %s: escapes plugins_dir %s",
+                    path, plugins_dir,
+                )
+                continue
+
             if path.suffix == ".py" and not path.name.startswith("_"):
                 name = path.stem
+                module_file = path
             elif path.is_dir() and (path / "__init__.py").exists():
+                # 3. For package plugins, check __init__.py is also not a
+                #    symlink out of the sandbox.
+                init_py = path / "__init__.py"
+                if init_py.is_symlink():
+                    logger.warning(
+                        "Skipping package plugin %s: __init__.py is a symlink",
+                        path,
+                    )
+                    continue
+                try:
+                    init_py.resolve(strict=True).relative_to(resolved_root)
+                except (OSError, ValueError):
+                    logger.warning(
+                        "Skipping package plugin %s: __init__.py escapes plugins_dir",
+                        path,
+                    )
+                    continue
                 name = path.name
+                module_file = init_py
             else:
                 continue
 
             try:
                 spec = importlib.util.spec_from_file_location(
                     f"taskbrew_plugin_{name}",
-                    str(path) if path.suffix == ".py" else str(path / "__init__.py"),
+                    str(module_file),
                 )
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)

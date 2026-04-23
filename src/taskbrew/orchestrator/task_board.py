@@ -648,15 +648,54 @@ class TaskBoard:
     # Resilience / Recovery
     # ------------------------------------------------------------------
 
-    async def recover_orphaned_tasks(self) -> list[dict]:
-        """Reset in_progress tasks to pending on server restart.
+    async def recover_orphaned_tasks(
+        self, *, heartbeat_timeout_seconds: int = 60
+    ) -> list[dict]:
+        """Reset in_progress tasks to pending when their claiming instance
+        is no longer alive.
 
-        When the server crashes, any tasks that were in_progress become
-        orphaned since all agents are new on restart.
+        audit 03 F#18: the previous implementation reset EVERY in_progress
+        row unconditionally. That is safe for a single-process daemon but
+        catastrophic in any HA scenario (multiple workers sharing a SQLite
+        file under WAL, rolling restart, sidecar process) -- worker B
+        starting up would rip live work out from under worker A's
+        actively-heartbeating agents.
+
+        New contract: only reset a task when its ``claimed_by`` is either
+        absent from ``agent_instances`` or has a ``last_heartbeat`` older
+        than *heartbeat_timeout_seconds*. Tasks owned by a sibling process
+        whose agents are still heartbeating are left alone. A task whose
+        ``claimed_by`` is NULL is treated as orphaned (bug bail-out) and
+        also reset.
+
+        Heartbeats are sent every 15 s per the orchestrator contract; the
+        default 60 s timeout tolerates ~3 missed heartbeats before
+        reclaiming.
         """
+        from datetime import datetime, timezone, timedelta
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(seconds=heartbeat_timeout_seconds)
+        ).isoformat()
+
+        # LEFT JOIN so rows with an unknown claimed_by (no agent_instances
+        # row) are included in the reset via the IS NULL branch. The ``OR
+        # tasks.claimed_by IS NULL`` branch covers bug paths where a row
+        # is in_progress but no owner was recorded.
         return await self._db.execute_returning(
             "UPDATE tasks SET status = 'pending', claimed_by = NULL, started_at = NULL "
-            "WHERE status = 'in_progress' RETURNING *"
+            "WHERE id IN ("
+            "   SELECT t.id FROM tasks t "
+            "   LEFT JOIN agent_instances ai ON ai.instance_id = t.claimed_by "
+            "   WHERE t.status = 'in_progress' "
+            "     AND ("
+            "        t.claimed_by IS NULL "
+            "     OR ai.instance_id IS NULL "
+            "     OR ai.last_heartbeat IS NULL "
+            "     OR ai.last_heartbeat < ?"
+            "   )"
+            ") RETURNING *",
+            (cutoff,),
         )
 
     async def recover_stale_in_progress_tasks(

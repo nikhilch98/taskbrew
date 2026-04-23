@@ -19,11 +19,39 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# audit 11a F#16: /api/usage/* endpoints spawn Claude/Gemini CLIs via
+# pexpect in a 50-second interactive session. Two risks: (1) unauth
+# callers could drive host-CLI spawns (compounded by the fact that
+# shutil.which resolves PATH, which is hijackable); (2) concurrent
+# callers would spawn N parallel 50-second sessions.
+#
+# Mitigations wired up here:
+#   - _verify_admin_dep is injected by app.py via set_usage_auth_deps()
+#     and applied to the two CLI-spawning endpoints.
+#   - _cli_spawn_lock serialises pexpect spawns so a burst of callers
+#     does not multiply into parallel interactive sessions.
+_verify_admin = None
+_cli_spawn_lock = asyncio.Lock()
+
+
+def set_usage_auth_deps(verify_admin):
+    """Called by app.py to inject the admin-auth callable."""
+    global _verify_admin
+    _verify_admin = verify_admin
+
+
+async def _verify_admin_dep(request: Request):
+    """Indirection for Depends(...) to resolve at request time."""
+    if _verify_admin is None:
+        return  # legacy/test path
+    await _verify_admin(request)
 
 CLAUDE_DIR = Path.home() / ".claude"
 STATS_CACHE = CLAUDE_DIR / "stats-cache.json"
@@ -219,11 +247,17 @@ async def _fetch_usage_via_cli() -> dict | None:
         return _usage_cache
 
     try:
-        loop = asyncio.get_event_loop()
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, _run_usage_cli_sync),
-            timeout=50,
-        )
+        # Serialise CLI spawns across concurrent callers (audit 11a F#17).
+        async with _cli_spawn_lock:
+            # Re-check cache under the lock in case another caller just
+            # populated it while we were queued.
+            if _usage_cache and _time.time() - _usage_cache_ts < _USAGE_CACHE_TTL:
+                return _usage_cache
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _run_usage_cli_sync),
+                timeout=50,
+            )
 
         if result:
             _usage_cache = result
@@ -399,11 +433,15 @@ async def _fetch_gemini_usage_via_cli() -> dict | None:
         return _gemini_usage_cache
 
     try:
-        loop = asyncio.get_event_loop()
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, _run_gemini_usage_cli_sync),
-            timeout=50,
-        )
+        async with _cli_spawn_lock:
+            # Re-check under lock; another caller may have populated it.
+            if _gemini_usage_cache and _time.time() - _gemini_usage_cache_ts < _USAGE_CACHE_TTL:
+                return _gemini_usage_cache
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _run_gemini_usage_cli_sync),
+                timeout=50,
+            )
 
         if result:
             _gemini_usage_cache = result
@@ -420,9 +458,15 @@ async def _fetch_gemini_usage_via_cli() -> dict | None:
         return _gemini_usage_cache
 
 
-@router.get("/api/usage/gemini/summary")
+@router.get(
+    "/api/usage/gemini/summary",
+    dependencies=[Depends(_verify_admin_dep)],
+)
 async def get_gemini_usage_summary():
-    """Return Gemini CLI usage data for the dashboard."""
+    """Return Gemini CLI usage data for the dashboard.
+
+    Admin-only: this endpoint spawns the Gemini CLI via pexpect (50s).
+    """
     usage = await _fetch_gemini_usage_via_cli()
     return {
         "available": usage is not None and bool(usage.get("models")),
@@ -564,9 +608,16 @@ def _hour_window_info() -> dict:
     }
 
 
-@router.get("/api/usage/summary")
+@router.get(
+    "/api/usage/summary",
+    dependencies=[Depends(_verify_admin_dep)],
+)
 async def get_usage_summary():
-    """Return usage data for the popdown: current session + weekly stats + plan info."""
+    """Return usage data for the popdown: current session + weekly stats + plan info.
+
+    Admin-only: this endpoint may trigger a Claude CLI pexpect spawn to
+    fetch plan limits.
+    """
     stats = _read_stats()
     profile = await _fetch_profile()
 

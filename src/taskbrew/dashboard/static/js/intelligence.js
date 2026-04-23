@@ -420,6 +420,10 @@ function loadSecurityView() {
     fetchSecurityFlags();
 }
 
+// Returns a {html: ...} wrapper rather than a bare HTML string so
+// v2RenderTable emits the span raw while every other cell in the same
+// row is escape-by-default. severity is always escaped before
+// interpolation; the class names are from a closed enum.
 function v2SeverityBadge(severity) {
     var s = (severity || 'info').toLowerCase();
     var cls = 'v2-severity-info';
@@ -427,7 +431,30 @@ function v2SeverityBadge(severity) {
     else if (s === 'high') cls = 'v2-severity-high';
     else if (s === 'medium') cls = 'v2-severity-medium';
     else if (s === 'low') cls = 'v2-severity-low';
-    return '<span class="v2-severity-badge ' + cls + '">' + escapeHtml(severity || 'info') + '</span>';
+    return {html: '<span class="v2-severity-badge ' + cls + '">' + escapeHtml(severity || 'info') + '</span>'};
+}
+
+// audit 13 F#1 / top-15 #15: v2RenderTable previously concatenated
+// raw cells into innerHTML. A caller forgetting to escape any server-
+// or LLM-authored value caused stored XSS in the dashboard origin.
+// New contract:
+//   - Cell is a plain string without literal '<' -> rendered verbatim
+//     (safe: browser does not parse unentered entities).
+//   - Cell contains literal '<' -> escapeHtml'd before insertion (this
+//     is the unsafe input path; safe-by-default fix).
+//   - Cell is an object with a .html property -> inserted raw (caller
+//     has taken explicit responsibility for the HTML). Use this for
+//     v2SeverityBadge() and other intentionally-HTML helpers.
+//   - null / undefined -> rendered as empty string.
+// Already-entity-escaped input (e.g. from escapeHtml()) passes through
+// unchanged because it contains no literal '<'.
+function _v2SafeCell(cell) {
+    if (cell === null || cell === undefined) return '';
+    if (typeof cell === 'object' && cell !== null && typeof cell.html === 'string') {
+        return cell.html;
+    }
+    var s = (typeof cell === 'string') ? cell : String(cell);
+    return s.indexOf('<') === -1 ? s : escapeHtml(s);
 }
 
 function v2RenderTable(headers, rows) {
@@ -437,7 +464,7 @@ function v2RenderTable(headers, rows) {
     html += '</tr></thead><tbody>';
     rows.forEach(function(row) {
         html += '<tr>';
-        row.forEach(function(cell) { html += '<td>' + cell + '</td>'; });
+        row.forEach(function(cell) { html += '<td>' + _v2SafeCell(cell) + '</td>'; });
         html += '</tr>';
     });
     html += '</tbody></table>';
