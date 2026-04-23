@@ -25,7 +25,12 @@ class InstanceManager:
         An initialised :class:`Database` instance.
     """
 
-    VALID_STATUSES = {"idle", "working", "paused", "stopped"}
+    # audit 02 F#7: 'error' was rejected by this allowlist, so an agent
+    # that failed fatally could not persist its own terminal state.
+    # Instances quietly stayed 'working' forever, which in turn kept
+    # the orphan-recovery code from reclaiming their tasks until the
+    # heartbeat went stale.
+    VALID_STATUSES = {"idle", "working", "paused", "stopped", "error"}
 
     def __init__(self, db: Database) -> None:
         self._db = db

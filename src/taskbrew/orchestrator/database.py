@@ -44,7 +44,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     chain_id         TEXT,
     approval_mode    TEXT DEFAULT 'auto',
     instance_token   TEXT,
-    config_snapshot  TEXT
+    config_snapshot  TEXT,
+    -- audit 03 F#3: include Stage-1 fan-out columns in the baseline
+    -- so first-boot writes don't depend on migration 29 having run.
+    -- Also mirrored in migration 29 for upgrades from older DBs; the
+    -- _column_exists probe in MigrationManager skips the ADD COLUMN
+    -- when the baseline already provided it.
+    requires_fanout  INTEGER,
+    fanout_retries   INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS task_dependencies (
@@ -327,6 +334,8 @@ class Database:
         self._conn: aiosqlite.Connection | None = None
         self._pool: asyncio.Queue[aiosqlite.Connection] | None = None
         self._tx_lock = asyncio.Lock()
+        # audit 03 F#14: serialise id generation across coroutines.
+        self._id_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -538,6 +547,15 @@ class Database:
 
         The returned ID has the form ``"PM-001"``.
 
+        audit 03 F#14: the ``UPDATE ... RETURNING`` statement is atomic
+        at the SQLite engine level, but the subsequent ``cursor.fetchone()``
+        is a separate Python await. On a shared aiosqlite connection, two
+        concurrent coroutines could (in theory, depending on aiosqlite
+        queueing) race between execute and fetch. Serialising id
+        generation behind a module-level lock closes that race without
+        depending on aiosqlite internals -- id generation is not a hot
+        path (once per create_task), so the lock cost is negligible.
+
         Raises
         ------
         ValueError
@@ -545,16 +563,17 @@ class Database:
         """
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
-        cursor = await self._conn.execute(
-            "UPDATE id_sequences SET next_val = next_val + 1 "
-            "WHERE prefix = ? RETURNING next_val - 1 AS val",
-            (prefix,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            raise ValueError(f"Unregistered prefix: {prefix!r}")
-        val: int = row[0]
-        await self._conn.commit()
+        async with self._id_lock:
+            cursor = await self._conn.execute(
+                "UPDATE id_sequences SET next_val = next_val + 1 "
+                "WHERE prefix = ? RETURNING next_val - 1 AS val",
+                (prefix,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                raise ValueError(f"Unregistered prefix: {prefix!r}")
+            val: int = row[0]
+            await self._conn.commit()
         return f"{prefix}-{val:03d}"
 
     # ------------------------------------------------------------------

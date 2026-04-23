@@ -379,10 +379,13 @@ class TaskBoard:
             )
             return existing
         await self._cascade_failure(task_id)
-        # Also cancel child tasks linked via parent_id that are still pending.
+        # audit 03 F#16: previously this only cancelled 'pending' children,
+        # leaving blocked children orphaned when the parent fails. A child
+        # linked purely by parent_id (no task_dependencies row) can still
+        # be blocked -- cascade to those too.
         await self._db.execute(
             "UPDATE tasks SET status = 'cancelled' "
-            "WHERE parent_id = ? AND status = 'pending'",
+            "WHERE parent_id = ? AND status IN ('pending', 'blocked')",
             (task_id,),
         )
         await self._check_group_completion(task_id)

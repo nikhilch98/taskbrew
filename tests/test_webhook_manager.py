@@ -281,7 +281,14 @@ async def test_fire_updates_last_triggered_at(wh_mgr: WebhookManager, db: Databa
 
 
 async def test_hmac_signature_in_header(wh_mgr: WebhookManager):
-    """_send includes correct HMAC-SHA256 signature in X-Webhook-Signature header."""
+    """_send includes a versioned HMAC signature with signed timestamp.
+
+    audit 03 F#8: the sig is now ``t=<unix>,v1=<hex>`` where the hex is
+    HMAC-SHA256 over ``"{t}.{payload}"``. A ``X-Webhook-Timestamp``
+    header carries the Unix timestamp separately so receivers can
+    enforce a freshness window. The legacy bare-hex signature is
+    emitted as ``X-Webhook-Signature-Legacy`` for back-compat.
+    """
     secret = "test-secret-key"
     await wh_mgr.create_webhook(
         url="https://example.com/hook",
@@ -305,11 +312,29 @@ async def test_hmac_signature_in_header(wh_mgr: WebhookManager):
     payload_str = call_args[1]["data"]
     headers = call_args[1]["headers"]
 
-    # Recompute the expected signature
-    expected_sig = hmac.new(
+    # Shape: new versioned header + timestamp + legacy header.
+    assert "X-Webhook-Timestamp" in headers
+    ts = headers["X-Webhook-Timestamp"]
+    assert ts.isdigit()
+    sig_header = headers["X-Webhook-Signature"]
+    assert sig_header.startswith(f"t={ts},v1=")
+    v1_part = sig_header.split(",", 1)[1]
+    assert v1_part.startswith("v1=")
+    v1_hex = v1_part[3:]
+    expected_v1 = hmac.new(
+        secret.encode(),
+        f"{ts}.{payload_str}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    assert v1_hex == expected_v1
+
+    # Legacy header: bare HMAC over the payload, for unmigrated
+    # receivers.
+    legacy = headers["X-Webhook-Signature-Legacy"]
+    expected_legacy = hmac.new(
         secret.encode(), payload_str.encode(), hashlib.sha256
     ).hexdigest()
-    assert headers["X-Webhook-Signature"] == expected_sig
+    assert legacy == expected_legacy
 
 
 async def test_no_signature_when_no_secret(wh_mgr: WebhookManager):
