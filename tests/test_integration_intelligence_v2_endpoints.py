@@ -150,9 +150,15 @@ async def client(tmp_path):
     v2_mod._security_tables_ensured = False
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-    await db.close()
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        # audit 16 F#9: clear the module-level orchestrator slot so a
+        # subsequent test running without a fixture doesn't pick up
+        # this test's orch (and its closed DB).
+        set_orchestrator(None)
+        await db.close()
 
 
 # ------------------------------------------------------------------

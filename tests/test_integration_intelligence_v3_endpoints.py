@@ -143,9 +143,13 @@ async def client(tmp_path):
     # Use raise_app_exceptions=False so any unexpected server errors are
     # returned as HTTP 500 responses instead of raising in the test.
     transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-    await db.close()
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        # audit 16 F#9: reset the module-level orchestrator slot.
+        set_orchestrator(None)
+        await db.close()
 
 
 # ------------------------------------------------------------------
