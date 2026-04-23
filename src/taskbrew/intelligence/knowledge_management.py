@@ -459,12 +459,18 @@ class KnowledgeManager:
         }
 
     async def search_knowledge(self, query: str, limit: int = 10) -> list[dict]:
-        """Keyword search across institutional knowledge entries."""
+        """Keyword search across institutional knowledge entries.
+
+        audit 07b F#5: escape LIKE wildcards so a query of ``%`` or
+        ``_`` can't match every row.
+        """
+        from taskbrew.intelligence._utils import escape_like
+        esc = escape_like(query)
         return await self._db.execute_fetchall(
             "SELECT * FROM institutional_knowledge "
-            "WHERE content LIKE ? OR tags LIKE ? "
+            "WHERE content LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\' "
             "ORDER BY created_at DESC LIMIT ?",
-            (f"%{query}%", f"%{query}%", limit),
+            (f"%{esc}%", f"%{esc}%", limit),
         )
 
     async def get_knowledge(
