@@ -227,12 +227,42 @@ class DecideCheckpointBody(BaseModel):
     decided_by: str = "human"
 
 
+# audit 11b F#13: variants are persisted via json.dumps and later
+# interpolated into agent prompt config (model, system_prompt,
+# max_turns, etc.), so we enforce a field allowlist. Keys outside
+# the allowlist are rejected at request parsing.
+_AB_VARIANT_KEYS = frozenset({
+    "model", "system_prompt", "max_turns", "max_instances",
+    "tools", "temperature", "description",
+})
+
+
 class CreateAbTestBody(BaseModel):
     name: str = Field(max_length=128)
     role: str = Field(max_length=64)
     variant_a: dict[str, Any]
     variant_b: dict[str, Any]
     allocation: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    @classmethod
+    def _validate_variant(cls, v: dict[str, Any], label: str) -> dict[str, Any]:
+        if not isinstance(v, dict):
+            raise ValueError(f"{label} must be an object")
+        unknown = set(v.keys()) - _AB_VARIANT_KEYS
+        if unknown:
+            raise ValueError(
+                f"{label} contains unknown keys: {sorted(unknown)}; "
+                f"allowed keys are {sorted(_AB_VARIANT_KEYS)}"
+            )
+        if "system_prompt" in v and not isinstance(v["system_prompt"], str):
+            raise ValueError(f"{label}.system_prompt must be a string")
+        if "system_prompt" in v and len(v["system_prompt"]) > 20_000:
+            raise ValueError(f"{label}.system_prompt exceeds 20k character cap")
+        return v
+
+    def model_post_init(self, __context: Any) -> None:
+        self._validate_variant(self.variant_a, "variant_a")
+        self._validate_variant(self.variant_b, "variant_b")
 
 
 class StoreMemoryBody(BaseModel):
