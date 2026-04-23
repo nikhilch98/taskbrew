@@ -1,7 +1,17 @@
-"""Pipeline topology editor: CRUD for pipeline edges, start agent, node config."""
+"""Pipeline topology editor: CRUD for pipeline edges, start agent, node config.
+
+Audit 11b F#22: ``_pipeline`` is module-level mutable state that every
+mutating route stomps on without a lock. Two concurrent PUT/POST/DELETE
+calls could interleave edge additions and leave the in-memory and on-disk
+pipeline out of sync. ``_pipeline_lock`` serialises all reads that turn
+into writes and every mutation behind a single asyncio.Lock. The lock
+is reused by helpers callers (e.g. system.py's delete_role) via
+``acquire_pipeline_lock()`` to avoid double-lock deadlock.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from pathlib import Path
 
@@ -28,6 +38,13 @@ router = APIRouter()
 
 # In-memory pipeline state, loaded at startup or set by tests.
 _pipeline: PipelineConfig | None = None
+# audit 11b F#22: serialise every mutation of the global pipeline.
+_pipeline_lock = asyncio.Lock()
+
+
+def acquire_pipeline_lock() -> asyncio.Lock:
+    """Return the shared pipeline lock for ``async with`` use."""
+    return _pipeline_lock
 
 
 def set_pipeline_deps(pipeline: PipelineConfig) -> None:
