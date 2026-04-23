@@ -82,6 +82,10 @@ class GeminiOptions:
     max_turns: int | None = None
     cwd: str | None = None
     cli_path: str | None = None
+    # audit 02 F#1: wall-clock timeout in seconds for the entire CLI run.
+    # Defaults to 30 minutes, matching the typical max_execution_time in
+    # role configs. Set to None to disable (not recommended).
+    timeout_seconds: float | None = 1800.0
 
 
 # ---------------------------------------------------------------------------
@@ -133,16 +137,33 @@ def _build_command(
 # ---------------------------------------------------------------------------
 
 
-async def query(
-    *, prompt: str, options: GeminiOptions | None = None,
-) -> AsyncIterator[AssistantMessage | ResultMessage]:
-    """Run a Gemini CLI query and yield structured messages.
+async def _drain_stderr(process: asyncio.subprocess.Process, sink: list[bytes]) -> None:
+    """Concurrently drain stderr into *sink* so the child cannot deadlock
+    by filling the stderr pipe buffer while we wait on stdout.
 
-    Spawns the CLI with ``--output-format stream-json`` and parses the
-    line-delimited JSON events into message dataclasses compatible with
-    the provider abstraction in ``base.py``.
+    audit 02 F#2: previously stderr was read only *after* process.wait()
+    returned. When the child emitted more than ~64 KiB of stderr
+    (verbose mode, tracebacks, warning spam) the pipe buffer filled, the
+    child blocked on write, and the parent blocked forever waiting for
+    a result on stdout -- the classic deadlock. Draining in parallel
+    keeps the pipe empty and also lets us surface the tail of stderr
+    in error messages.
     """
-    opts = options or GeminiOptions()
+    if process.stderr is None:
+        return
+    while True:
+        chunk = await process.stderr.read(4096)
+        if not chunk:
+            break
+        sink.append(chunk)
+
+
+async def _query_impl(
+    prompt: str,
+    options: GeminiOptions,
+) -> AsyncIterator[AssistantMessage | ResultMessage]:
+    """Actual query body; wrapped by :func:`query` for the timeout."""
+    opts = options
     cli_path = _find_cli(opts.cli_path)
     effective_prompt = _build_prompt(opts.system_prompt, prompt)
     cmd = _build_command(cli_path, effective_prompt, opts)
@@ -160,6 +181,10 @@ async def query(
     accumulated_text = ""
     got_result = False
     start_time = time.monotonic()
+
+    # Concurrent stderr drainer: audit 02 F#2.
+    stderr_sink: list[bytes] = []
+    stderr_task = asyncio.create_task(_drain_stderr(process, stderr_sink))
 
     try:
         assert process.stdout is not None
@@ -250,10 +275,15 @@ async def query(
         # Wait for process to finish
         await process.wait()
 
+        # Ensure stderr is fully drained before we read it.
+        try:
+            await stderr_task
+        except Exception:
+            pass
+
         if not got_result:
             # Process ended without a result event
-            stderr_bytes = await process.stderr.read() if process.stderr else b""
-            stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+            stderr_text = b"".join(stderr_sink).decode("utf-8", errors="replace").strip()
             if process.returncode and process.returncode != 0:
                 raise GeminiCLIError(
                     f"Gemini CLI exited with code {process.returncode}: {stderr_text}"
@@ -267,9 +297,58 @@ async def query(
                 )
 
     finally:
+        # Kill the process if it is still alive (e.g. on cancellation or
+        # generator close). Drain the stderr task so it does not leak.
         if process.returncode is None:
             try:
                 process.kill()
                 await process.wait()
             except ProcessLookupError:
                 pass
+        if not stderr_task.done():
+            stderr_task.cancel()
+            try:
+                await stderr_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+async def query(
+    *, prompt: str, options: GeminiOptions | None = None,
+) -> AsyncIterator[AssistantMessage | ResultMessage]:
+    """Run a Gemini CLI query and yield structured messages.
+
+    Spawns the CLI with ``--output-format stream-json`` and parses the
+    line-delimited JSON events into message dataclasses compatible with
+    the provider abstraction in ``base.py``.
+
+    audit 02 F#1/F#2: enforces a wall-clock timeout (default 30 min via
+    ``GeminiOptions.timeout_seconds``) and drains stderr concurrently
+    with stdout to prevent pipe-buffer deadlock.
+    """
+    opts = options or GeminiOptions()
+    generator = _query_impl(prompt, opts)
+    if opts.timeout_seconds is None or opts.timeout_seconds <= 0:
+        # Timeout explicitly disabled -- just stream through.
+        async for message in generator:
+            yield message
+        return
+
+    deadline = time.monotonic() + opts.timeout_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            await generator.aclose()
+            raise GeminiCLIError(
+                f"Gemini CLI wall-clock timeout after {opts.timeout_seconds}s"
+            )
+        try:
+            message = await asyncio.wait_for(generator.__anext__(), timeout=remaining)
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            await generator.aclose()
+            raise GeminiCLIError(
+                f"Gemini CLI wall-clock timeout after {opts.timeout_seconds}s"
+            )
+        yield message

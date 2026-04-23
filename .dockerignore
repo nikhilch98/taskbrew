@@ -23,9 +23,6 @@ tests
 uv.lock
 .env
 .env.local
-CODE_REVIEW_*.md
-ARCH-COMPLIANCE-*.md
-REVIEW-RV-*.md
-TEST_VERIFICATION_*.md
-CD-*-VERIFICATION-*.md
+docs/internal
 AUDIT_REPORT.md
+audit

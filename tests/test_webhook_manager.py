@@ -6,12 +6,36 @@ import asyncio
 import hashlib
 import hmac
 import json
-from unittest.mock import AsyncMock, MagicMock
+import socket
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from taskbrew.orchestrator.database import Database
 from taskbrew.orchestrator.webhook_manager import WebhookManager
+
+
+# The WebhookManager resolves webhook hostnames to reject private/reserved
+# IPs (audit 03 F#7 SSRF fix). Tests here use placeholder hostnames like
+# "a.com" / "example.com" that are not guaranteed to resolve from every CI
+# environment. Stub getaddrinfo to return a public-looking IP so the
+# validator passes without needing real DNS.
+@pytest.fixture(autouse=True)
+def _stub_dns(monkeypatch):
+    def _fake_getaddrinfo(host, port, *args, **kwargs):
+        # Single IPv4 answer with a safe (globally routable) address so
+        # the validator's private/loopback/link-local check passes.
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", port or 0),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo)
 
 
 # ------------------------------------------------------------------

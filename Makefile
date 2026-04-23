@@ -15,5 +15,8 @@ setup-hooks: ## Configure git to use the project .githooks directory
 	@echo "Configuring git hooks path → .githooks/"
 	git config core.hooksPath .githooks
 	@echo "Verifying hooks are executable..."
-	@chmod +x .githooks/*
+	@chmod +x .githooks/commit-msg .githooks/pre-commit .githooks/pre-merge-commit 2>/dev/null || chmod +x .githooks/*
 	@echo "Done. Git will now use hooks from .githooks/"
+	@echo "  - commit-msg        validates branch/task-ID match on commit message"
+	@echo "  - pre-commit        placeholder (add pre-commit checks here)"
+	@echo "  - pre-merge-commit  scope-check before merges land"

