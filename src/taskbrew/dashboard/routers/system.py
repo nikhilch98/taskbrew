@@ -508,6 +508,11 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
         )
 
     # Persist to YAML file
+    # audit 11b F#10: a failing yaml.dump used to leave the in-memory
+    # role updated while the disk copy stayed stale, so a subsequent
+    # orchestrator restart would silently revert the settings. Wrap
+    # the write in try/except and roll the in-memory config back to
+    # the snapshot if it fails.
     if _project_dir:
         yaml_path = _validated_role_yaml_path(_project_dir, role_name)
         if yaml_path.exists():
@@ -536,7 +541,14 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
             if "auto_scale" in body:
                 data["auto_scale"] = body["auto_scale"]
 
-            _atomic_yaml_dump(yaml_path, data)
+            try:
+                _atomic_yaml_dump(yaml_path, data)
+            except OSError as exc:
+                _roles[role_name] = rc_snapshot
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to persist role YAML: {exc}",
+                ) from exc
 
     return {"status": "ok", "role": role_name}
 
@@ -629,15 +641,47 @@ async def create_role(body: CreateRoleBody):
     if body.get("auto_scale"):
         yaml_data["auto_scale"] = body["auto_scale"]
 
-    # Write YAML file (path was already validated above).
-    if _project_dir and _validated_yaml_path_for_create is not None:
-        yaml_path = _validated_yaml_path_for_create
-        _atomic_yaml_dump(yaml_path, yaml_data)
+    # audit 11b F#8 + F#9: parse BEFORE writing to disk, and run
+    # validate_routing against the speculative registration so a
+    # role with a bad routes_to entry is rejected without ever
+    # touching the YAML file. Previously we wrote the YAML first
+    # and only then parsed -- if _parse_role raised, the orphan
+    # file stayed on disk while the role wasn't registered.
+    try:
+        rc = _parse_role(yaml_data)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role config: {exc}",
+        ) from exc
 
-    # Parse and register in memory
-    rc = _parse_role(yaml_data)
     if _roles is not None:
         _roles[role_name] = rc
+        routing_errors = validate_routing(_roles)
+        if routing_errors:
+            # Roll back the speculative registration before bailing.
+            del _roles[role_name]
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Role creation would invalidate routing graph",
+                    "errors": routing_errors,
+                },
+            )
+
+    # Only now commit the YAML to disk. A write failure rolls back
+    # the in-memory registration so disk and memory stay consistent.
+    if _project_dir and _validated_yaml_path_for_create is not None:
+        yaml_path = _validated_yaml_path_for_create
+        try:
+            _atomic_yaml_dump(yaml_path, yaml_data)
+        except OSError as exc:
+            if _roles is not None:
+                _roles.pop(role_name, None)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to persist role YAML: {exc}",
+            ) from exc
 
     return {"status": "ok", "role": role_name}
 
