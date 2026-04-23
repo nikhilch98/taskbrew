@@ -6,10 +6,18 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml setup.cfg setup.py ./
+# Build metadata and source needed by hatchling at install time.
+# README.md and LICENSE are referenced by pyproject.toml.
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+
 RUN pip install --no-cache-dir .
 
-COPY . .
+# Copy remaining runtime assets after install so the image carries configs,
+# pipelines and plugin templates.
+COPY config ./config
+COPY pipelines ./pipelines
+COPY plugins ./plugins
 
 # ---- Production stage ----
 FROM python:3.12-slim

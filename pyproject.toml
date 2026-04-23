@@ -54,6 +54,9 @@ Documentation = "https://github.com/nikhilch98/taskbrew/tree/main/docs"
 Repository = "https://github.com/nikhilch98/taskbrew"
 Issues = "https://github.com/nikhilch98/taskbrew/issues"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/taskbrew"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
