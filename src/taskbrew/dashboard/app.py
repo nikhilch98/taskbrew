@@ -424,7 +424,14 @@ def create_app(
     from taskbrew.dashboard.routers.interactions import router as interactions_router
 
     app.include_router(tasks_router, tags=["Tasks"])
-    app.include_router(agents_router, tags=["Agents"])
+    # audit 10 F#28: /api/agents/pause and /api/agents/resume mutate
+    # running agent state; they need admin auth at include time for
+    # belt-and-suspenders with the middleware gate.
+    app.include_router(
+        agents_router,
+        tags=["Agents"],
+        dependencies=[Depends(verify_admin)],
+    )
 
     # audit 12a / cross-cutting: v1 and v2 Intelligence routers are
     # deprecated in favour of v3. We add a middleware that stamps
