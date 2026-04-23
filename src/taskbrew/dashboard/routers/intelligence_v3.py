@@ -427,11 +427,17 @@ router = APIRouter(prefix="/api/v3", tags=["Intelligence V3"])
 
 
 def _validate_path(path: str) -> str:
-    """Validate path parameter to prevent directory traversal."""
-    normalized = os.path.normpath(path)
-    if ".." in normalized.split(os.sep):
-        raise HTTPException(400, "Path traversal not allowed")
-    return normalized
+    """Validate an agent-supplied file path.
+
+    audit 12b / systemic 07a F#3: agent-supplied paths MUST be relative
+    and free of traversal. Delegate to the canonical validator in
+    intelligence/_utils with ``allow_absolute=False``.
+    """
+    from taskbrew.intelligence._utils import validate_path as _canonical
+    try:
+        return _canonical(path, allow_absolute=False)
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid path: {exc}")
 
 
 # ---------------------------------------------------------------------------
