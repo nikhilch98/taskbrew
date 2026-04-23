@@ -13,6 +13,20 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _require_project_dir() -> str:
+    """Return the active project directory or raise 400.
+
+    audit 11a F#14: when no project is active, ``cwd=None`` caused
+    git commands to run in the dashboard process's actual CWD -- an
+    unrelated repo whose log/diff would leak through /api/git/*.
+    Refuse the call instead.
+    """
+    cwd = _get_project_dir()
+    if not cwd:
+        raise HTTPException(400, "No active project directory")
+    return cwd
+
+
 async def _run_git(
     *args: str, cwd: str | None = None, timeout: float = 10.0
 ) -> tuple[str, str, int]:
@@ -47,7 +61,7 @@ def _get_project_dir() -> str | None:
 @router.get("/api/git/status")
 async def git_status():
     """Get git working tree status."""
-    cwd = _get_project_dir()
+    cwd = _require_project_dir()
     stdout, stderr, rc = await _run_git("status", "--porcelain", "-b", cwd=cwd)
     if rc != 0:
         raise HTTPException(500, f"git status failed: {stderr.strip()}")
@@ -88,7 +102,7 @@ async def git_status():
 @router.get("/api/git/log")
 async def git_log(limit: int = Query(20, ge=1, le=100)):
     """Get recent commit log."""
-    cwd = _get_project_dir()
+    cwd = _require_project_dir()
     fmt = "%H%n%h%n%an%n%ae%n%ai%n%s"
     stdout, stderr, rc = await _run_git(
         "log", f"--max-count={limit}", f"--format={fmt}", cwd=cwd
@@ -121,7 +135,7 @@ async def git_log(limit: int = Query(20, ge=1, le=100)):
 @router.get("/api/git/branches")
 async def git_branches():
     """List all local branches with current branch indicated."""
-    cwd = _get_project_dir()
+    cwd = _require_project_dir()
     stdout, stderr, rc = await _run_git("branch", "--list", "-v", cwd=cwd)
     if rc != 0:
         raise HTTPException(500, f"git branch failed: {stderr.strip()}")
@@ -148,7 +162,7 @@ async def git_branches():
 @router.get("/api/git/diff")
 async def git_diff(staged: bool = Query(False)):
     """Get diff summary (--stat). Use staged=true for staged changes."""
-    cwd = _get_project_dir()
+    cwd = _require_project_dir()
     args = ["diff", "--stat"]
     if staged:
         args.append("--cached")
@@ -167,7 +181,12 @@ async def git_diff(staged: bool = Query(False)):
 @router.get("/api/git/diff/{file_path:path}")
 async def git_file_diff(file_path: str):
     """Get diff for a specific file."""
-    cwd = _get_project_dir()
+    cwd = _require_project_dir()
+    # audit 11a F#14: reject NUL bytes and parent-directory traversal
+    # before handing the path to git. ``--`` prevents arg-injection,
+    # but we still don't want diffs of files outside the project.
+    if "\x00" in file_path or file_path.startswith("/") or ".." in file_path.split("/"):
+        raise HTTPException(400, "invalid file path")
     stdout, stderr, rc = await _run_git("diff", "--", file_path, cwd=cwd)
     if rc != 0:
         raise HTTPException(500, f"git diff failed: {stderr.strip()}")
@@ -183,7 +202,7 @@ async def git_file_diff(file_path: str):
 @router.get("/api/git/stash")
 async def git_stash_list():
     """List git stashes."""
-    cwd = _get_project_dir()
+    cwd = _require_project_dir()
     stdout, stderr, rc = await _run_git("stash", "list", cwd=cwd)
     if rc != 0:
         raise HTTPException(500, f"git stash list failed: {stderr.strip()}")
@@ -204,7 +223,7 @@ async def git_stash_list():
 @router.get("/api/git/tags")
 async def git_tags(limit: int = Query(20, ge=1, le=100)):
     """List recent tags."""
-    cwd = _get_project_dir()
+    cwd = _require_project_dir()
     stdout, stderr, rc = await _run_git(
         "tag", "--sort=-creatordate", cwd=cwd
     )
