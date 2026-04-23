@@ -424,6 +424,20 @@ class CastVoteBody(BaseModel):
     reasoning: Optional[str] = None
 
 
+class CreateProposalBody(BaseModel):
+    # audit 12a F#7: the description used to come in as a query
+    # parameter on a POST, so sensitive proposal text ended up in
+    # access logs / proxy URLs. Move it to the request body.
+    description: str = Field(max_length=20_000)
+
+
+class StealTaskBody(BaseModel):
+    # audit 12a F#8: agent_id was a query param on a state-mutating
+    # POST. Move to body so it's not spoofable via ?agent_id=...
+    # and is validated by pydantic.
+    agent_id: str = Field(max_length=64)
+
+
 class RecordHeartbeatBody(BaseModel):
     task_id: str
     agent_id: str

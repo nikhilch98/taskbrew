@@ -471,9 +471,10 @@ class TestCoordinationEndpoints:
         assert len(pairs.json()) >= 1
 
     async def test_proposal_and_voting_flow(self, v2_client):
+        # audit 12a F#7: description moved from query param to body.
         create = await v2_client.post(
             "/api/v2/coordination/proposals/PROP-001",
-            params={"description": "Switch to async DB driver"},
+            json={"description": "Switch to async DB driver"},
         )
         assert create.status_code == 200
 

@@ -33,7 +33,9 @@ from taskbrew.dashboard.models import (
     CreateDigestBody,
     CreatePairBody,
     CastVoteBody,
+    CreateProposalBody,
     RecordHeartbeatBody,
+    StealTaskBody,
     # Testing & Quality
     PredictRegressionBody,
     RecordTimingBody,
@@ -573,12 +575,14 @@ async def get_pairs(role: Optional[str] = None):
 
 
 @router.post("/api/v2/coordination/proposals/{proposal_id}")
-async def create_proposal(proposal_id: str, description: str):
+async def create_proposal(proposal_id: str, body: CreateProposalBody):
+    """audit 12a F#7: description moved from query param to body so
+    sensitive proposal text doesn't leak via access logs / proxy URLs."""
     orch = get_orch()
     if not orch.coordination_manager:
         raise HTTPException(503, "Coordination manager not initialized")
     return await orch.coordination_manager.create_proposal(
-        proposal_id=proposal_id, description=description,
+        proposal_id=proposal_id, description=body.description,
     )
 
 
@@ -612,12 +616,14 @@ async def find_stealable_tasks(agent_id: str):
 
 
 @router.post("/api/v2/coordination/steal/{task_id}")
-async def steal_task(task_id: str, agent_id: str):
+async def steal_task(task_id: str, body: StealTaskBody):
+    """audit 12a F#8: agent_id moved from query param to body so
+    it can't be spoofed via ?agent_id= and goes through pydantic."""
     orch = get_orch()
     if not orch.coordination_manager:
         raise HTTPException(503, "Coordination manager not initialized")
     return await orch.coordination_manager.steal_task(
-        task_id=task_id, agent_id=agent_id,
+        task_id=task_id, agent_id=body.agent_id,
     )
 
 
