@@ -69,13 +69,53 @@ def _truncate_and_flag(rows: list[dict]) -> tuple[list[dict], bool]:
     return rows, False
 
 
-def _csv_response(rows: list[dict], filename: str) -> Response:
+# audit 11a F#6: per-endpoint column allowlists for CSV exports.
+# Previously ``_csv_response`` took ``rows[0].keys()`` as the CSV
+# schema, which meant adding any new internal column to the ``tasks``
+# / ``task_usage`` / ``artifacts`` / ``groups`` tables silently
+# widened the exported CSV -- a latent data-leak path for fields we
+# never intended to hand out. The export surface is a public API;
+# its column shape must be declared, not inferred.
+_CSV_COLUMNS: dict[str, tuple[str, ...]] = {
+    "tasks": (
+        "id", "title", "description", "status", "priority", "task_type",
+        "group_id", "assigned_to", "created_at", "started_at",
+        "completed_at", "claim_count", "failure_count",
+    ),
+    "task_usage": (
+        "id", "task_id", "agent_id", "model", "cost_usd",
+        "input_tokens", "output_tokens", "num_turns",
+        "duration_api_ms", "recorded_at",
+    ),
+    "artifacts": (
+        "id", "task_id", "agent_id", "kind", "name", "size_bytes",
+        "created_at",
+    ),
+    "groups": (
+        "id", "title", "description", "status", "progress",
+        "created_at", "updated_at",
+    ),
+}
+
+
+def _csv_response(
+    rows: list[dict],
+    filename: str,
+    *,
+    columns: tuple[str, ...] | None = None,
+) -> Response:
     """Build a CSV download response from a list of dicts.
 
     All string cells beginning with ``= + - @ \\t \\r`` are escaped via
     :func:`_escape_csv_cell` before writing, which prevents spreadsheet
     formula injection from LLM-authored task titles / descriptions /
     error messages landing in downloaded exports.
+
+    ``columns`` -- if provided, the CSV is projected to exactly these
+    fields in this order, regardless of which columns the source rows
+    carry. This is the safe default for endpoint code; callers that
+    pass ``None`` fall back to ``rows[0].keys()`` for backward
+    compatibility, but should be migrated off.
     """
     if not rows:
         return Response(
@@ -83,10 +123,13 @@ def _csv_response(rows: list[dict], filename: str) -> Response:
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
+    if columns is None:
+        columns = tuple(rows[0].keys())
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(_escape_row(r) for r in rows)
+    projected = ({k: r.get(k) for k in columns} for r in rows)
+    writer.writerows(_escape_row(r) for r in projected)
     return Response(
         content=output.getvalue(),
         media_type="text/csv",
@@ -147,7 +190,7 @@ async def export_full(
     }
 
     if fmt == "csv":
-        return _csv_response(tasks, "full-export-tasks.csv")
+        return _csv_response(tasks, "full-export-tasks.csv", columns=_CSV_COLUMNS["tasks"])
 
     return _json_response(data, "full-export.json")
 
@@ -208,7 +251,7 @@ async def export_tasks(
     tasks, truncated = _truncate_and_flag(rows)
 
     if fmt == "csv":
-        return _csv_response(tasks, "tasks-export.csv")
+        return _csv_response(tasks, "tasks-export.csv", columns=_CSV_COLUMNS["tasks"])
 
     return _json_response(
         {
@@ -244,7 +287,7 @@ async def export_usage(
     usage, truncated = _truncate_and_flag(rows)
 
     if fmt == "csv":
-        return _csv_response(usage, "usage-export.csv")
+        return _csv_response(usage, "usage-export.csv", columns=_CSV_COLUMNS["task_usage"])
 
     return _json_response(
         {
