@@ -296,20 +296,46 @@ class WebhookManager:
         )
 
     async def _send(self, webhook: dict, event_type: str, data: dict) -> None:
-        """POST to a single webhook endpoint with retry and delivery logging."""
+        """POST to a single webhook endpoint with retry and delivery logging.
+
+        audit 03 F#8 HMAC hardening:
+
+        - Emit a ``X-Webhook-Timestamp`` Unix-seconds header.
+        - Sign ``"{timestamp}.{payload}"`` instead of just the payload,
+          so a captured delivery cannot be replayed against a later
+          clock.
+        - Use Stripe-style versioned signature header
+          ``X-Webhook-Signature: t=<unix>,v1=<hex>`` so future algorithm
+          rotations (``v2=`` etc.) can coexist without breaking
+          consumers.
+        - Legacy ``X-Webhook-Signature`` (bare hex) is still sent so
+          receivers that haven't migrated keep verifying the raw
+          payload. New receivers should verify the v1 variant and
+          reject requests whose timestamp is more than N minutes from
+          now.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
         payload = json.dumps(
             {
                 "event": event_type,
                 "data": data,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": now_iso,
             }
         )
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if webhook.get("secret"):
-            sig = hmac.new(
-                webhook["secret"].encode(), payload.encode(), hashlib.sha256
+            ts_unix = str(int(datetime.now(timezone.utc).timestamp()))
+            secret_bytes = webhook["secret"].encode()
+            signed_input = f"{ts_unix}.{payload}".encode()
+            v1_sig = hmac.new(secret_bytes, signed_input, hashlib.sha256).hexdigest()
+            legacy_sig = hmac.new(
+                secret_bytes, payload.encode(), hashlib.sha256
             ).hexdigest()
-            headers["X-Webhook-Signature"] = sig
+            headers["X-Webhook-Timestamp"] = ts_unix
+            headers["X-Webhook-Signature"] = f"t={ts_unix},v1={v1_sig}"
+            # Back-compat header for receivers that haven't upgraded
+            # their verification to the v1 scheme.
+            headers["X-Webhook-Signature-Legacy"] = legacy_sig
 
         # Create a delivery log entry
         delivery_id = await self._create_delivery(
