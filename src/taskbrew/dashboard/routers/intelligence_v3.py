@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ._deps import get_orch
+
+# audit 12b F#4: shared clamp for the 30+ ``limit: int = N`` params.
+# Using an Annotated alias keeps the 422 validation consistent without
+# changing call-site semantics beyond enforcing ``1 <= limit <= 500``.
+SafeLimit = Annotated[int, Query(ge=1, le=500)]
 
 # ===================================================================
 # Pydantic request body models
@@ -592,7 +597,7 @@ async def get_best_prompt(agent_role: str):
 
 
 @router.get("/self-improvement/prompt-history")
-async def get_prompt_history(agent_role: str, limit: int = 20):
+async def get_prompt_history(agent_role: str, limit: SafeLimit = 20):
     mgr = await _ensure_self_improvement()
     return await mgr.get_prompt_history(agent_role=agent_role, limit=limit)
 
@@ -669,7 +674,7 @@ async def record_load(body: CognitiveLoadBody):
 
 
 @router.get("/self-improvement/cognitive-load")
-async def get_load_history(agent_id: str, limit: int = 20):
+async def get_load_history(agent_id: str, limit: SafeLimit = 20):
     mgr = await _ensure_self_improvement()
     return await mgr.get_load_history(agent_id=agent_id, limit=limit)
 
@@ -694,7 +699,7 @@ async def create_reflection(body: CreateReflectionBody):
 
 
 @router.get("/self-improvement/reflections")
-async def get_reflections(agent_id: str, limit: int = 20):
+async def get_reflections(agent_id: str, limit: SafeLimit = 20):
     mgr = await _ensure_self_improvement()
     return await mgr.get_reflections(agent_id=agent_id, limit=limit)
 
@@ -776,7 +781,7 @@ async def get_calibration_score(agent_id: str):
 
 
 @router.get("/self-improvement/confidence/history")
-async def get_calibration_history(agent_id: str, limit: int = 50):
+async def get_calibration_history(agent_id: str, limit: SafeLimit = 50):
     mgr = await _ensure_self_improvement()
     return await mgr.get_calibration_history(agent_id=agent_id, limit=limit)
 
@@ -817,7 +822,7 @@ async def resolve_argument(session_id: str, body: ResolveArgumentBody):
 
 
 @router.get("/social/arguments")
-async def get_argument_history(limit: int = 20):
+async def get_argument_history(limit: SafeLimit = 20):
     mgr = await _ensure_social_intel()
     return await mgr.get_argument_history(limit=limit)
 
@@ -846,7 +851,7 @@ async def get_trust_network():
 
 
 @router.get("/social/trust/top")
-async def get_most_trusted(for_agent: str, limit: int = 5):
+async def get_most_trusted(for_agent: str, limit: SafeLimit = 5):
     mgr = await _ensure_social_intel()
     return await mgr.get_most_trusted(for_agent=for_agent, limit=limit)
 
@@ -921,7 +926,7 @@ async def detect_overlaps():
 
 
 @router.get("/social/alerts")
-async def get_alerts(resolved: bool = False, limit: int = 20):
+async def get_alerts(resolved: bool = False, limit: SafeLimit = 20):
     mgr = await _ensure_social_intel()
     return await mgr.get_alerts(resolved=resolved, limit=limit)
 
@@ -945,7 +950,7 @@ async def share_context(body: ShareContextBody):
 
 
 @router.get("/social/context-shares")
-async def get_shared_context(agent_id: str, limit: int = 20):
+async def get_shared_context(agent_id: str, limit: SafeLimit = 20):
     mgr = await _ensure_social_intel()
     return await mgr.get_shared_context(agent_id=agent_id, limit=limit)
 
@@ -975,13 +980,13 @@ async def get_pair_score(agent_a: str, agent_b: str):
 
 
 @router.get("/social/collaborations/best")
-async def get_best_pairs(limit: int = 10):
+async def get_best_pairs(limit: SafeLimit = 10):
     mgr = await _ensure_social_intel()
     return await mgr.get_best_pairs(limit=limit)
 
 
 @router.get("/social/collaborations/worst")
-async def get_worst_pairs(limit: int = 10):
+async def get_worst_pairs(limit: SafeLimit = 10):
     mgr = await _ensure_social_intel()
     return await mgr.get_worst_pairs(limit=limit)
 
@@ -1029,7 +1034,7 @@ async def index_intent(body: IndexIntentBody):
 
 
 @router.get("/code-reasoning/semantic-search")
-async def search_by_intent(query: str, limit: int = 10):
+async def search_by_intent(query: str, limit: SafeLimit = 10):
     mgr = await _ensure_code_reasoning()
     return await mgr.search_by_intent(query=query, limit=limit)
 
@@ -1060,7 +1065,7 @@ async def predict_impact(changed_file: str):
 
 
 @router.get("/code-reasoning/impact/history")
-async def get_impact_history(limit: int = 20):
+async def get_impact_history(limit: SafeLimit = 20):
     mgr = await _ensure_code_reasoning()
     return await mgr.get_impact_history(limit=limit)
 
@@ -1134,7 +1139,7 @@ async def add_debt(body: AddDebtBody):
 
 
 @router.get("/code-reasoning/debt/prioritized")
-async def get_prioritized_debt(limit: int = 20):
+async def get_prioritized_debt(limit: SafeLimit = 20):
     mgr = await _ensure_code_reasoning()
     return await mgr.get_prioritized_debt(limit=limit)
 
@@ -1164,7 +1169,7 @@ async def detect_breaking_changes(endpoint: Optional[str] = None):
 
 
 @router.get("/code-reasoning/api-versions/changelog")
-async def get_api_changelog(limit: int = 20):
+async def get_api_changelog(limit: SafeLimit = 20):
     mgr = await _ensure_code_reasoning()
     return await mgr.get_api_changelog(limit=limit)
 
@@ -1195,7 +1200,7 @@ async def get_narrative(
 
 
 @router.get("/code-reasoning/narratives/search")
-async def search_narratives(query: str, limit: int = 10):
+async def search_narratives(query: str, limit: SafeLimit = 10):
     mgr = await _ensure_code_reasoning()
     return await mgr.search_narratives(query=query, limit=limit)
 
@@ -1306,7 +1311,7 @@ async def get_optimal_granularity(task_type: str):
 
 
 @router.get("/task-intel/decomposition/metrics")
-async def get_metrics(limit: int = 20):
+async def get_metrics(limit: SafeLimit = 20):
     mgr = await _ensure_task_intel()
     return await mgr.get_metrics(limit=limit)
 
@@ -1318,7 +1323,7 @@ async def find_parallel_tasks(body: FindParallelTasksBody):
 
 
 @router.get("/task-intel/parallel")
-async def get_parallel_opportunities(group_id: Optional[str] = None, limit: int = 20):
+async def get_parallel_opportunities(group_id: Optional[str] = None, limit: SafeLimit = 20):
     mgr = await _ensure_task_intel()
     return await mgr.get_opportunities(group_id=group_id, limit=limit)
 
@@ -1432,7 +1437,7 @@ async def complete_tracking(task_id: str, body: CompleteTrackingBody):
 
 
 @router.get("/task-intel/effort-tracking/history")
-async def get_drift_history(limit: int = 20):
+async def get_drift_history(limit: SafeLimit = 20):
     mgr = await _ensure_task_intel()
     return await mgr.get_drift_history(limit=limit)
 
@@ -1454,7 +1459,7 @@ async def fingerprint_regression(body: FingerprintRegressionBody):
 
 
 @router.get("/verification/regressions/similar")
-async def find_similar_regressions(error_message: str, limit: int = 5):
+async def find_similar_regressions(error_message: str, limit: SafeLimit = 5):
     mgr = await _ensure_verification()
     return await mgr.find_similar_regressions(
         error_message=error_message, limit=limit,
@@ -1535,7 +1540,7 @@ async def detect_flaky(
 
 
 @router.get("/verification/flaky-tests/list")
-async def get_flaky_tests(limit: int = 20):
+async def get_flaky_tests(limit: SafeLimit = 20):
     mgr = await _ensure_verification()
     return await mgr.get_flaky_tests(limit=limit)
 
@@ -1558,7 +1563,7 @@ async def mine_spec(body: MineSpecBody):
 
 
 @router.get("/verification/behavioral-specs")
-async def get_specs(source_file: Optional[str] = None, limit: int = 20):
+async def get_specs(source_file: Optional[str] = None, limit: SafeLimit = 20):
     if source_file is not None:
         source_file = _validate_path(source_file)
     mgr = await _ensure_verification()
@@ -1639,7 +1644,7 @@ async def get_gates():
 
 
 @router.get("/verification/quality-gates/history")
-async def get_gate_history(gate_name: Optional[str] = None, limit: int = 20):
+async def get_gate_history(gate_name: Optional[str] = None, limit: SafeLimit = 20):
     mgr = await _ensure_verification()
     return await mgr.get_gate_history(gate_name=gate_name, limit=limit)
 
@@ -1670,7 +1675,7 @@ async def forecast(body: ForecastBody):
 
 
 @router.get("/process/velocity/history")
-async def get_velocity_history(limit: int = 20):
+async def get_velocity_history(limit: SafeLimit = 20):
     mgr = await _ensure_process_intel()
     return await mgr.get_velocity_history(limit=limit)
 
@@ -1688,7 +1693,7 @@ async def score_file(body: ScoreFileBody):
 
 
 @router.get("/process/risk-scores/heat-map")
-async def get_heat_map(min_risk: float = 0.0, limit: int = 50):
+async def get_heat_map(min_risk: float = 0.0, limit: SafeLimit = 50):
     mgr = await _ensure_process_intel()
     return await mgr.get_heat_map(min_risk=min_risk, limit=limit)
 
@@ -1736,7 +1741,7 @@ async def get_assessment(release_id: str):
 
 
 @router.get("/process/readiness/history")
-async def get_history(limit: int = 10):
+async def get_history(limit: SafeLimit = 10):
     mgr = await _ensure_process_intel()
     return await mgr.get_history(limit=limit)
 
@@ -1767,7 +1772,7 @@ async def get_impacts(
 
 
 @router.get("/process/stakeholder-impacts/most-impacted")
-async def get_most_impacted(limit: int = 10):
+async def get_most_impacted(limit: SafeLimit = 10):
     mgr = await _ensure_process_intel()
     return await mgr.get_most_impacted(limit=limit)
 
@@ -1787,7 +1792,7 @@ async def get_retro(sprint_id: str):
 
 
 @router.get("/process/retrospectives/list")
-async def get_retros(limit: int = 10):
+async def get_retros(limit: SafeLimit = 10):
     mgr = await _ensure_process_intel()
     return await mgr.get_retros(limit=limit)
 
@@ -1821,7 +1826,7 @@ async def refresh_knowledge(entry_id: str):
 
 
 @router.get("/knowledge/stale")
-async def get_stale_entries(limit: int = 20):
+async def get_stale_entries(limit: SafeLimit = 20):
     mgr = await _ensure_knowledge()
     return await mgr.get_stale_entries(limit=limit)
 
@@ -1883,13 +1888,13 @@ async def extract_from_comment(body: ExtractFromCommentBody):
 
 
 @router.get("/knowledge/institutional/search")
-async def search_knowledge(query: str, limit: int = 10):
+async def search_knowledge(query: str, limit: SafeLimit = 10):
     mgr = await _ensure_knowledge()
     return await mgr.search_knowledge(query=query, limit=limit)
 
 
 @router.get("/knowledge/institutional")
-async def get_knowledge(source_type: Optional[str] = None, limit: int = 20):
+async def get_knowledge(source_type: Optional[str] = None, limit: SafeLimit = 20):
     mgr = await _ensure_knowledge()
     return await mgr.get_knowledge(source_type=source_type, limit=limit)
 
@@ -1966,7 +1971,7 @@ async def get_threat_model(model_id: str):
 
 
 @router.get("/compliance/threat-models")
-async def get_models(limit: int = 20):
+async def get_models(limit: SafeLimit = 20):
     mgr = await _ensure_compliance()
     return await mgr.get_models(limit=limit)
 
