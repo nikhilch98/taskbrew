@@ -44,17 +44,28 @@ router = APIRouter()
 
 @router.get("/api/health")
 async def health():
+    """Liveness probe.
+
+    audit 11a F#23: the previous implementation returned the raw
+    DB exception text in the 503 body, leaking file paths and
+    schema hints to any caller. Keep the payload opaque and only
+    log the detail server-side.
+    """
     orch = get_orch_optional()
     if orch is None:
         return {"status": "ok", "db": "no_project"}
     try:
         await orch.task_board._db.execute_fetchone("SELECT 1")
         return {"status": "ok", "db": "connected"}
-    except Exception as e:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "health check failed: %s", exc,
+        )
         from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=503,
-            content={"status": "degraded", "db": str(e)},
+            content={"status": "degraded", "db": "unavailable"},
         )
 
 
@@ -779,12 +790,30 @@ async def get_usage():
 # ------------------------------------------------------------------
 
 
+_VALID_TIME_RANGES = ("1h", "6h", "today", "7d", "30d", "live")
+_VALID_GRANULARITIES = ("minute", "hour", "day")
+
+
 @router.get("/api/metrics/timeseries")
 async def get_metrics_timeseries(
     time_range: str = "today",
     granularity: str = "hour",
 ):
-    """Return cost, tokens, task counts per time bucket."""
+    """Return cost, tokens, task counts per time bucket.
+
+    audit 11a F#11: an unknown ``time_range`` used to silently fall
+    back to ``today``, but the delta / since-computation branches
+    disagreed on unknown inputs so the caller got silently-wrong
+    metrics. Validate both inputs up front and 400 on unknowns.
+    """
+    if time_range not in _VALID_TIME_RANGES:
+        raise HTTPException(
+            400, f"unknown time_range {time_range!r}; expected one of {_VALID_TIME_RANGES}"
+        )
+    if granularity not in _VALID_GRANULARITIES:
+        raise HTTPException(
+            400, f"unknown granularity {granularity!r}; expected one of {_VALID_GRANULARITIES}"
+        )
     orch = get_orch()
     now = datetime.now(timezone.utc)
     range_map = {
@@ -795,7 +824,7 @@ async def get_metrics_timeseries(
         "30d": timedelta(days=30),
         "live": timedelta(minutes=30),
     }
-    delta = range_map.get(time_range, range_map["today"])
+    delta = range_map[time_range]
     if time_range == "today":
         since = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     else:
