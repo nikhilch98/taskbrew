@@ -48,6 +48,27 @@ def _escape_row(row: dict) -> dict:
     return {k: _escape_csv_cell(v) for k, v in row.items()}
 
 
+# audit 11a F#7: /api/export/* used to pull the full table into
+# memory. For realistic deployments that table can be hundreds of
+# thousands of rows. We cap the row count at a hard maximum so a
+# single request cannot OOM the process. Callers that need more
+# should page through /api/tasks or run export/usage in day-bounded
+# slices.
+MAX_EXPORT_ROWS = 50_000
+
+
+def _capped_query(base_sql: str) -> str:
+    """Return ``base_sql`` with a LIMIT MAX_EXPORT_ROWS+1 clause so we
+    can detect when the cap has been hit and flag it."""
+    return f"{base_sql} LIMIT {MAX_EXPORT_ROWS + 1}"
+
+
+def _truncate_and_flag(rows: list[dict]) -> tuple[list[dict], bool]:
+    if len(rows) > MAX_EXPORT_ROWS:
+        return rows[:MAX_EXPORT_ROWS], True
+    return rows, False
+
+
 def _csv_response(rows: list[dict], filename: str) -> Response:
     """Build a CSV download response from a list of dicts.
 
@@ -95,13 +116,24 @@ async def export_full(
     orch = get_orch()
     db = orch.task_board._db
 
-    tasks = await db.execute_fetchall("SELECT * FROM tasks ORDER BY created_at")
-    groups = await db.execute_fetchall("SELECT * FROM groups ORDER BY created_at")
-    usage = await db.execute_fetchall("SELECT * FROM task_usage ORDER BY recorded_at")
-    artifacts = await db.execute_fetchall("SELECT * FROM artifacts ORDER BY created_at")
+    tasks_rows = await db.execute_fetchall(_capped_query("SELECT * FROM tasks ORDER BY created_at"))
+    groups_rows = await db.execute_fetchall(_capped_query("SELECT * FROM groups ORDER BY created_at"))
+    usage_rows = await db.execute_fetchall(_capped_query("SELECT * FROM task_usage ORDER BY recorded_at"))
+    artifacts_rows = await db.execute_fetchall(_capped_query("SELECT * FROM artifacts ORDER BY created_at"))
+    tasks, tasks_truncated = _truncate_and_flag(tasks_rows)
+    groups, groups_truncated = _truncate_and_flag(groups_rows)
+    usage, usage_truncated = _truncate_and_flag(usage_rows)
+    artifacts, artifacts_truncated = _truncate_and_flag(artifacts_rows)
 
     data = {
         "exported_at": datetime.now(timezone.utc).isoformat(),
+        "max_rows_per_table": MAX_EXPORT_ROWS,
+        "truncated": {
+            "tasks": tasks_truncated,
+            "groups": groups_truncated,
+            "usage": usage_truncated,
+            "artifacts": artifacts_truncated,
+        },
         "groups": groups,
         "tasks": tasks,
         "usage": usage,
@@ -169,16 +201,23 @@ async def export_tasks(
         params.append(since)
 
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
-    tasks = await db.execute_fetchall(
-        f"SELECT * FROM tasks{where} ORDER BY created_at",
+    rows = await db.execute_fetchall(
+        _capped_query(f"SELECT * FROM tasks{where} ORDER BY created_at"),
         tuple(params),
     )
+    tasks, truncated = _truncate_and_flag(rows)
 
     if fmt == "csv":
         return _csv_response(tasks, "tasks-export.csv")
 
     return _json_response(
-        {"exported_at": datetime.now(timezone.utc).isoformat(), "count": len(tasks), "tasks": tasks},
+        {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "count": len(tasks),
+            "truncated": truncated,
+            "max_rows": MAX_EXPORT_ROWS,
+            "tasks": tasks,
+        },
         "tasks-export.json",
     )
 
@@ -198,16 +237,24 @@ async def export_usage(
     db = orch.task_board._db
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    usage = await db.execute_fetchall(
-        "SELECT * FROM task_usage WHERE recorded_at >= ? ORDER BY recorded_at",
+    rows = await db.execute_fetchall(
+        _capped_query("SELECT * FROM task_usage WHERE recorded_at >= ? ORDER BY recorded_at"),
         (cutoff,),
     )
+    usage, truncated = _truncate_and_flag(rows)
 
     if fmt == "csv":
         return _csv_response(usage, "usage-export.csv")
 
     return _json_response(
-        {"exported_at": datetime.now(timezone.utc).isoformat(), "days": days, "count": len(usage), "records": usage},
+        {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "days": days,
+            "count": len(usage),
+            "truncated": truncated,
+            "max_rows": MAX_EXPORT_ROWS,
+            "records": usage,
+        },
         "usage-export.json",
     )
 
