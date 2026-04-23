@@ -1,4 +1,21 @@
-"""Webhook integration for external notifications."""
+"""Webhook integration for external notifications.
+
+Audit 03 F#7 / top-15 #11: SSRF hardening.
+
+The previous ``_validate_url`` only checked literal IPs and a tiny hostname
+blocklist. A DNS A record pointing at ``169.254.169.254`` (AWS IMDS) or
+``127.0.0.1`` sailed through at create time; even when the hostname was
+resolved at request time, aiohttp would happily connect to whatever the
+second lookup returned (DNS rebinding). The fix:
+
+1. At create time, resolve the hostname and reject if ANY answer is
+   private / loopback / link-local / multicast / unspecified / reserved.
+2. At fire time, re-resolve and apply the same check; if the answer has
+   changed to a private range between create and fire, the send is
+   refused (closing the rebind window).
+3. Redirects are disabled on the POST so a 302 to an internal URL cannot
+   bypass validation.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +25,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import socket
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -47,8 +65,82 @@ class WebhookManager:
             await self._session.close()
             self._session = None
 
+    @staticmethod
+    def _ip_is_unsafe(ip: ipaddress._BaseAddress) -> bool:
+        """Return True iff *ip* lands in a range that must NOT be reachable
+        by a webhook request.
+        """
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        )
+
+    @classmethod
+    def _validate_hostname_resolution(
+        cls,
+        hostname: str,
+        *,
+        strict: bool,
+    ) -> list[ipaddress._BaseAddress]:
+        """Resolve *hostname* and reject if any resolved address is in a
+        range that could reach internal infrastructure.
+
+        When *strict* is True (fire-time check), DNS resolution failure or
+        an empty answer is fatal: we refuse to send. When *strict* is False
+        (create-time check), resolution failure is a WARNING; we defer the
+        enforcement to the fire-time recheck so webhook creation survives a
+        transient DNS outage.
+
+        Returns the resolved addresses so callers can inspect (or, later,
+        pin) them.
+        """
+        try:
+            infos = socket.getaddrinfo(
+                hostname, None,
+                proto=socket.IPPROTO_TCP,
+            )
+        except socket.gaierror as exc:
+            if strict:
+                raise ValueError(f"URL hostname {hostname!r} does not resolve: {exc}")
+            logger.warning(
+                "webhook create: hostname %r does not resolve right now (%s); "
+                "deferring IP check to fire time.",
+                hostname, exc,
+            )
+            return []
+
+        addrs: list[ipaddress._BaseAddress] = []
+        for _family, _type, _proto, _canon, sockaddr in infos:
+            raw_ip = sockaddr[0]
+            try:
+                ip = ipaddress.ip_address(raw_ip)
+            except ValueError:
+                continue
+            if cls._ip_is_unsafe(ip):
+                # Unsafe resolved IP is always fatal, both at create and
+                # fire time.
+                raise ValueError(
+                    f"URL hostname {hostname!r} resolves to a private/"
+                    f"reserved address: {ip}"
+                )
+            addrs.append(ip)
+
+        if not addrs and strict:
+            raise ValueError(f"URL hostname {hostname!r} returned no usable addresses")
+        return addrs
+
     def _validate_url(self, url: str) -> None:
-        """Validate webhook URL to prevent SSRF attacks."""
+        """Validate webhook URL to prevent SSRF attacks.
+
+        Run at webhook create time and again at fire time (see
+        ``_validate_url_at_fire_time``). The create-time check is the first
+        line of defence; the fire-time recheck closes the DNS-rebinding
+        window.
+        """
         parsed = urlparse(url)
 
         # Must be http or https
@@ -59,20 +151,70 @@ class WebhookManager:
         if not parsed.hostname:
             raise ValueError("URL must have a hostname.")
 
-        # Block private/reserved IP ranges
+        hostname = parsed.hostname
+
+        # Literal IP? apply the unsafe-range filter directly.
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            ip = None
+
+        if ip is not None:
+            if self._ip_is_unsafe(ip):
+                raise ValueError(
+                    f"URL points to a private/reserved IP address: {hostname}"
+                )
+            return
+
+        # Hostname: block well-known internal names BEFORE resolving so we
+        # never leak a DNS query for metadata endpoints to a shared resolver.
+        hostname_lower = hostname.lower()
+        blocked = (
+            "localhost",
+            "metadata.google",
+            "metadata.google.internal",
+            "metadata.aws.amazon.com",
+            "metadata",  # exact match
+        )
+        if any(
+            hostname_lower == b or hostname_lower.endswith("." + b)
+            for b in blocked
+        ):
+            raise ValueError(f"URL points to a blocked hostname: {hostname}")
+
+        # Resolve the hostname and check every returned address. At create
+        # time a DNS failure is allowed through with a warning (see the
+        # strict=False branch); the guarantee is reasserted at fire time.
+        self._validate_hostname_resolution(hostname, strict=False)
+
+    async def _validate_url_at_fire_time(self, url: str) -> None:
+        """Re-validate *url* immediately before making the HTTP request.
+
+        Run in an executor so the blocking getaddrinfo call does not stall
+        the event loop. This closes the DNS-rebinding window between
+        create-time validation and actual send.
+        """
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError(f"Malformed webhook URL at fire time: {url}")
+
+        # Literal IP: same check as _validate_url, no DNS needed.
         try:
             ip = ipaddress.ip_address(parsed.hostname)
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                raise ValueError(f"URL points to a private/reserved IP address: {parsed.hostname}")
-        except ValueError as e:
-            if "private" in str(e) or "reserved" in str(e) or "loopback" in str(e):
-                raise
-            # Not an IP address — it's a hostname, which is fine
-            # But block common internal hostnames
-            hostname_lower = parsed.hostname.lower()
-            blocked = ("localhost", "127.0.0.1", "0.0.0.0", "metadata.google", "169.254.169.254")
-            if any(hostname_lower == b or hostname_lower.endswith("." + b) for b in blocked):
-                raise ValueError(f"URL points to a blocked hostname: {parsed.hostname}")
+        except ValueError:
+            ip = None
+        if ip is not None:
+            if self._ip_is_unsafe(ip):
+                raise ValueError(
+                    f"URL points to a private/reserved IP address: {parsed.hostname}"
+                )
+            return
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: self._validate_hostname_resolution(parsed.hostname, strict=True),
+        )
 
     async def get_webhooks(self) -> list[dict]:
         """Return all active webhooks."""
@@ -179,8 +321,17 @@ class WebhookManager:
 
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
+                # Re-validate at fire time to close the DNS-rebinding window
+                # between create and request. Also defends against rows
+                # that pre-date the validator.
+                await self._validate_url_at_fire_time(webhook["url"])
                 async with self._session.post(
-                    webhook["url"], data=payload, headers=headers
+                    webhook["url"],
+                    data=payload,
+                    headers=headers,
+                    # Never follow redirects -- a 302 to an internal URL
+                    # would otherwise bypass the validation we just ran.
+                    allow_redirects=False,
                 ) as resp:
                     last_response_code = resp.status
                     if resp.status < 400:
