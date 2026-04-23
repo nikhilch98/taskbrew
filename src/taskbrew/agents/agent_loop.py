@@ -470,10 +470,21 @@ class AgentLoop:
                         vr["id"], task["id"],
                     )
                 except Exception:
-                    logger.warning(
-                        "Failed to auto-create verification task for %s",
+                    # The verification gate only works if the VR row
+                    # actually exists. If create_task raises, we must
+                    # NOT fall through to complete_task_with_output --
+                    # that would mark the parent completed without a
+                    # verification record, which is exactly the
+                    # merge-skip bug this gate was added to prevent.
+                    # Raise so the outer run_once handler runs
+                    # fail_task on the parent; the next poll cycle (or
+                    # orphan recovery) will re-attempt.
+                    logger.error(
+                        "Failed to auto-create verification task for %s; "
+                        "failing the parent so the merge gate is preserved",
                         task["id"], exc_info=True,
                     )
+                    raise
 
         # Guard against duplicate handoff tasks created by retries
         existing = await self.board._db.execute_fetchone(
@@ -596,12 +607,17 @@ class AgentLoop:
     async def _requeue_for_fanout(self, task: dict, current_retries: int) -> None:
         """Return a design task to ``pending`` so the architect gets another
         chance to create coder tasks. Bumps ``fanout_retries`` so we cap at 2.
+
+        The predicate ``AND status = 'in_progress'`` is load-bearing:
+        without it a concurrent ``cancel_task`` or ``fail_task`` during
+        the architect's execution window gets silently resurrected
+        back to ``pending``.
         """
         await self.board._db.execute(
             "UPDATE tasks "
             "SET status = 'pending', claimed_by = NULL, started_at = NULL, "
             "    fanout_retries = ? "
-            "WHERE id = ?",
+            "WHERE id = ? AND status = 'in_progress'",
             (current_retries + 1, task["id"]),
         )
         await self.event_bus.emit(
