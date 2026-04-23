@@ -390,37 +390,62 @@ async def complete_task_endpoint(task_id: str, body: CompleteTaskBody = Complete
     return result
 
 
+# audit 11a F#2: PATCH /api/tasks/{id} previously built SQL via
+# f", ".join(f"{k} = ?" for k in updates)" where ``updates`` was a dict
+# populated from Pydantic fields. It was not actually injectable today
+# (keys were pulled from named attributes, not from user input), but
+# if a future addition ever let a user-controlled string reach those
+# keys the column name would be interpolated straight into SQL. Replace
+# the free-form join with a hardcoded column → SQL-fragment map so the
+# set of possible UPDATE columns is statically visible.
+_TASK_UPDATE_COLUMN_SQL: dict[str, str] = {
+    "priority": "priority = ?",
+    "assigned_to": "assigned_to = ?",
+    "status": "status = ?",
+}
+_VALID_TASK_STATUSES = frozenset({
+    "blocked", "pending", "in_progress",
+    "completed", "failed", "rejected", "cancelled",
+})
+
+
 @router.patch("/api/tasks/{task_id}")
 async def update_task_endpoint(task_id: str, body: UpdateTaskBody):
     orch = get_orch()
     task = await orch.task_board.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    VALID_STATUSES = {"blocked", "pending", "in_progress", "completed", "failed", "rejected", "cancelled"}
-    ALLOWED_UPDATE_FIELDS = {"priority", "assigned_to", "status"}
-    updates = {}
+
+    updates: dict[str, object] = {}
     if body.priority is not None:
         updates["priority"] = body.priority
     if body.assigned_to is not None:
         updates["assigned_to"] = body.assigned_to
     if body.status is not None:
-        if body.status not in VALID_STATUSES:
+        if body.status not in _VALID_TASK_STATUSES:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid status '{body.status}'. Valid: {sorted(VALID_STATUSES)}",
+                detail=f"Invalid status '{body.status}'. Valid: {sorted(_VALID_TASK_STATUSES)}",
             )
         updates["status"] = body.status
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-    for field_name in updates:
-        if field_name not in ALLOWED_UPDATE_FIELDS:
+
+    set_fragments: list[str] = []
+    values: list[object] = []
+    for field_name, value in updates.items():
+        fragment = _TASK_UPDATE_COLUMN_SQL.get(field_name)
+        if fragment is None:
+            # Hard stop: unknown fields never reach SQL. The current
+            # control flow above cannot produce one, but this closes the
+            # footgun for future edits.
             raise HTTPException(400, f"Field '{field_name}' cannot be updated")
-    set_clauses = ", ".join(f"{k} = ?" for k in updates)
-    values = list(updates.values()) + [task_id]
-    rows = await orch.task_board._db.execute_returning(
-        f"UPDATE tasks SET {set_clauses} WHERE id = ? RETURNING *",
-        tuple(values),
-    )
+        set_fragments.append(fragment)
+        values.append(value)
+    values.append(task_id)
+
+    sql = "UPDATE tasks SET " + ", ".join(set_fragments) + " WHERE id = ? RETURNING *"
+    rows = await orch.task_board._db.execute_returning(sql, tuple(values))
     if not rows:
         raise HTTPException(status_code=404, detail="Task not found")
     await orch.event_bus.emit("task.updated", {"task_id": task_id, "updates": updates})
