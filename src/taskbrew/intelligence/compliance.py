@@ -290,6 +290,32 @@ class ComplianceManager:
         query += " ORDER BY framework, rule_id"
         return await self._db.execute_fetchall(query, tuple(params))
 
+    # audit 08a F#10: compiled-regex cache. ``check_file`` previously
+    # re-compiled every rule pattern for every call and ran
+    # ``finditer`` with no bound on runtime -- a rule like ``(a+)+$``
+    # added by a careless operator would wedge the event loop on
+    # adversarial content. We memoize compilations per (rule_id,
+    # pattern) so a given rule is compiled exactly once per process,
+    # skip candidates whose compiled form fails, bound the scan by
+    # running it in a thread executor, and cap the content size we
+    # will attempt to scan.
+    _COMPILED_RULE_CACHE: dict[tuple[str, str], "re.Pattern[str]"] = {}
+    _MAX_CHECK_CONTENT_BYTES: int = 2_000_000  # 2 MiB
+    _REGEX_SCAN_TIMEOUT_S: float = 2.0
+
+    @classmethod
+    def _compile_cached(cls, rule_id: str, pattern_str: str):
+        key = (rule_id, pattern_str)
+        cached = cls._COMPILED_RULE_CACHE.get(key)
+        if cached is not None:
+            return cached
+        try:
+            compiled = re.compile(pattern_str)
+        except re.error:
+            return None
+        cls._COMPILED_RULE_CACHE[key] = compiled
+        return compiled
+
     async def check_file(self, file_path: str, content: str) -> list[dict]:
         """Scan *content* against all compliance rules.
 
@@ -299,28 +325,46 @@ class ComplianceManager:
         rules = await self._db.execute_fetchall(
             "SELECT * FROM compliance_rules ORDER BY rule_id"
         )
-        violations: list[dict] = []
+        if not rules:
+            return []
 
+        # Cap scan content so a pathological input + pathological
+        # pattern cannot still exceed the caller's budget.
+        if len(content) > self._MAX_CHECK_CONTENT_BYTES:
+            content = content[: self._MAX_CHECK_CONTENT_BYTES]
+
+        # Resolve exemptions up front so we don't hit the DB for
+        # every rule inside the thread worker.
+        exempt_rule_ids: set[str] = set()
         for rule in rules:
-            # Check exemption
             exemption = await self._db.execute_fetchone(
                 "SELECT id FROM compliance_exemptions "
                 "WHERE rule_id = ? AND file_path = ?",
                 (rule["rule_id"], file_path),
             )
             if exemption:
-                continue
+                exempt_rule_ids.add(rule["rule_id"])
 
-            try:
-                pattern = re.compile(rule["check_pattern"])
-            except re.error:
+        compiled_rules = []
+        for rule in rules:
+            if rule["rule_id"] in exempt_rule_ids:
                 continue
+            pattern = self._compile_cached(rule["rule_id"], rule["check_pattern"])
+            if pattern is None:
+                continue
+            compiled_rules.append((rule, pattern))
 
-            matches = list(pattern.finditer(content))
-            if matches:
-                for m in matches:
+        if not compiled_rules:
+            return []
+
+        import asyncio
+
+        def _scan() -> list[dict]:
+            out: list[dict] = []
+            for rule, pattern in compiled_rules:
+                for m in pattern.finditer(content):
                     line_num = content[: m.start()].count("\n") + 1
-                    violations.append({
+                    out.append({
                         "rule_id": rule["rule_id"],
                         "framework": rule["framework"],
                         "severity": rule["severity"],
@@ -329,8 +373,19 @@ class ComplianceManager:
                         "line": line_num,
                         "match": m.group(0)[:200],
                     })
+            return out
 
-        return violations
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_scan),
+                timeout=self._REGEX_SCAN_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "compliance.check_file: scan exceeded %ss on %s; returning partial=[]",
+                self._REGEX_SCAN_TIMEOUT_S, file_path,
+            )
+            return []
 
     async def record_check(
         self,

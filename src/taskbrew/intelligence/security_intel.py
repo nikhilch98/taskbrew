@@ -701,13 +701,32 @@ class SecurityIntelManager:
     async def flag_security_changes(
         self, task_id: str, files_changed: list[str]
     ) -> list[dict]:
-        """Auto-flag files that touch auth, security, crypto, or contain security keywords."""
+        """Auto-flag files that touch auth, security, crypto, or contain security keywords.
+
+        audit 08a F#5: caller-supplied file paths were joined
+        directly to the project dir without validation, so an
+        absolute or ``..``-containing input read arbitrary host
+        files, and a multi-GB file or binary blob OOM'd /
+        crashed the scan. Route each path through ``validate_path``
+        (which now rejects absolute / traversal inputs and resolves
+        inside the project root) and cap the read at
+        ``MAX_SCAN_FILE_SIZE``. Catch ``UnicodeDecodeError`` so a
+        binary in the change set doesn't abort the whole call.
+        """
         await self.ensure_tables()
         now = _utcnow()
         flags: list[dict] = []
 
-        for file_path in files_changed:
+        for raw_path in files_changed:
             reasons: list[str] = []
+
+            # Validate before *anything* else. A bad path just
+            # skips that entry; we do not raise to the caller.
+            try:
+                file_path = validate_path(raw_path)
+            except (ValueError, OSError) as exc:
+                logger.warning("Skipping invalid path %r: %s", raw_path, exc)
+                continue
 
             # Check path for security keywords
             path_lower = file_path.lower()
@@ -718,12 +737,18 @@ class SecurityIntelManager:
             # Check file content for security keywords
             full_path = os.path.join(self._project_dir, file_path)
             try:
-                with open(full_path) as f:
-                    content = f.read().lower()
-                for keyword in _SECURITY_KEYWORDS:
-                    if keyword in content and f"Path contains '{keyword}'" not in reasons:
-                        reasons.append(f"Content contains '{keyword}'")
-            except (FileNotFoundError, OSError) as exc:
+                if os.path.getsize(full_path) > self.MAX_SCAN_FILE_SIZE:
+                    logger.info(
+                        "Skipping content scan for %s: exceeds %d byte size limit",
+                        file_path, self.MAX_SCAN_FILE_SIZE,
+                    )
+                else:
+                    with open(full_path, encoding="utf-8", errors="replace") as f:
+                        content = f.read().lower()
+                    for keyword in _SECURITY_KEYWORDS:
+                        if keyword in content and f"Path contains '{keyword}'" not in reasons:
+                            reasons.append(f"Content contains '{keyword}'")
+            except (FileNotFoundError, OSError, UnicodeDecodeError) as exc:
                 logger.warning("Cannot read %s for security flag check: %s", file_path, exc)
 
             if reasons:
