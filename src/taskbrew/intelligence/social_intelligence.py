@@ -523,8 +523,22 @@ class SocialIntelligenceManager:
                 continue
             seen.add(pair_key)
 
-            alert_id = f"CA-{new_id(8)}"
             agent_ids = json.dumps([row["agent_a"], row["agent_b"]])
+
+            # audit 09 F#8: dedup across calls -- skip if an
+            # unresolved coordination_alert already exists for the
+            # same (agent pair, file). Without this, detect_overlaps()
+            # re-fires on every poll and the UI floods with duplicate
+            # alerts for the same still-open overlap.
+            existing = await self._db.execute_fetchone(
+                "SELECT id FROM coordination_alerts "
+                "WHERE agent_ids = ? AND overlapping_files = ? AND resolved = 0",
+                (agent_ids, row["file_path"]),
+            )
+            if existing:
+                continue
+
+            alert_id = f"CA-{new_id(8)}"
             task_ids = json.dumps([row["task_a"], row["task_b"]])
             await self._db.execute(
                 "INSERT INTO coordination_alerts "
