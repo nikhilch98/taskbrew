@@ -71,10 +71,17 @@ def create_app(
     team_config: TeamConfig | None = None,
     project_dir: str | None = None,
 ) -> FastAPI:
+    # audit 01 F#10 / 17 F#2 / 18 F#2: source version from importlib.metadata
+    # (see src/taskbrew/__init__.py) so pyproject.toml is the single source
+    # of truth. Endpoint count is computed after include_router() below
+    # and appended to the OpenAPI description to replace the old hand-
+    # maintained "89+ API endpoints" string which drifted to ~426.
+    from taskbrew import __version__ as _taskbrew_version
+
     app = FastAPI(
         title="TaskBrew Dashboard",
-        description="Multi-agent AI team orchestrator with 89+ API endpoints for task management, intelligence features, and team coordination.",
-        version="2.0.0",
+        description="Multi-agent AI team orchestrator.",
+        version=_taskbrew_version,
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
