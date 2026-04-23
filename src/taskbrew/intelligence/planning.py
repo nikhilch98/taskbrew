@@ -201,7 +201,16 @@ class PlanningManager:
         return await self._store_plan(task_id, "risk", risk, confidence=0.7)
 
     async def generate_alternatives(self, task_id: str) -> dict:
-        """Generate alternative approaches for a task based on task type."""
+        """Return a TEMPLATE list of alternative approaches for a task.
+
+        audit 06a F#1: there is no LLM call here; the response is a
+        hardcoded array keyed on ``task_type``. The returned dict is
+        flagged with ``source="template"`` and carries no ``confidence``
+        value so callers don't mistake it for a model-generated
+        prediction. If you need AI-authored alternatives, call a
+        planning LLM and pass the result through ``_store_plan``
+        directly with an honest confidence.
+        """
         task = await self._db.execute_fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
         if not task:
             return {"error": "Task not found"}
@@ -244,11 +253,21 @@ class PlanningManager:
             "task_type": task_type,
             "approaches": approaches,
             "recommended": recommended,
+            "source": "template",
         }
-        return await self._store_plan(task_id, "alternatives", alternatives)
+        # No confidence is stored: this is a template, not a prediction.
+        return await self._store_plan(task_id, "alternatives", alternatives, confidence=None)
 
     async def create_rollback_plan(self, task_id: str) -> dict:
-        """Create a rollback plan for a task."""
+        """Return a TEMPLATE rollback plan for a task.
+
+        audit 06a F#1: the response is an identical 3-step string
+        list for every task -- there's no inspection of the task's
+        actual changes, deployment topology, or service dependencies.
+        The returned dict is flagged with ``source="template"`` and
+        stored without a confidence score so callers don't read it as
+        a model-generated plan.
+        """
         task = await self._db.execute_fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
         if not task:
             return {"error": "Task not found"}
@@ -262,5 +281,6 @@ class PlanningManager:
             ],
             "verification": "Run full test suite after rollback",
             "communication": "Notify team of rollback and root cause",
+            "source": "template",
         }
-        return await self._store_plan(task_id, "rollback", rollback, confidence=0.8)
+        return await self._store_plan(task_id, "rollback", rollback, confidence=None)

@@ -242,7 +242,12 @@ async def test_generate_alternatives_unknown_type_uses_default(planning, task_bo
 
 
 async def test_create_rollback_plan(planning, task_board):
-    """Create a rollback plan for a task."""
+    """Create a rollback plan for a task.
+
+    audit 06a F#1: the plan is now flagged as a template with no
+    confidence, since it's identical for every task and isn't
+    model-authored.
+    """
     task = await _make_task(
         task_board,
         title="Deploy v2.0",
@@ -250,7 +255,8 @@ async def test_create_rollback_plan(planning, task_board):
     )
     result = await planning.create_rollback_plan(task["id"])
     assert result["plan_type"] == "rollback"
-    assert result["confidence"] == 0.8
+    assert result["confidence"] is None
+    assert result["content"]["source"] == "template"
     assert len(result["content"]["steps"]) >= 3
     assert "verification" in result["content"]
     assert "communication" in result["content"]
