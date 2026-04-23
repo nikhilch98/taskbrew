@@ -44,6 +44,11 @@ except ImportError:  # pragma: no cover
 _MAX_ATTEMPTS = 3
 _RETRY_DELAYS = [1, 4, 16]
 
+# audit 03 F#9: cap the JSON payload (data portion) + outbound body so a
+# fat event does not balloon SQLite row size, RAM, or egress. Retries
+# multiply the impact, so the cap matters even more there.
+_MAX_PAYLOAD_BYTES = 64 * 1024  # 64 KiB
+
 
 class WebhookManager:
     """Manage webhooks and fire HTTP callbacks on events."""
@@ -315,6 +320,24 @@ class WebhookManager:
           now.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
+        # audit 03 F#9: serialise ``data``, check size, truncate if it
+        # exceeds the cap. We drop the event rather than silently
+        # sending a lie: a truncated JSON blob would no longer parse
+        # cleanly on the receiver side.
+        data_json = json.dumps(data, default=str)
+        if len(data_json.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+            logger.warning(
+                "webhook %s event %s: payload (%d bytes) exceeds cap "
+                "(%d bytes); replacing data with a truncation marker.",
+                webhook.get("id"), event_type,
+                len(data_json), _MAX_PAYLOAD_BYTES,
+            )
+            data = {
+                "_truncated": True,
+                "_original_size": len(data_json),
+                "_cap": _MAX_PAYLOAD_BYTES,
+                "_event": event_type,
+            }
         payload = json.dumps(
             {
                 "event": event_type,

@@ -20,15 +20,68 @@ def new_id(length: int = 12) -> str:
     return uuid.uuid4().hex[:length]
 
 
-def validate_path(path: str) -> str:
-    """Validate a file/directory path to prevent directory traversal.
+def validate_path(
+    path: str,
+    *,
+    project_root: str | None = None,
+    allow_absolute: bool = True,
+) -> str:
+    """Validate a file path for safety.
 
-    Raises ValueError if the path contains '..' components.
+    audit 07a F#3 / 08a F#4-5 / 08b F#3: the previous implementation only
+    rejected ``..`` components after ``normpath``. Absolute paths like
+    ``/etc/passwd`` normalised unchanged and passed every check; callers
+    that joined the returned value back onto their project_root via
+    ``Path(root) / result`` had the absolute right operand silently
+    overwrite the left, leaking arbitrary-file read.
+
+    Contract:
+
+    - Empty paths are always rejected.
+    - ``..`` components are always rejected.
+    - When *allow_absolute* is False, absolute paths (Unix ``/...`` and
+      Windows drive-letter ``X:\\...``) are refused. Agent-supplied
+      paths from untrusted inputs MUST pass ``allow_absolute=False``.
+    - When *project_root* is supplied, the path is resolved against the
+      root AND required to stay inside it (``is_relative_to``), which
+      catches symlink escapes that ``normpath`` alone cannot detect.
+      This is the strongest guarantee and callers should prefer it.
+
+    Default ``allow_absolute=True`` preserves the legacy shape for
+    operator-trusted callers (e.g. ``learn_conventions`` scans an
+    absolute directory handed in by the orchestrator). For agent-facing
+    endpoints (intelligence_v2/v3 routers, security_intel file readers,
+    code_reasoning analyzers) callers should supply
+    ``allow_absolute=False`` and ``project_root=<project_dir>``.
     """
+    if not path or not isinstance(path, str):
+        raise ValueError("Invalid path: empty")
     normalized = os.path.normpath(path)
-    if ".." in normalized.split(os.sep):
+    is_abs = os.path.isabs(normalized) or (
+        len(normalized) >= 2 and normalized[1] == ":"
+    )
+    if is_abs and not allow_absolute:
+        raise ValueError(f"Absolute paths not allowed: {path!r}")
+    parts = normalized.split(os.sep)
+    if any(p == ".." for p in parts):
         raise ValueError(f"Path traversal not allowed: {path!r}")
-    return normalized
+    if project_root is None:
+        return normalized
+
+    # Project-root containment check via realpath.
+    from pathlib import Path
+    root = Path(project_root).resolve()
+    if is_abs:
+        candidate = Path(normalized).resolve()
+    else:
+        candidate = (root / normalized).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Path escapes project_root: {path!r} resolves outside {root}"
+        ) from exc
+    return str(candidate)
 
 
 def clamp(value: float, min_val: float = 0.0, max_val: float = 1.0) -> float:
