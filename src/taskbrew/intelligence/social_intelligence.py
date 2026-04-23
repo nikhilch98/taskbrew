@@ -450,11 +450,31 @@ class SocialIntelligenceManager:
     # Feature 13: Implicit Coordination Detector
     # ------------------------------------------------------------------
 
+    # audit 09 F#8: work_areas rows never expired. detect_overlaps
+    # self-joined the whole history on file_path, so every alert
+    # re-fired as long as ANY two agents had ever touched the same
+    # file (even across different tasks years apart). We now:
+    #   - TTL work_areas entries at 24 hours on report time
+    #   - Filter detect_overlaps to the last N hours so "currently
+    #     overlapping" actually means currently
+    #   - Skip duplicate coordination_alerts via a composite
+    #     uniqueness check before INSERT.
+    _WORK_AREA_TTL_HOURS = 24
+
     async def report_work_area(
         self, agent_id: str, file_paths: list[str], task_id: str
     ) -> dict:
         """Agent reports the files they are working on."""
-        now = utcnow()
+        from datetime import datetime, timezone, timedelta
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        cutoff = (now_dt - timedelta(hours=self._WORK_AREA_TTL_HOURS)).isoformat()
+        # Reap stale rows on the active paths so the table cannot grow
+        # unboundedly in long-lived orchestrators.
+        await self._db.execute(
+            "DELETE FROM work_areas WHERE reported_at < ?",
+            (cutoff,),
+        )
         for fp in file_paths:
             wid = f"WA-{new_id(8)}"
             await self._db.execute(
@@ -470,13 +490,25 @@ class SocialIntelligenceManager:
         }
 
     async def detect_overlaps(self) -> list[dict]:
-        """Find agents working on the same files without explicit coordination."""
+        """Find agents working on the same files without explicit coordination.
+
+        audit 09 F#8: scoped to the last _WORK_AREA_TTL_HOURS so
+        alerts only fire for currently-active overlaps, not the entire
+        history of every touch.
+        """
+        from datetime import datetime, timezone, timedelta
+        cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(hours=self._WORK_AREA_TTL_HOURS)
+        ).isoformat()
         rows = await self._db.execute_fetchall(
             "SELECT w1.file_path, w1.agent_id AS agent_a, w2.agent_id AS agent_b, "
             "w1.task_id AS task_a, w2.task_id AS task_b "
             "FROM work_areas w1 "
             "JOIN work_areas w2 ON w1.file_path = w2.file_path AND w1.agent_id < w2.agent_id "
+            "WHERE w1.reported_at >= ? AND w2.reported_at >= ? "
             "ORDER BY w1.file_path",
+            (cutoff, cutoff),
         )
 
         if not rows:
