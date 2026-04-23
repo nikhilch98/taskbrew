@@ -123,7 +123,13 @@ class ChatManager:
             if session.is_responding:
                 raise ValueError(f"Agent '{agent_name}' is currently responding")
 
-            # Record user message
+            # audit 10 F#26: append the user turn *before* attempting
+            # the stream so the contextual-prompt builder can see it,
+            # but on timeout / exception also record a paired error
+            # assistant turn. Otherwise the history ends with an
+            # orphan user message and every subsequent send replays
+            # that unanswered turn in the context block, which the
+            # model then tries to answer a second time.
             user_msg = ChatMessage(
                 id=str(uuid.uuid4())[:8],
                 role="user",
@@ -140,7 +146,21 @@ class ChatManager:
                         timeout=300,  # 5 min
                     )
                 except asyncio.TimeoutError:
+                    session.history.append(ChatMessage(
+                        id=str(uuid.uuid4())[:8],
+                        role="assistant",
+                        content="[error: response timed out]",
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                    ))
                     return "error: Response timed out"
+                except Exception:
+                    session.history.append(ChatMessage(
+                        id=str(uuid.uuid4())[:8],
+                        role="assistant",
+                        content="[error: stream failed]",
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                    ))
+                    raise
 
                 # Record assistant message
                 assistant_msg = ChatMessage(
