@@ -240,12 +240,21 @@ class TaskBoard:
     ) -> dict | None:
         """Atomically claim the highest-priority pending task for *role*.
 
-        Uses an explicit transaction with SELECT-then-UPDATE to prevent
-        race conditions where two agents could claim the same task.
+        Implemented as a single ``UPDATE ... WHERE id = (SELECT ... LIMIT 1)
+        RETURNING *`` statement so the SELECT and UPDATE cannot interleave
+        between two concurrent claimers. This is the audit 03 F#1 fix:
+        the previous SELECT-then-UPDATE pair ran on an autocommit aiosqlite
+        connection (``isolation_level=None``), so the wrapping
+        ``transaction()`` context was a BEGIN/COMMIT around already-committed
+        statements -- two agents could observe the same pending row and both
+        UPDATE it. A single UPDATE is atomic at the SQLite engine level
+        regardless of the outer autocommit setting.
 
         Returns the claimed task dict, or ``None`` when the queue is empty.
         """
-        # Build the priority CASE expression.
+        # Build the priority CASE expression from hardcoded module state.
+        # _PRIORITY_ORDER contains only trusted literal keys/values; if this
+        # ever becomes user-configurable, precompute a constant (audit 03 F#2).
         priority_case = (
             "CASE priority "
             + " ".join(f"WHEN '{p}' THEN {v}" for p, v in _PRIORITY_ORDER.items())
@@ -253,33 +262,21 @@ class TaskBoard:
         )
         now = _utcnow()
 
-        async with self._db.transaction() as conn:
-            cursor = await conn.execute(
-                f"SELECT * FROM tasks "
-                f"WHERE assigned_to = ? AND status = 'pending' AND claimed_by IS NULL "
-                f"ORDER BY {priority_case}, created_at "
-                f"LIMIT 1",
-                (role,),
-            )
-            row = await cursor.fetchone()
-            if not row:
-                return None
-
-            # Convert aiosqlite.Row to dict
-            keys = [desc[0] for desc in cursor.description]
-            task = dict(zip(keys, row))
-
-            cursor = await conn.execute(
-                "UPDATE tasks SET claimed_by = ?, status = 'in_progress', started_at = ? "
-                "WHERE id = ? RETURNING *",
-                (instance_id, now, task["id"]),
-            )
-            updated_row = await cursor.fetchone()
-            if not updated_row:
-                return None
-            updated_keys = [desc[0] for desc in cursor.description]
-            result = dict(zip(updated_keys, updated_row))
-
+        sql = (
+            "UPDATE tasks SET claimed_by = ?, status = 'in_progress', started_at = ? "
+            "WHERE id = ("
+            "    SELECT id FROM tasks "
+            "    WHERE assigned_to = ? AND status = 'pending' AND claimed_by IS NULL "
+            f"    ORDER BY {priority_case}, created_at "
+            "    LIMIT 1"
+            ") "
+            "AND status = 'pending' AND claimed_by IS NULL "
+            "RETURNING *"
+        )
+        rows = await self._db.execute_returning(sql, (instance_id, now, role))
+        if not rows:
+            return None
+        result = rows[0]
         logger.info("Task %s claimed by %s", result["id"], instance_id)
         return result
 
