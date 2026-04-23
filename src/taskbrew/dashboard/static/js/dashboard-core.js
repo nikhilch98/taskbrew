@@ -169,10 +169,22 @@ function trapFocus(modalEl) {
 // ================================================================
 // Utility Functions
 // ================================================================
+// audit 13 F#2: the previous implementation used textContent + innerHTML
+// round-tripping, which encodes &, <, >, " but NOT the single quote '.
+// We use the "quoted attribute" pattern `onclick="fn('" + escapeHtml(x) + "')"`
+// in dozens of places; an id containing ' breaks out of the JS string
+// literal and runs arbitrary JS in the dashboard origin. Switch to a
+// manual replacement that also escapes ' and ` so the helper is safe in
+// both attribute-context and JS-string-literal-in-attribute contexts.
 function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/`/g, '&#96;');
 }
 
 function getRoleColor(role) {
