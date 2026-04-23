@@ -276,10 +276,15 @@ async def get_team_settings():
     pd = orch.project_dir if orch else None
     if not tc:
         return {}
+    # audit 11b F#14: redact db_path when auth is enabled so the exact
+    # on-disk DB location isn't exposed to anyone who can reach the
+    # endpoint. Operators that need it can read it from team.yaml
+    # directly.
+    redact_secrets = bool(getattr(tc, "auth_enabled", False))
     return {
         "name": tc.team_name,
         "project_dir": pd,
-        "db_path": tc.db_path,
+        "db_path": "<redacted>" if redact_secrets else tc.db_path,
         "dashboard_host": tc.dashboard_host,
         "dashboard_port": tc.dashboard_port,
         "default_poll_interval": tc.default_poll_interval,
@@ -673,9 +678,15 @@ async def delete_role(role_name: str):
     if deleted_rc.can_create_groups:
         tb._group_prefixes.pop(role_name, None)
 
-    # Stop any running agent loops for the deleted role.
-    # Instance IDs follow the pattern "{role_name}-{N}" or
-    # "{role_name}-auto-{N}" for auto-scaled instances.
+    # audit 11b F#6: stop the running agent loops for the deleted role
+    # and WAIT for cancellation to propagate before returning. The
+    # previous code called cancel() and immediately fell through; the
+    # cancelled tasks then ran concurrently against the half-deleted
+    # role config and could touch _agent_loops / agent_tasks while the
+    # HTTP response was already on the wire. We now gather the pending
+    # cancellations with a short timeout so callers see a consistent
+    # post-delete state.
+    pending_cancel_tasks: list = []
     if hasattr(orch, "_agent_tasks_by_id"):
         ids_to_stop = [
             iid for iid in orch._agent_tasks_by_id
@@ -687,10 +698,19 @@ async def delete_role(role_name: str):
                 agent_loop, agent_task = entry
                 agent_loop.stop()
                 agent_task.cancel()
+                pending_cancel_tasks.append(agent_task)
                 if agent_loop in orch._agent_loops:
                     orch._agent_loops.remove(agent_loop)
                 if agent_task in orch.agent_tasks:
                     orch.agent_tasks.remove(agent_task)
+    if pending_cancel_tasks:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending_cancel_tasks, return_exceptions=True),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            pass
 
     return {"status": "ok", "role": role_name}
 
