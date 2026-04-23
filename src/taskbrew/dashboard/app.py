@@ -266,7 +266,12 @@ def create_app(
         from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
         interaction_mgr = InteractionManager(orch_obj.task_board._db)
         set_interaction_deps(interaction_mgr)
-        set_mcp_deps(interaction_mgr, get_pipeline, orch_obj.task_board)
+        set_mcp_deps(
+            interaction_mgr,
+            get_pipeline,
+            orch_obj.task_board,
+            auth_manager=_auth_manager,
+        )
 
     # ------------------------------------------------------------------
     # Include routers

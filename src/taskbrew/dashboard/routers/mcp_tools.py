@@ -1,4 +1,11 @@
-"""MCP tool endpoints for agent-orchestrator communication."""
+"""MCP tool endpoints for agent-orchestrator communication.
+
+Audit 10 F#2 note: _get_token previously only verified the ``Bearer ``
+prefix and returned the suffix verbatim. Any caller could invoke any
+/mcp/tools/* endpoint with a header like ``Authorization: Bearer x`` and
+be treated as authenticated. _get_token now delegates suffix verification
+to the shared :class:`AuthManager` when auth is enabled.
+"""
 
 from __future__ import annotations
 
@@ -13,20 +20,49 @@ logger = logging.getLogger(__name__)
 _interaction_mgr = None
 _pipeline_getter = None
 _task_board = None
+_auth_manager = None
+_auth_warning_emitted = False
 
 
-def set_mcp_deps(interaction_mgr, pipeline_getter, task_board=None):
-    """Set dependencies. Called from app.py startup."""
-    global _interaction_mgr, _pipeline_getter, _task_board
+def set_mcp_deps(interaction_mgr, pipeline_getter, task_board=None, auth_manager=None):
+    """Set dependencies. Called from app.py startup.
+
+    *auth_manager* is optional for backward compatibility. When supplied
+    (strongly recommended) _get_token validates the bearer token suffix
+    against the configured AuthManager; without it, a log warning is
+    emitted on first use and any non-empty suffix is accepted (legacy
+    behavior).
+    """
+    global _interaction_mgr, _pipeline_getter, _task_board, _auth_manager
     _interaction_mgr = interaction_mgr
     _pipeline_getter = pipeline_getter
     _task_board = task_board
+    _auth_manager = auth_manager
 
 
 def _get_token(authorization: Optional[str] = Header(None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing or invalid Authorization header")
-    return authorization[7:]
+    token = authorization[7:]
+    if not token:
+        raise HTTPException(401, "Empty bearer token")
+
+    global _auth_warning_emitted
+    if _auth_manager is None:
+        if not _auth_warning_emitted:
+            logger.warning(
+                "MCP _get_token has no AuthManager wired in — accepting any "
+                "non-empty Bearer suffix. Call set_mcp_deps(..., "
+                "auth_manager=<AuthManager>) to enable token verification."
+            )
+            _auth_warning_emitted = True
+        return token
+
+    # When auth is enabled, the suffix MUST match a known token hash.
+    # When auth is disabled, verify_token_string() returns True (legacy).
+    if not _auth_manager.verify_token_string(token):
+        raise HTTPException(401, "Invalid bearer token")
+    return token
 
 
 @router.post("/mcp/tools/complete_task")
