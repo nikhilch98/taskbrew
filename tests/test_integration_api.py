@@ -122,9 +122,13 @@ async def client(tmp_path):
     set_orchestrator(orch)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-    await db.close()
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        # audit 16 F#9: reset the module-level orchestrator slot.
+        set_orchestrator(None)
+        await db.close()
 
 
 # Also keep a minimal client without intelligence managers for 503 tests
