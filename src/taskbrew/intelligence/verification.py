@@ -1,4 +1,29 @@
-"""Verification intelligence: regression fingerprinting, test impact analysis, flaky test detection, behavioral spec mining, code review auto-annotation, quality gate composition."""
+"""Verification intelligence: regression fingerprinting, test impact analysis, flaky test detection, behavioral spec mining, code review auto-annotation, quality gate composition.
+
+Honesty caveat (audit 08b F#1)
+------------------------------
+This module is a *ledger* of verification claims, not an adversarial
+verification engine. It does not shell out to pytest, parse JUnit XML,
+measure coverage, or re-run mutants. ``record_run``, ``fingerprint_regression``,
+``mine_spec``, and ``record_gate_claim`` all accept caller-supplied metrics
+and persist them. Gate evaluations consult those metrics literally.
+
+Any caller (an LLM agent, an HTTP route handler) that can reach these
+methods is implicitly trusted to report accurate numbers. When the caller
+is an LLM agent the numbers are self-reported — an agent claiming
+``{"tests_pass": True, "coverage": 100, "open_bugs": 0}`` will pass every
+gate on vibes.
+
+The ``trusted`` parameter on :meth:`VerificationManager.record_gate_claim`
+and :meth:`VerificationManager.evaluate_gate` surfaces this explicitly:
+callers supplying objective, externally-verified metrics (e.g. a CI job
+reading a real coverage XML) should pass ``trusted=True``. Everyone else
+gets a ``trusted=False`` result and a WARNING log line.
+
+TODO(audit 08b F#1): wire a real ``_run_pytest()`` helper and a
+``pytest_cov``/``coverage.py`` parser so the gate evaluator can generate
+its own numbers instead of trusting the caller.
+"""
 
 from __future__ import annotations
 
@@ -577,17 +602,68 @@ class VerificationManager:
             "created_at": now,
         }
 
-    async def evaluate_gate(self, gate_name: str, metrics: dict) -> dict:
-        """Evaluate metrics against a quality gate's conditions.
+    async def record_gate_claim(
+        self,
+        gate_name: str,
+        metrics: dict,
+        *,
+        trusted: bool = False,
+        source: str = "caller",
+    ) -> dict:
+        """Record a **claim** that *metrics* satisfy *gate_name*'s conditions.
 
-        Returns pass/fail with detailed results for each condition.
+        The method is intentionally named ``record_gate_claim`` (audit 08b
+        F#1) to reflect that the metrics are provided by the caller; this
+        module does not independently verify them. Callers that have an
+        objective source for the numbers (a CI job parsing real
+        ``coverage.xml``, a signed test-runner report) should pass
+        ``trusted=True`` and identify themselves via *source*.
+
+        Parameters
+        ----------
+        gate_name:
+            Logical gate identifier (e.g. ``"merge_quality"``).
+        metrics:
+            The caller's reported metrics. Keys are compared against the
+            gate's condition keys using the existing ``min_``/``max_``
+            prefix convention.
+        trusted:
+            True iff the caller has externally verified these metrics.
+            Defaults to False. When False, a WARNING is logged so
+            operators can see the audit trail.
+        source:
+            Short identifier of who produced the metrics (``"caller"``,
+            ``"ci-runner"``, ``"agent-loop"``, etc.). Persisted on the
+            gate_results row for later audit.
+
+        Returns
+        -------
+        dict
+            Gate evaluation result including ``trusted`` and ``source``
+            fields so downstream consumers can differentiate claimed vs.
+            verified gate passes.
         """
+        if not trusted:
+            logger.warning(
+                "record_gate_claim: gate_name=%s source=%s trusted=False — "
+                "metrics were not independently verified by this module. "
+                "Gate pass/fail reflects the caller's reported numbers "
+                "(audit 08b F#1).",
+                gate_name, source,
+            )
+
         gate = await self._db.execute_fetchone(
             "SELECT * FROM quality_gates WHERE gate_name = ?",
             (gate_name,),
         )
         if not gate:
-            return {"gate_name": gate_name, "passed": False, "error": "Gate not found"}
+            return {
+                "gate_name": gate_name,
+                "passed": False,
+                "error": "Gate not found",
+                "trusted": trusted,
+                "source": source,
+            }
 
         conditions = json.loads(gate["conditions"])
         details = []
@@ -626,14 +702,26 @@ class VerificationManager:
                 "passed": passed,
             })
 
-        # Record result
+        # Persist the result. metrics JSON carries the trust level inline
+        # so consumers reading gate_results rows (schema unchanged) can
+        # still tell claims from verified runs.
         result_id = f"GR-{new_id(8)}"
         now = utcnow()
+        persisted_metrics = dict(metrics)
+        persisted_metrics["_trusted"] = bool(trusted)
+        persisted_metrics["_source"] = source
         await self._db.execute(
             "INSERT INTO gate_results "
             "(id, gate_name, passed, details, metrics, evaluated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (result_id, gate_name, int(all_passed), json.dumps(details), json.dumps(metrics), now),
+            (
+                result_id,
+                gate_name,
+                int(all_passed),
+                json.dumps(details),
+                json.dumps(persisted_metrics),
+                now,
+            ),
         )
 
         return {
@@ -642,7 +730,28 @@ class VerificationManager:
             "passed": all_passed,
             "details": details,
             "evaluated_at": now,
+            "trusted": bool(trusted),
+            "source": source,
         }
+
+    async def evaluate_gate(
+        self,
+        gate_name: str,
+        metrics: dict,
+        *,
+        trusted: bool = False,
+        source: str = "caller",
+    ) -> dict:
+        """Deprecated alias for :meth:`record_gate_claim`.
+
+        The original method name implied objective verification. It does
+        not perform any. New callers should invoke :meth:`record_gate_claim`
+        directly and set ``trusted=True`` only when the metrics come from
+        an externally verified source.
+        """
+        return await self.record_gate_claim(
+            gate_name, metrics, trusted=trusted, source=source,
+        )
 
     async def get_gates(self) -> list[dict]:
         """List all defined quality gates."""
