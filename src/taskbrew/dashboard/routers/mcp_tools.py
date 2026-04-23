@@ -132,18 +132,43 @@ async def mcp_request_clarification(
     raise HTTPException(500, "Interaction manager not configured")
 
 
+_VALID_TASK_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
+_MAX_MCP_TITLE_LEN = 500
+_MAX_MCP_DESCRIPTION_LEN = 20_000
+
+
 @router.post("/mcp/tools/route_task")
 async def mcp_route_task(
     body: dict,
     authorization: Optional[str] = Header(None),
 ):
-    """Agent routes a task to a connected agent. Validates pipeline edge."""
+    """Agent routes a task to a connected agent. Validates pipeline edge.
+
+    audit 10 F#29: the endpoint trusts caller-supplied group_id,
+    priority and agent_role fields; we harden by validating the
+    priority enum and capping the title/description sizes so the
+    MCP surface can't be used to smuggle multi-MB payloads into
+    the task store or set undefined priority values that bypass
+    UI filters. Full agent-role binding requires a token<->role
+    table that we don't yet carry; the pipeline-edge check already
+    prevents arbitrary ``from -> to`` hops.
+    """
     _get_token(authorization)
     target_agent = body.get("target_agent", "")
     task_type = body.get("task_type", "")
     title = body.get("title", "")
     description = body.get("description", "")
     agent_role = body.get("agent_role", "")
+
+    if not isinstance(title, str) or len(title) > _MAX_MCP_TITLE_LEN:
+        raise HTTPException(400, f"title must be a string of at most {_MAX_MCP_TITLE_LEN} chars")
+    if description is not None and (
+        not isinstance(description, str)
+        or len(description) > _MAX_MCP_DESCRIPTION_LEN
+    ):
+        raise HTTPException(
+            400, f"description must be a string of at most {_MAX_MCP_DESCRIPTION_LEN} chars",
+        )
 
     # Validate pipeline edge exists
     if _pipeline_getter:
@@ -159,6 +184,10 @@ async def mcp_route_task(
     # Create the task in the TaskBoard if available
     group_id = body.get("group_id")
     priority = body.get("priority", "medium")
+    if priority not in _VALID_TASK_PRIORITIES:
+        raise HTTPException(
+            400, f"invalid priority {priority!r}; expected one of {sorted(_VALID_TASK_PRIORITIES)}",
+        )
     blocked_by_task = body.get("task_id")  # calling agent's current task
     chain_id = body.get("chain_id")
     blocked_by = [blocked_by_task] if blocked_by_task else None
