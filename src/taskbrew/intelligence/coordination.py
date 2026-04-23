@@ -102,11 +102,27 @@ class CoordinationManager:
     # ------------------------------------------------------------------
 
     async def acquire_lock(self, file_path: str, agent_id: str, task_id: str | None = None) -> dict:
-        """Try to acquire a file lock. Returns conflict info if already locked."""
+        """Try to acquire a file lock. Returns conflict info if already locked.
+
+        audit 06b F#3: previously the 1-hour ``expires_at`` was never
+        honoured -- a crash left a permanent lock since only a DELETE
+        via ``release_lock`` removed it. Now we reap expired rows for
+        this path before the INSERT attempt, so any crash stops locking
+        the file forever.
+        """
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(hours=1)).isoformat()
         now_iso = now.isoformat()
         lock_id = f"FL-{uuid.uuid4().hex[:8]}"
+
+        # Sweep expired locks on this path so a crash does not wedge
+        # the file permanently. Unexpired locks from other agents stay
+        # untouched -- INSERT below will raise UNIQUE and we report a
+        # legitimate conflict.
+        await self._db.execute(
+            "DELETE FROM file_locks WHERE file_path = ? AND expires_at <= ?",
+            (file_path, now_iso),
+        )
 
         try:
             await self._db.execute(
@@ -115,7 +131,7 @@ class CoordinationManager:
                 (lock_id, file_path, agent_id, task_id, now_iso, expires),
             )
         except Exception as exc:
-            # UNIQUE violation — file already locked
+            # UNIQUE violation — file already locked and not expired
             logger.warning("File lock conflict for %s: %s", file_path, exc)
             existing = await self._db.execute_fetchone(
                 "SELECT * FROM file_locks WHERE file_path = ?", (file_path,)
@@ -373,20 +389,37 @@ class CoordinationManager:
         return rows
 
     async def steal_task(self, task_id: str, agent_id: str) -> dict:
-        """Attempt to claim a pending task for this agent."""
-        row = await self._db.execute_fetchone(
-            "SELECT id, status FROM tasks WHERE id = ? AND status = 'pending'",
-            (task_id,),
-        )
-        if not row:
-            return {"success": False, "reason": "Task not found or not pending"}
+        """Attempt to claim a pending task for this agent.
 
-        await self._db.execute(
-            "UPDATE tasks SET claimed_by = ? WHERE id = ? AND status = 'pending'",
-            (agent_id, task_id),
-        )
+        audit 06b F#5: previously a separate SELECT-then-UPDATE with
+        no transaction, and the UPDATE only touched ``claimed_by``
+        (not ``status`` / ``started_at``). Two concurrent stealers
+        could both observe 'pending' and both set themselves as
+        ``claimed_by``; whichever wrote last won. Also the task
+        stayed in status 'pending' despite being claimed.
 
-        return {"success": True, "task_id": task_id, "claimed_by": agent_id}
+        Fix: single ``UPDATE ... WHERE id=? AND status='pending' AND
+        claimed_by IS NULL RETURNING *`` -- atomic at the SQLite engine
+        level, transitions status to 'in_progress' and records
+        ``started_at`` in the same statement.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET claimed_by = ?, status = 'in_progress', started_at = ? "
+            "WHERE id = ? AND status = 'pending' AND claimed_by IS NULL "
+            "RETURNING id, claimed_by, status",
+            (agent_id, now_iso, task_id),
+        )
+        if not rows:
+            return {"success": False, "reason": "Task not found, not pending, or already claimed"}
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "claimed_by": agent_id,
+            "status": "in_progress",
+            "started_at": now_iso,
+        }
 
     # ------------------------------------------------------------------
     # Feature 26: Progress Heartbeats
