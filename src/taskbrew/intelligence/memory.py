@@ -9,6 +9,13 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+# audit 07b F#5: escape LIKE meta-chars so an attacker-controlled
+# keyword of ``%`` or ``_`` doesn't silently widen the query to
+# every row. Used with `ESCAPE '\\'` in the SQL clause.
+def _escape_like(s: str) -> str:
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class MemoryManager:
     """Store and recall agent memories for learning across tasks.
 
@@ -75,8 +82,11 @@ class MemoryManager:
         if keywords:
             keyword_clauses = []
             for kw in keywords[:5]:  # cap at 5 keywords
-                keyword_clauses.append("(title LIKE ? OR content LIKE ? OR tags LIKE ?)")
-                params.extend([f"%{kw}%", f"%{kw}%", f"%{kw}%"])
+                esc = _escape_like(kw)
+                keyword_clauses.append(
+                    "(title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')"
+                )
+                params.extend([f"%{esc}%", f"%{esc}%", f"%{esc}%"])
             conditions.append(f"({' OR '.join(keyword_clauses)})")
 
         where = " AND ".join(conditions)
@@ -116,8 +126,8 @@ class MemoryManager:
     async def find_patterns(self, role: str, tags: list[str] | None = None, limit: int = 10) -> list[dict]:
         """Find patterns by role and optional tags."""
         if tags:
-            tag_clauses = " OR ".join(["tags LIKE ?" for _ in tags])
-            params = [role] + [f"%{t}%" for t in tags] + [limit]
+            tag_clauses = " OR ".join(["tags LIKE ? ESCAPE '\\'" for _ in tags])
+            params = [role] + [f"%{_escape_like(t)}%" for t in tags] + [limit]
             return await self._db.execute_fetchall(
                 f"SELECT * FROM agent_memories WHERE agent_role = ? AND memory_type = 'pattern' "
                 f"AND ({tag_clauses}) ORDER BY relevance_score DESC LIMIT ?",
@@ -158,8 +168,8 @@ class MemoryManager:
         if file_extension:
             return await self._db.execute_fetchall(
                 "SELECT * FROM agent_memories WHERE agent_role = ? AND memory_type = 'style' "
-                "AND tags LIKE ? ORDER BY relevance_score DESC LIMIT ?",
-                (role, f"%{file_extension}%", limit),
+                "AND tags LIKE ? ESCAPE '\\' ORDER BY relevance_score DESC LIMIT ?",
+                (role, f"%{_escape_like(file_extension)}%", limit),
             )
         return await self._db.execute_fetchall(
             "SELECT * FROM agent_memories WHERE agent_role = ? AND memory_type = 'style' "
