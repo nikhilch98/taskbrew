@@ -1,4 +1,14 @@
-"""Security intelligence: vulnerability scanning, secret detection, SAST, license compliance, security change flagging."""
+"""Security intelligence: vulnerability scanning, secret detection, regex-based
+ pattern matching, license compliance, security change flagging.
+
+Audit 08a F#2 honesty note: what this module calls ``run_sast`` is a
+pattern-matching grep over lines of source text, not a real SAST.
+Real static analysis requires an AST walk with data-flow analysis; we
+do not do that. Callers should treat findings from ``run_sast`` as a
+low-confidence first pass suitable for ranking file review priority,
+not as a substitute for bandit / semgrep / Snyk Code. The method
+docstring is updated to reflect this so operators are not misled.
+"""
 
 from __future__ import annotations
 
@@ -386,7 +396,16 @@ class SecurityIntelManager:
     # ------------------------------------------------------------------
 
     async def run_sast(self, file_path: str) -> list[dict]:
-        """AST-based analysis for SQL injection, XSS, and path traversal."""
+        """Regex pattern match for SQL injection / XSS / path-traversal smells.
+
+        audit 08a F#2: this is NOT a real AST-based SAST despite the
+        method name. Each check is a single-line regex against the
+        source file's lines; it will miss anything spread across
+        multiple lines, anything inside string literals, and every
+        control-flow-sensitive case. Use it as a cheap ranking
+        signal, not as a security gate. For real SAST use bandit,
+        semgrep, or Snyk Code.
+        """
         await self.ensure_tables()
         file_path = validate_path(file_path)
         full_path = os.path.join(self._project_dir, file_path)

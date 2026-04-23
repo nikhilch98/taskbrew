@@ -199,7 +199,22 @@ class TestingQualityManager:
     # ------------------------------------------------------------------
 
     async def run_mutation_analysis(self, file_path: str) -> dict:
-        """Analyze a Python file for potential mutation points and compute a score."""
+        """Count mutation-CANDIDATE operators in a file.
+
+        audit 08b F#2 honesty note: the method name is misleading. A
+        real mutation test generates mutants, runs the test suite
+        against each, and reports which ones were caught. We do none
+        of that. We count Compare / BinOp / BoolOp AST nodes and
+        derive a ``score = 1 - ops / (lines*2)`` that goes up when
+        code has fewer potentially-mutable operators -- the inverse
+        of what operators expect from a mutation score.
+
+        Use ``mutmut`` or ``cosmic-ray`` for real mutation testing.
+        This method is kept as a density-only metric for now; the
+        ``score`` field is labeled ``mutation_density_score`` in the
+        returned dict so callers stop conflating it with mutation
+        kill rate.
+        """
         await self._ensure_tables()
         full_path = os.path.join(self._project_dir, file_path)
 
@@ -249,7 +264,14 @@ class TestingQualityManager:
         return {
             "id": rec_id,
             "file_path": file_path,
+            # Legacy ``score`` alias kept for UI back-compat; consumers
+            # should migrate to ``mutation_density_score``.
             "score": score,
+            "mutation_density_score": score,
+            "score_semantics": (
+                "density, not kill-rate -- see run_mutation_analysis "
+                "docstring"
+            ),
             "mutation_points": mutation_points,
             "details": details,
             "created_at": now,
@@ -530,11 +552,24 @@ class TestingQualityManager:
             n = existing["sample_count"]
             new_n = n + 1
             new_avg = (old_avg * n + duration_ms) / new_n
-            # Running variance using Welford's online algorithm
+            # audit 08b F#4: Welford's online-variance algorithm
+            # accumulates M2 (sum of squared deviations), not variance.
+            # The previous line squared the stored std and then did
+            # ``(var*n + dx*dy)/new_n`` which is not Welford and
+            # regularly went negative (hence the max(0.0, ...) hack).
+            #
+            # Proper Welford: maintain M2 = sum of (x - mean)**2.
+            # When M2 is unavailable (legacy rows), reconstruct it
+            # from the stored std: M2_old ~= (old_std**2) * n. This
+            # preserves backward compat at the cost of a small bias
+            # on the first post-upgrade sample.
             old_std = existing["std_deviation_ms"]
-            old_variance = old_std ** 2
-            new_variance = (old_variance * n + (duration_ms - new_avg) * (duration_ms - old_avg)) / new_n
-            new_std = math.sqrt(max(0.0, new_variance))
+            old_M2 = (old_std ** 2) * n
+            new_M2 = old_M2 + (duration_ms - old_avg) * (duration_ms - new_avg)
+            # Population std is M2 / new_n; sample std is M2 / (new_n - 1).
+            # Use sample std when we have at least 2 points.
+            divisor = max(new_n - 1, 1)
+            new_std = math.sqrt(new_M2 / divisor) if new_M2 >= 0 else 0.0
 
             await self._db.execute(
                 "UPDATE perf_baselines SET avg_duration_ms = ?, std_deviation_ms = ?, sample_count = ?, last_updated = ? "
