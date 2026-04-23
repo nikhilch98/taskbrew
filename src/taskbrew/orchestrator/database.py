@@ -51,7 +51,12 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- _column_exists probe in MigrationManager skips the ADD COLUMN
     -- when the baseline already provided it.
     requires_fanout  INTEGER,
-    fanout_retries   INTEGER DEFAULT 0
+    fanout_retries   INTEGER DEFAULT 0,
+    -- First-class branch metadata (migration 30). Minted by
+    -- TaskBoard.create_task so agent_loop reads the authoritative
+    -- branch rather than reconstructing it from task_id.
+    branch_name      TEXT,
+    parent_branch    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_dependencies (

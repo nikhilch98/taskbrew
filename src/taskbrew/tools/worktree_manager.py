@@ -224,7 +224,12 @@ class WorktreeManager:
     # Public API
     # ------------------------------------------------------------------
 
-    async def create_worktree(self, agent_name: str, branch_name: str) -> str:
+    async def create_worktree(
+        self,
+        agent_name: str,
+        branch_name: str,
+        base_branch: str | None = None,
+    ) -> str:
         """Create a git worktree for an agent. Returns the worktree path.
 
         audit 05 F#6: serialised behind ``self._create_lock`` so two
@@ -238,11 +243,24 @@ class WorktreeManager:
           creating a new one (``-b``).
         * If the branch is checked out in a stale worktree belonging to a
           different agent, that stale worktree is removed first.
+
+        ``base_branch`` is the branch the new feature branch is cut
+        from. Defaults to whatever HEAD is in the main checkout
+        (usually ``main``). Callers that want to stack a revision
+        on top of a prior task's branch pass that task's
+        ``branch_name`` so the worktree starts from there.
         """
         async with self._create_lock:
-            return await self._create_worktree_locked(agent_name, branch_name)
+            return await self._create_worktree_locked(
+                agent_name, branch_name, base_branch,
+            )
 
-    async def _create_worktree_locked(self, agent_name: str, branch_name: str) -> str:
+    async def _create_worktree_locked(
+        self,
+        agent_name: str,
+        branch_name: str,
+        base_branch: str | None = None,
+    ) -> str:
         worktree_path_obj = self._safe_worktree_path(agent_name)
         worktree_path = str(worktree_path_obj)
 
@@ -270,13 +288,20 @@ class WorktreeManager:
                 await self._run_git("worktree", "prune")
 
         if await self._branch_exists(branch_name):
-            # Branch survives from a previous run -- reuse it
+            # Branch survives from a previous run -- reuse it.
+            # base_branch is intentionally ignored here: the branch
+            # already has a history that we do not want to retro-
+            # actively re-parent.
             await self._run_git("worktree", "add", worktree_path, branch_name)
         else:
             # Use -- to prevent any leading-hyphen argument from being
-            # parsed as a git flag (worktree path + new branch are both
-            # behind the terminator).
-            await self._run_git("worktree", "add", "-b", branch_name, "--", worktree_path)
+            # parsed as a git flag. base_branch (when supplied) is the
+            # start-point for the new branch; git positional order is
+            # ``add -b <new> <path> [<start>]``.
+            args = ["worktree", "add", "-b", branch_name, "--", worktree_path]
+            if base_branch:
+                args.append(base_branch)
+            await self._run_git(*args)
 
         self._worktrees[agent_name] = worktree_path
         return worktree_path

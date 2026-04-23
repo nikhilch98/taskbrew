@@ -1362,6 +1362,20 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE tasks ADD COLUMN requires_fanout INTEGER;
         ALTER TABLE tasks ADD COLUMN fanout_retries INTEGER DEFAULT 0;
     """),
+    (30, "add_task_branch_fields", """
+        -- First-class branch metadata per task so infra (not prompt text)
+        -- owns the contract. The architect's create_task call mints
+        -- branch_name deterministically (feat/<task_id.lower()>); the
+        -- agent_loop reads it back at worktree-create time instead of
+        -- reconstructing it inline.
+        --
+        -- parent_branch is the branch this task's work is cut from.
+        -- For the default main-line flow it's 'main'; for a revision it
+        -- inherits the original task's branch so the fixer builds on
+        -- the existing work rather than diverging from main.
+        ALTER TABLE tasks ADD COLUMN branch_name TEXT;
+        ALTER TABLE tasks ADD COLUMN parent_branch TEXT;
+    """),
 ]
 
 

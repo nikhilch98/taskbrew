@@ -46,7 +46,10 @@ class TestRoleConfigNewFields:
         assert rc.max_revision_cycles == 0
         assert rc.max_clarification_requests == 10
         assert rc.max_route_tasks == 100
-        assert rc.uses_worktree is False
+        # uses_worktree default is now None (= "auto-detect from tools")
+        # rather than False. main._resolve_needs_worktree decides at
+        # spawn time based on the tool list.
+        assert rc.uses_worktree is None
         assert rc.capabilities == []
         assert rc.artifact_exclude_patterns == []
 

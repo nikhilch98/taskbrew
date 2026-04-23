@@ -479,6 +479,25 @@ async def _orphan_recovery_loop(
             _logger.exception("Error in orphan recovery loop")
 
 
+# Tools that mutate filesystem state and therefore justify a worktree.
+# Kept conservative: read-only tools (Grep, Glob, Read) don't need isolation.
+_FILE_MUTATING_TOOLS = frozenset({"Bash", "Edit", "Write", "NotebookEdit"})
+
+
+def _resolve_needs_worktree(role_config: RoleConfig) -> bool:
+    """Decide whether a role's agents get a git worktree.
+
+    Three-state semantics on ``uses_worktree``:
+    - Explicit ``True``: force worktree on.
+    - Explicit ``False``: force worktree off (e.g. pure architect).
+    - ``None`` (default): auto-detect -- any role with a file-mutating
+      tool gets a worktree so it can't mutate the main checkout.
+    """
+    if role_config.uses_worktree is not None:
+        return bool(role_config.uses_worktree)
+    return any(t in _FILE_MUTATING_TOOLS for t in role_config.tools)
+
+
 async def start_agents(orch: Orchestrator):
     """Start agent loops, recovery tasks, and auto-scaler for *orch*.
 
@@ -525,8 +544,12 @@ async def start_agents(orch: Orchestrator):
         orch._agent_tasks_by_id = {}
     cli_provider = getattr(orch.team_config, "cli_provider", "claude") or "claude"
     for role_name, role_config in orch.roles.items():
-        # Roles with Bash get worktree isolation so they can't mutate the main checkout
-        needs_worktree = "Bash" in role_config.tools
+        # uses_worktree three-state wiring:
+        #   True  -> force worktree on
+        #   False -> force worktree off
+        #   None  -> auto-detect: any role with a file-mutating tool
+        #            gets a worktree so it can't touch the main checkout.
+        needs_worktree = _resolve_needs_worktree(role_config)
         for i in range(1, role_config.max_instances + 1):
             instance_id = f"{role_name}-{i}"
             loop = AgentLoop(
@@ -564,7 +587,7 @@ async def start_agents(orch: Orchestrator):
         from taskbrew.agents.auto_scaler import AutoScaler
 
         async def _agent_factory(instance_id: str, role_config: RoleConfig) -> asyncio.Task:
-            needs_worktree = "Bash" in role_config.tools
+            needs_worktree = _resolve_needs_worktree(role_config)
             loop = AgentLoop(
                 instance_id=instance_id,
                 role_config=role_config,
