@@ -18,6 +18,45 @@ from mcp.server.fastmcp import FastMCP
 
 from taskbrew.tools._tool_gating import gate_or_error
 
+# audit 05 F#8: the MCP task_tools server is spawned by the parent
+# orchestrator once per agent instance. The parent already exports
+# TASKBREW_AGENT_ROLE (role name) and optionally TASKBREW_AGENT_INSTANCE
+# (instance id). When those are set, this MCP subprocess MUST refuse
+# any LLM-supplied ``assigned_by`` that does not match the parent's
+# declared identity. That closes the role-impersonation path where a
+# compromised agent could attribute task creation to another role.
+_ENV_ROLE = "TASKBREW_AGENT_ROLE"
+_ENV_INSTANCE = "TASKBREW_AGENT_INSTANCE"
+
+
+def _check_assigned_by(llm_value: str) -> tuple[bool, str | None]:
+    """Return (ok, error_message).
+
+    When the env var is set, ``llm_value`` must match either the role
+    or the instance identity; otherwise any non-empty value is accepted
+    (legacy dev behaviour).
+    """
+    bound_role = os.environ.get(_ENV_ROLE)
+    bound_inst = os.environ.get(_ENV_INSTANCE)
+    if not bound_role and not bound_inst:
+        return True, None
+    if not llm_value:
+        return False, (
+            f"assigned_by is required and must match this agent's "
+            f"identity (role={bound_role!r}, instance={bound_inst!r})"
+        )
+    # Accept either the role name or instance id. Instance ids typically
+    # follow the pattern 'coder-1', 'coder-auto-2', etc. so we accept
+    # either exact-match or prefix-match on the role.
+    if llm_value == bound_role or llm_value == bound_inst:
+        return True, None
+    if bound_role and llm_value.startswith(f"{bound_role}-"):
+        return True, None
+    return False, (
+        f"assigned_by={llm_value!r} does not match this agent's "
+        f"identity (role={bound_role!r}, instance={bound_inst!r})"
+    )
+
 
 def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
     mcp = FastMCP("task-tools")
@@ -80,6 +119,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         denial = gate_or_error("create_task")
         if denial:
             return denial
+        ok, err = _check_assigned_by(assigned_by)
+        if not ok:
+            return f"Error: {err}"
         rf = requires_fanout.strip().lower()
         if rf in ("true", "1", "yes"):
             payload["requires_fanout"] = True
@@ -264,6 +306,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         denial = gate_or_error("send_message")
         if denial:
             return denial
+        ok, err = _check_assigned_by(from_agent)
+        if not ok:
+            return f"Error: {err}"
         payload = {"from_agent": from_agent, "to_agent": to_agent, "content": content, "priority": priority}
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
@@ -298,6 +343,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         denial = gate_or_error("escalate_task")
         if denial:
             return denial
+        ok, err = _check_assigned_by(from_agent)
+        if not ok:
+            return f"Error: {err}"
         payload = {"task_id": task_id, "from_agent": from_agent, "reason": reason, "severity": severity}
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
