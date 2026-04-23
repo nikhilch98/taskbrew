@@ -690,21 +690,34 @@ class SocialIntelligenceManager:
     ) -> dict:
         """Predict consensus outcome based on historical voting patterns.
 
-        Uses past argument resolution history to estimate whether participants
-        tend to agree or disagree.
+        audit 09 F#9: previously ``participants`` was stored on the
+        prediction row but ignored in the query, so the prediction was
+        identical for any participant set. We now restrict the history
+        to argument sessions whose participants overlap with the
+        current set, joining through argument_evidence.agent_id.
+        Also flagged in the returned dict as ``based_on_samples`` so
+        callers can see how thin the data was.
         """
         pid = f"CPR-{new_id(8)}"
         now = utcnow()
         participants_json = json.dumps(participants)
 
-        # Look at historical argument resolutions to estimate consensus likelihood
-        history = await self._db.execute_fetchall(
-            "SELECT status, winner_position FROM argument_sessions "
-            "WHERE status = 'resolved' "
-            "ORDER BY resolved_at DESC LIMIT 20",
-        )
+        # audit 09 F#9: filter history to argument sessions where at
+        # least one of the current participants submitted evidence.
+        if participants:
+            placeholders = ",".join("?" for _ in participants)
+            history = await self._db.execute_fetchall(
+                f"SELECT DISTINCT s.id, s.status, s.winner_position "
+                f"FROM argument_sessions s "
+                f"JOIN argument_evidence e ON e.session_id = s.id "
+                f"WHERE s.status = 'resolved' "
+                f"  AND e.agent_id IN ({placeholders}) "
+                f"ORDER BY s.resolved_at DESC LIMIT 20",
+                tuple(participants),
+            )
+        else:
+            history = []
 
-        # Simple heuristic: if most past arguments resolved, predict consensus
         total = len(history)
         if total == 0:
             predicted_outcome = "likely_consensus"
@@ -731,6 +744,7 @@ class SocialIntelligenceManager:
             "participants": participants,
             "predicted_outcome": predicted_outcome,
             "predicted_confidence": predicted_confidence,
+            "based_on_samples": total,
             "created_at": now,
         }
 
