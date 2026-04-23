@@ -7,7 +7,7 @@ import os
 import re
 from pathlib import Path
 
-from ._utils import utcnow as _utcnow, new_id as _new_id, validate_path
+from ._utils import utcnow as _utcnow, new_id as _new_id, validate_path, safe_read_text
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,8 @@ class SecurityIntelManager:
             return []
 
         deps: list[tuple[str, str | None]] = []
-        for line in req_path.read_text().splitlines():
+        # audit 07a F#1: 2 MiB cap and symlink refusal.
+        for line in safe_read_text(req_path).splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -212,7 +213,10 @@ class SecurityIntelManager:
             return []
 
         deps: list[tuple[str, str | None]] = []
-        content = pyproject_path.read_text()
+        # audit 07a F#1: bounded read for pyproject.toml; content is
+        # empty on oversize / symlink, which cleanly yields "no
+        # pinned packages found".
+        content = safe_read_text(pyproject_path)
         in_deps = False
         for line in content.splitlines():
             if "dependencies" in line and "[" in line:

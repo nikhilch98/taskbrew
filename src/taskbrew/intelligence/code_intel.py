@@ -1,4 +1,10 @@
-"""Advanced code intelligence: semantic search, pattern detection, smells, debt, test gaps, contracts, dead code."""
+"""Advanced code intelligence: semantic search, pattern detection, smells, debt, test gaps, contracts, dead code.
+
+Audit 07a F#1: file reads now route through ``safe_read_text``, which
+enforces a 2 MiB cap and refuses symlinks. Oversized files skip
+silently; the analyzer sees "no patterns" and moves on rather than
+OOM'ing the worker on a generated asset.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+from taskbrew.intelligence._utils import safe_read_text
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +35,9 @@ class CodeIntelligenceManager:
         Returns the number of symbols indexed.
         """
         try:
-            source = Path(file_path).read_text(errors="replace")
+            source = safe_read_text(file_path)
+            if not source:
+                return []
             tree = ast.parse(source, filename=file_path)
         except (SyntaxError, OSError) as exc:
             logger.warning("Cannot parse %s for indexing: %s", file_path, exc)
@@ -132,7 +142,9 @@ class CodeIntelligenceManager:
         - Registry (class with a dict of registered items)
         """
         try:
-            source = Path(file_path).read_text(errors="replace")
+            source = safe_read_text(file_path)
+            if not source:
+                return []
             tree = ast.parse(source, filename=file_path)
         except (SyntaxError, OSError) as exc:
             logger.warning("Cannot parse %s for pattern detection: %s", file_path, exc)
@@ -269,7 +281,9 @@ class CodeIntelligenceManager:
         - Deep Nesting (> 4 indent levels)
         """
         try:
-            source = Path(file_path).read_text(errors="replace")
+            source = safe_read_text(file_path)
+            if not source:
+                return []
             tree = ast.parse(source, filename=file_path)
         except (SyntaxError, OSError) as exc:
             logger.warning("Cannot parse %s for smell detection: %s", file_path, exc)
@@ -357,7 +371,9 @@ class CodeIntelligenceManager:
         Score is normalized to [0, 1] where 1 = high debt.
         """
         try:
-            source = Path(file_path).read_text(errors="replace")
+            source = safe_read_text(file_path)
+            if not source:
+                return []
             tree = ast.parse(source, filename=file_path)
         except (SyntaxError, OSError) as exc:
             logger.warning("Cannot parse %s for debt scoring: %s", file_path, exc)
@@ -439,7 +455,9 @@ class CodeIntelligenceManager:
     async def analyze_test_gaps(self, source_file: str) -> list[dict]:
         """Find functions in *source_file* that lack corresponding tests."""
         try:
-            source = Path(source_file).read_text(errors="replace")
+            source = safe_read_text(source_file)
+            if not source:
+                return []
             tree = ast.parse(source, filename=source_file)
         except (SyntaxError, OSError) as exc:
             logger.warning("Cannot parse %s for test gap analysis: %s", source_file, exc)
@@ -463,7 +481,9 @@ class CodeIntelligenceManager:
         for tp in [test_path, tests_dir]:
             if tp.is_file():
                 try:
-                    test_source = tp.read_text(errors="replace")
+                    test_source = safe_read_text(tp)
+                    if not test_source:
+                        continue
                     test_tree = ast.parse(test_source, filename=str(tp))
                     for node in ast.walk(test_tree):
                         if isinstance(
@@ -508,7 +528,9 @@ class CodeIntelligenceManager:
         use raw dict params or are missing type hints.
         """
         try:
-            source = Path(router_file).read_text(errors="replace")
+            source = safe_read_text(router_file)
+            if not source:
+                return []
             tree = ast.parse(source, filename=router_file)
         except (SyntaxError, OSError) as exc:
             logger.warning("Cannot parse %s for contract validation: %s", router_file, exc)
@@ -600,7 +622,9 @@ class CodeIntelligenceManager:
             if py_file.name.startswith("test_"):
                 continue
             try:
-                source = py_file.read_text(errors="replace")
+                source = safe_read_text(py_file)
+                if not source:
+                    continue
                 tree = ast.parse(source, filename=str(py_file))
             except (SyntaxError, OSError) as exc:
                 logger.warning("Cannot parse %s for dead code analysis: %s", py_file, exc)

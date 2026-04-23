@@ -87,3 +87,53 @@ def validate_path(
 def clamp(value: float, min_val: float = 0.0, max_val: float = 1.0) -> float:
     """Clamp a value to [min_val, max_val] range."""
     return max(min_val, min(max_val, value))
+
+
+# audit 07a F#1: default size cap for file reads in the code analyzers.
+# 2 MiB covers every legitimate source file by a wide margin; hostile
+# / generated files that exceed this are skipped rather than OOM'ing
+# the worker.
+_DEFAULT_MAX_READ_BYTES = 2 * 1024 * 1024
+
+
+def safe_read_text(
+    path,
+    *,
+    max_bytes: int = _DEFAULT_MAX_READ_BYTES,
+    errors: str = "replace",
+) -> str:
+    """Read a text file with a hard size cap.
+
+    Used by code_intel, code_reasoning, security_intel and related
+    analyzers that walk source trees and would otherwise read arbitrary
+    multi-MB blobs into memory. Returns ``""`` when *path* does not
+    resolve to a regular file, is a symlink, or exceeds *max_bytes*.
+
+    The intentional behaviour on oversized files is to silently return
+    empty: the analyzer then sees "no patterns" and moves on, instead
+    of crashing on a generated asset that happens to live under the
+    project root.
+    """
+    from pathlib import Path
+    p = Path(path)
+    try:
+        # Refuse symlinks so a planted link to /dev/zero or
+        # /proc/kcore cannot blow up the analyzer.
+        if p.is_symlink():
+            logger.debug("safe_read_text: refusing symlink %s", p)
+            return ""
+        if not p.is_file():
+            return ""
+        size = p.stat().st_size
+    except OSError:
+        return ""
+    if size > max_bytes:
+        logger.warning(
+            "safe_read_text: %s is %d bytes (cap %d) — skipped",
+            p, size, max_bytes,
+        )
+        return ""
+    try:
+        return p.read_text(errors=errors)
+    except OSError:
+        return ""
