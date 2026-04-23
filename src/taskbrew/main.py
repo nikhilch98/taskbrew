@@ -55,7 +55,32 @@ def _is_running(pid: int) -> bool:
 
 def _write_pid(pid: int) -> None:
     TASKBREW_DIR.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text(str(pid))
+    tmp = PID_FILE.with_suffix(PID_FILE.suffix + ".tmp")
+    tmp.write_text(str(pid))
+    os.replace(tmp, PID_FILE)
+
+
+def _write_pid_exclusive(pid: int) -> bool:
+    """Atomically create the PID file, refusing if it already exists.
+
+    audit 01 F#5: ``_cmd_start`` and the ``--_serve_foreground`` child
+    both wrote the PID file with last-writer-wins semantics, so two
+    concurrent ``taskbrew start`` invocations could both pass the
+    initial _read_pid() check, both spawn a daemon, and end up with
+    only one PID recorded. Use O_CREAT|O_EXCL so whichever writer wins
+    the race is the only one that records, and the loser can detect
+    it lost and abort.
+    """
+    TASKBREW_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(PID_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return False
+    try:
+        os.write(fd, str(pid).encode())
+    finally:
+        os.close(fd)
+    return True
 
 
 def _remove_pid() -> None:
@@ -938,7 +963,11 @@ def _cmd_start(args):
         start_new_session=True,
     )
 
-    _write_pid(proc.pid)
+    # audit 01 F#5: the child (in the --_serve_foreground branch)
+    # writes the PID via _write_pid_exclusive, which is what we want
+    # to treat as authoritative. We do NOT also write here from the
+    # parent -- the exclusive create in the child is how a second
+    # concurrent `taskbrew start` detects and aborts.
 
     host = getattr(args, "host", None) or "127.0.0.1"
     port = getattr(args, "port", None) or 8420
@@ -1041,7 +1070,10 @@ def cli_main():
             idx = sys.argv.index("--project-dir")
             if idx + 1 < len(sys.argv):
                 args.project_dir = sys.argv[idx + 1]
-        _write_pid(os.getpid())
+        if not _write_pid_exclusive(os.getpid()):
+            # Another daemon raced us and won. Exit silently so we
+            # don't leave two servers fighting for port 8420.
+            return
         try:
             asyncio.run(async_main(args))
         finally:
