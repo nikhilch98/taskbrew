@@ -873,11 +873,15 @@ async def export_data(format: str = "json"):
     data = {"groups": groups, "tasks": tasks, "usage": usage, "exported_at": datetime.now(timezone.utc).isoformat()}
 
     if format == "csv":
+        # audit 11a F#5: guard against CSV formula injection in exported
+        # task fields (titles, descriptions, error messages authored by
+        # LLM agents). See exports._escape_row for the rationale.
+        from taskbrew.dashboard.routers.exports import _escape_row
         output = io.StringIO()
         if tasks:
             writer = csv.DictWriter(output, fieldnames=tasks[0].keys())
             writer.writeheader()
-            writer.writerows(tasks)
+            writer.writerows(_escape_row(t) for t in tasks)
         return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=tasks.csv"})
 
     return data
