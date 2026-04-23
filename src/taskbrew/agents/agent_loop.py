@@ -841,6 +841,39 @@ class AgentLoop:
                                 task["id"], attempt + 1, delay, e,
                             )
                             await asyncio.sleep(delay)
+                            # audit 02 F#5: reset the worktree between
+                            # retries so a half-applied commit or
+                            # partially-written file from the failed
+                            # attempt doesn't poison the retry. Best-
+                            # effort: if the reset itself fails we log
+                            # and proceed (the retry can still work).
+                            if worktree_path:
+                                try:
+                                    reset_proc = await asyncio.create_subprocess_exec(
+                                        "git", "reset", "--hard",
+                                        cwd=worktree_path,
+                                        stdout=asyncio.subprocess.PIPE,
+                                        stderr=asyncio.subprocess.PIPE,
+                                    )
+                                    await asyncio.wait_for(
+                                        reset_proc.communicate(),
+                                        timeout=15,
+                                    )
+                                    clean_proc = await asyncio.create_subprocess_exec(
+                                        "git", "clean", "-fdx",
+                                        cwd=worktree_path,
+                                        stdout=asyncio.subprocess.PIPE,
+                                        stderr=asyncio.subprocess.PIPE,
+                                    )
+                                    await asyncio.wait_for(
+                                        clean_proc.communicate(),
+                                        timeout=15,
+                                    )
+                                except (asyncio.TimeoutError, OSError, Exception) as reset_exc:
+                                    task_logger.warning(
+                                        "Worktree reset between retries failed for %s: %s",
+                                        task["id"], reset_exc,
+                                    )
                         else:
                             raise  # let outer handler fail the task
             finally:

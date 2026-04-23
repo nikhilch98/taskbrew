@@ -558,6 +558,21 @@ async def create_role(body: CreateRoleBody):
         raise HTTPException(status_code=409, detail=f"Role '{role_name}' already exists")
 
     # --- Preset merging ---
+    # audit 11b F#7: the preset dict was merged wholesale into body.
+    # A malicious or buggy preset could inject unknown fields that
+    # ended up in yaml_data and on disk. Restrict the merge to an
+    # explicit allowlist of keys that correspond to real role fields.
+    _PRESET_ROLE_KEYS = frozenset({
+        "display_name", "prefix", "color", "emoji",
+        "system_prompt", "model", "tools",
+        "max_instances", "max_turns", "max_execution_time",
+        "produces", "accepts", "routes_to",
+        "context_includes", "can_create_groups", "group_type",
+        "approval_mode", "max_revision_cycles",
+        "max_clarification_requests", "max_route_tasks",
+        "uses_worktree", "artifact_exclude_patterns",
+        "auto_scale",
+    })
     preset_id = body.pop("preset_id", None)
     if preset_id:
         from taskbrew.dashboard.routers.presets import _get_presets
@@ -573,11 +588,14 @@ async def create_role(body: CreateRoleBody):
         # Remap icon_emoji -> emoji so the role gets the preset's icon
         if "icon_emoji" in preset and "emoji" not in body:
             body["emoji"] = preset["icon_emoji"]
-        # Remove preset-only metadata fields
-        for key in ("preset_id", "category", "description", "capabilities", "icon_emoji"):
-            preset.pop(key, None)
+        # Allowlist-filter the preset before merging. Anything outside
+        # the known role field set is dropped on the floor rather than
+        # being persisted to the role YAML.
+        filtered_preset = {
+            k: v for k, v in preset.items() if k in _PRESET_ROLE_KEYS
+        }
         # Merge: preset provides defaults, explicit body fields override
-        merged = {**preset, **body}
+        merged = {**filtered_preset, **body}
         body = merged
 
     # Build YAML data with defaults for missing fields
