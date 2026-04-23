@@ -20,16 +20,21 @@ jobs:
         python-version: ["3.10", "3.12"]
 
     steps:
+      # audit 17 F#4: pin third-party Actions by commit SHA rather
+      # than floating tag so a compromised maintainer can't retag a
+      # released version to exfiltrate GITHUB_TOKEN or inject code
+      # into the wheel build. SHAs below are the tip of v4 / v5 at
+      # the time of pinning; bump via dependabot only.
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332  # v4.1.7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Cache pip dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
