@@ -835,7 +835,14 @@ class AgentLoop:
                         return True
                     except Exception as e:
                         if attempt < MAX_RETRIES:
-                            delay = RETRY_BASE_DELAY * (3 ** attempt)
+                            # audit 02 F#6: backoff now carries random
+                            # jitter so simultaneously-failing agents
+                            # don't retry in lockstep (thundering herd).
+                            # Keep the exponential base 3x but add
+                            # 50-150% jitter around the nominal delay.
+                            import random
+                            nominal = RETRY_BASE_DELAY * (3 ** attempt)
+                            delay = int(nominal * (0.5 + random.random()))
                             task_logger.warning(
                                 "Task %s attempt %d failed, retrying in %ds: %s",
                                 task["id"], attempt + 1, delay, e,
@@ -962,7 +969,12 @@ class AgentLoop:
                     await asyncio.sleep(self.poll_interval)
             except Exception:
                 logger.exception("Agent %s crashed in run_once, recovering", self.instance_id)
-                await self.instance_manager.update_status(self.instance_id, "idle")
+                # audit 02 F#8: reset current_task to None on crash so
+                # a stale reference doesn't persist on the instance
+                # row and confuse orphan recovery.
+                await self.instance_manager.update_status(
+                    self.instance_id, "idle", current_task=None,
+                )
                 await asyncio.sleep(self.poll_interval)
             await self.instance_manager.heartbeat(self.instance_id)
 
