@@ -343,6 +343,10 @@ def create_app(
     comparison_router.set_comparison_deps(project_manager)
     ws_router.set_ws_deps(ws_manager, chat_manager)
 
+    # audit 11a F#16: gate the /api/usage/* CLI-spawning endpoints.
+    from taskbrew.dashboard.routers import usage as usage_router
+    usage_router.set_usage_auth_deps(verify_admin)
+
     # Wire up interaction and MCP tool dependencies
     if orch_obj:
         from taskbrew.orchestrator.interactions import InteractionManager
