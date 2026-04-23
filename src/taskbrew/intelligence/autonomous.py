@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -140,6 +141,21 @@ class AutonomousManager:
 
     # --- Feature 2: Autonomous Work Discovery ---
 
+    # audit 06b F#1: the previous implementation did three full
+    # ``rglob`` passes synchronously inside the asyncio loop with no
+    # ignore list and one INSERT per finding, so `.venv`/`node_modules`
+    # were scanned and every vendored TODO became a persisted row.
+    # Walk once, exclude vendored dirs, cap results, offload blocking
+    # I/O to a thread, and batch the inserts in a single transaction.
+    _DISCOVERY_IGNORE_DIRS = {
+        ".git", ".hg", ".svn",
+        ".venv", "venv", "env", ".env",
+        "node_modules", "__pycache__", ".mypy_cache", ".pytest_cache",
+        ".tox", ".ruff_cache", "dist", "build", ".next", ".nuxt",
+        "target", "out", "coverage", ".coverage",
+    }
+    _MAX_DISCOVERIES = 500
+
     async def discover_work(
         self, agent_id: str, project_dir: str
     ) -> list[dict]:
@@ -150,15 +166,69 @@ class AutonomousManager:
         - Python files without corresponding test files
         - Markdown files not modified in 90+ days
         """
-        now = datetime.now(timezone.utc).isoformat()
-        discoveries: list[dict] = []
         project = Path(project_dir)
-
         if not project.is_dir():
-            return discoveries
+            return []
 
-        # Scan for TODO / FIXME
-        for py_file in project.rglob("*.py"):
+        import asyncio
+        discoveries: list[dict] = await asyncio.to_thread(
+            self._walk_and_collect, project
+        )
+
+        if not discoveries:
+            return []
+
+        now = datetime.now(timezone.utc).isoformat()
+        rows = []
+        for d in discoveries:
+            d_id = f"WD-{uuid.uuid4().hex[:6]}"
+            d["id"] = d_id
+            d["agent_id"] = agent_id
+            d["status"] = "pending"
+            d["created_at"] = now
+            rows.append((
+                d_id,
+                agent_id,
+                d["discovery_type"],
+                d["file_path"],
+                d["description"],
+                d["priority"],
+                "pending",
+                now,
+            ))
+
+        async with self._db.transaction() as conn:
+            await conn.executemany(
+                "INSERT INTO work_discoveries "
+                "(id, agent_id, discovery_type, file_path, description, priority, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+
+        return discoveries
+
+    def _walk_and_collect(self, project: Path) -> list[dict]:
+        """Synchronous FS walk with vendored-dir exclusion + result cap."""
+        discoveries: list[dict] = []
+        py_files: list[Path] = []
+        md_files: list[Path] = []
+
+        for dirpath, dirnames, filenames in os.walk(project):
+            # Prune vendored directories in-place so os.walk skips them.
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in self._DISCOVERY_IGNORE_DIRS and not d.startswith(".")
+            ]
+            for fname in filenames:
+                if fname.endswith(".py"):
+                    py_files.append(Path(dirpath) / fname)
+                elif fname.endswith(".md"):
+                    md_files.append(Path(dirpath) / fname)
+
+        # TODO / FIXME
+        for py_file in py_files:
+            if len(discoveries) >= self._MAX_DISCOVERIES:
+                break
             try:
                 content = py_file.read_text(errors="replace")
             except OSError as exc:
@@ -174,11 +244,14 @@ class AutonomousManager:
                             "priority": "medium",
                         }
                     )
+                    if len(discoveries) >= self._MAX_DISCOVERIES:
+                        break
 
         # Python files without tests
-        src_files = list(project.rglob("*.py"))
-        test_names = {f.name for f in src_files if f.name.startswith("test_")}
-        for src in src_files:
+        test_names = {f.name for f in py_files if f.name.startswith("test_")}
+        for src in py_files:
+            if len(discoveries) >= self._MAX_DISCOVERIES:
+                break
             if src.name.startswith("test_") or src.name == "__init__.py":
                 continue
             expected_test = f"test_{src.name}"
@@ -194,7 +267,9 @@ class AutonomousManager:
 
         # Stale markdown files (>90 days)
         now_ts = datetime.now(timezone.utc).timestamp()
-        for md_file in project.rglob("*.md"):
+        for md_file in md_files:
+            if len(discoveries) >= self._MAX_DISCOVERIES:
+                break
             try:
                 mtime = md_file.stat().st_mtime
             except OSError as exc:
@@ -210,29 +285,6 @@ class AutonomousManager:
                         "priority": "low",
                     }
                 )
-
-        # Persist discoveries
-        for d in discoveries:
-            d_id = f"WD-{uuid.uuid4().hex[:6]}"
-            d["id"] = d_id
-            d["agent_id"] = agent_id
-            d["status"] = "pending"
-            d["created_at"] = now
-            await self._db.execute(
-                "INSERT INTO work_discoveries "
-                "(id, agent_id, discovery_type, file_path, description, priority, status, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    d_id,
-                    agent_id,
-                    d["discovery_type"],
-                    d["file_path"],
-                    d["description"],
-                    d["priority"],
-                    d["status"],
-                    now,
-                ),
-            )
 
         return discoveries
 
