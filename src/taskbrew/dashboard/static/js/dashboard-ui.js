@@ -95,7 +95,10 @@ function handleChatMessage(agentName, msg) {
             }
             const rawSoFar = chat.streamingEl.getAttribute('data-raw') + msg.content;
             chat.streamingEl.setAttribute('data-raw', rawSoFar);
-            chat.streamingEl.innerHTML = DOMPurify.sanitize(marked.parse(rawSoFar));
+            // audit 13 F#4: route through the centralised safeMarkdown
+            // helper so every markdown render site shares one locked
+            // sanitize config and one fail-closed fallback.
+            chat.streamingEl.innerHTML = safeMarkdown(rawSoFar);
             chat.messagesEl.scrollTop = chat.messagesEl.scrollHeight;
             break;
         case 'chat_tool_use':
@@ -105,7 +108,7 @@ function handleChatMessage(agentName, msg) {
             if (chat.streamingEl) {
                 chat.streamingEl.classList.remove('streaming');
                 const finalRaw = chat.streamingEl.getAttribute('data-raw') || '';
-                if (finalRaw) chat.streamingEl.innerHTML = DOMPurify.sanitize(marked.parse(finalRaw));
+                if (finalRaw) chat.streamingEl.innerHTML = safeMarkdown(finalRaw);
                 chat.streamingEl = null;
             }
             chat.inputEl.disabled = false;
@@ -160,7 +163,7 @@ function appendChatBubble(agentName, role, text) {
     const bubble = document.createElement('div');
     bubble.className = 'chat-msg ' + role;
     if (role === 'assistant') {
-        bubble.innerHTML = DOMPurify.sanitize(marked.parse(text));
+        bubble.innerHTML = safeMarkdown(text);
     } else {
         bubble.textContent = text;
     }
@@ -298,7 +301,7 @@ function openTaskDetail(task) {
     // Description
     if (task.description) {
         html += '<div class="task-detail-section"><div class="task-detail-section-title">Description</div>';
-        html += '<div class="task-detail-description"><div class="value">' + DOMPurify.sanitize(marked.parse(task.description)) + '</div></div></div>';
+        html += '<div class="task-detail-description"><div class="value">' + safeMarkdown(task.description) + '</div></div></div>';
     }
 
     // Rejection reason

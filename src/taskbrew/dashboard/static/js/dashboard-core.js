@@ -187,6 +187,44 @@ function escapeHtml(str) {
         .replace(/`/g, '&#96;');
 }
 
+// audit 13 F#4: every render site that wanted markdown previously
+// inlined ``DOMPurify.sanitize(marked.parse(text))`` with no
+// feature-detect, no locked ALLOWED_TAGS config, and no fallback
+// for the (rare) case where one of the two CDN libraries fails to
+// load. A future edit that tweaks ALLOWED_TAGS in one place and
+// misses another silently reopens an XSS vector for LLM output.
+// Centralise here.
+window.SAFE_MARKDOWN_CONFIG = {
+    ALLOWED_TAGS: [
+        'p', 'br', 'hr', 'strong', 'em', 'b', 'i', 'u', 's', 'code', 'pre',
+        'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'span', 'div',
+    ],
+    ALLOWED_ATTR: ['href', 'title', 'class', 'target', 'rel'],
+    FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
+    ALLOW_DATA_ATTR: false,
+};
+
+function safeMarkdown(text) {
+    if (text === null || text === undefined) return '';
+    const raw = String(text);
+    // Fail closed: if either library is missing, render as escaped
+    // plain text rather than silently concatenating user/LLM HTML.
+    if (typeof window.marked === 'undefined' || typeof window.DOMPurify === 'undefined') {
+        return escapeHtml(raw).replace(/\n/g, '<br>');
+    }
+    try {
+        return window.DOMPurify.sanitize(
+            window.marked.parse(raw),
+            window.SAFE_MARKDOWN_CONFIG
+        );
+    } catch (e) {
+        return escapeHtml(raw).replace(/\n/g, '<br>');
+    }
+}
+
 function getRoleColor(role) {
     return ROLE_COLORS[role] || { bg: 'rgba(148,163,184,0.15)', border: '#94a3b8', text: '#cbd5e1' };
 }
