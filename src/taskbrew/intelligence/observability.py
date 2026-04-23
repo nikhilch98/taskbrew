@@ -395,24 +395,50 @@ class ObservabilityManager:
     # Feature 43: Anomaly Detection
     # ------------------------------------------------------------------
 
+    # audit 08b F#7: detect_anomalies rescanned the entire metric
+    # history on every call and emitted one INSERT per out-of-range
+    # sample -- so a scheduled call every 5 min would silently duplicate
+    # rows until anomaly_detections grew unboundedly. We now:
+    #  - cap the history window scanned (last _ANOMALY_WINDOW samples)
+    #  - scope detection to samples newer than the most-recent anomaly
+    #    for that metric_type (if any), so we don't re-flag the same
+    #    out-of-range reading every tick
+    _ANOMALY_WINDOW = 500
+
     async def detect_anomalies(self, agent_id: str) -> list[dict]:
         """Detect anomalies in recent behavior metrics for an agent."""
         now = _utcnow()
         rows = await self._db.execute_fetchall(
-            "SELECT * FROM agent_behavior_metrics WHERE agent_role = ? ORDER BY created_at DESC",
-            (agent_id,),
+            "SELECT * FROM agent_behavior_metrics WHERE agent_role = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (agent_id, self._ANOMALY_WINDOW),
         )
         if not rows:
             return []
 
-        # Group values by metric_type
-        metric_values: dict[str, list[float]] = {}
+        # Cutoff per metric_type = max detected_at of existing anomaly
+        # rows. We only re-emit for samples newer than that, which
+        # stops repeated INSERTs for the same historic reading.
+        existing_cutoffs = {}
+        cutoff_rows = await self._db.execute_fetchall(
+            "SELECT anomaly_type AS metric_type, MAX(detected_at) AS latest "
+            "FROM anomaly_detections WHERE agent_id = ? GROUP BY anomaly_type",
+            (agent_id,),
+        )
+        for cr in cutoff_rows:
+            existing_cutoffs[cr["metric_type"]] = cr["latest"]
+
+        # Group values by metric_type (and keep created_at for dedup).
+        metric_values: dict[str, list[tuple[float, str]]] = {}
         for row in rows:
             mt = row["metric_type"]
-            metric_values.setdefault(mt, []).append(row["value"])
+            metric_values.setdefault(mt, []).append(
+                (row["value"], row["created_at"])
+            )
 
         anomalies: list[dict] = []
-        for metric_type, values in metric_values.items():
+        for metric_type, pairs in metric_values.items():
+            values = [v for v, _ in pairs]
             if len(values) < self.ANOMALY_MIN_SAMPLES:
                 continue
             mean = sum(values) / len(values)
@@ -422,7 +448,11 @@ class ObservabilityManager:
                 continue
             upper = mean + self.ANOMALY_STD_DEV_THRESHOLD * std_dev
             lower = mean - self.ANOMALY_STD_DEV_THRESHOLD * std_dev
-            for val in values:
+            cutoff = existing_cutoffs.get(metric_type)
+            for val, created_at in pairs:
+                # Skip samples we've already flagged.
+                if cutoff is not None and created_at <= cutoff:
+                    continue
                 if val > upper or val < lower:
                     aid = _new_id()
                     severity = "high" if abs(val - mean) > self.ANOMALY_HIGH_SEVERITY_THRESHOLD * std_dev else "medium"
