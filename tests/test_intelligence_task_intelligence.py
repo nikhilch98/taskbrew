@@ -229,32 +229,81 @@ async def test_record_actual_tokens(manager: TaskIntelligenceManager):
 # ------------------------------------------------------------------
 
 
-async def test_predict_outcome_low_complexity(manager: TaskIntelligenceManager):
-    """Low complexity tasks should have high predicted success."""
+async def test_predict_outcome_uncalibrated_returns_neutral_prior(
+    manager: TaskIntelligenceManager,
+):
+    """With no history, prediction is flagged uncalibrated and returns a neutral prior."""
     result = await manager.predict_outcome("TSK-060", complexity_score=2, agent_role="coder")
-    assert result["predicted_success"] > 0.7
+    assert result["predicted_success"] == 0.5
+    assert result["calibrated"] is False
+    assert result["sample_count"] == 0
 
 
-async def test_predict_outcome_high_complexity(manager: TaskIntelligenceManager):
-    """High complexity tasks should have lower predicted success."""
-    low = await manager.predict_outcome("TSK-061", complexity_score=2, agent_role="coder")
-    high = await manager.predict_outcome("TSK-062", complexity_score=9, agent_role="coder")
-    assert high["predicted_success"] < low["predicted_success"]
+async def test_predict_outcome_uses_historical_rate_when_uncalibrated(
+    manager: TaskIntelligenceManager,
+):
+    """When caller supplies historical_success_rate but DB has no samples, use it."""
+    result = await manager.predict_outcome(
+        "TSK-061", complexity_score=2, agent_role="coder",
+        historical_success_rate=0.9,
+    )
+    assert result["predicted_success"] == 0.9
+    assert result["calibrated"] is False
+
+
+async def test_predict_outcome_calibrates_from_history(
+    manager: TaskIntelligenceManager,
+):
+    """After enough actual_success observations for a (role, complexity), predictions
+    reflect the empirical rate rather than a hardcoded logistic."""
+    # Seed history: 5 successes at complexity=2 for coder.
+    for i in range(5):
+        pred = await manager.predict_outcome(f"SEED-{i}", 2, "coder")
+        await manager.record_actual_outcome(pred["id"], success=True)
+
+    result = await manager.predict_outcome("TSK-062", complexity_score=2, agent_role="coder")
+    assert result["calibrated"] is True
+    assert result["sample_count"] >= 5
+    assert result["predicted_success"] >= 0.8  # history is all-success
 
 
 async def test_prediction_accuracy(manager: TaskIntelligenceManager):
-    """get_prediction_accuracy computes correctness."""
-    # Predict success for easy task (should predict >0.5)
+    """get_prediction_accuracy computes correctness against recorded actuals."""
+    # Seed outcomes directly so the calibration lookup has history,
+    # without polluting accuracy with the seed's own neutral 0.5
+    # predictions (those would skew the classification tally).
+    from taskbrew.intelligence.task_intelligence import new_id, utcnow
+    for i in range(5):
+        await manager._db.execute(
+            "INSERT INTO outcome_predictions "
+            "(id, task_id, complexity_score, agent_role, "
+            " historical_success_rate, predicted_success, "
+            " actual_success, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (f"OP-SL{i}", f"LOW-{i}", 2, "coder", None, 1.0, 1, utcnow()),
+        )
+        await manager._db.execute(
+            "INSERT INTO outcome_predictions "
+            "(id, task_id, complexity_score, agent_role, "
+            " historical_success_rate, predicted_success, "
+            " actual_success, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (f"OP-SH{i}", f"HI-{i}", 9, "coder", None, 0.0, 0, utcnow()),
+        )
+
     pred1 = await manager.predict_outcome("T1", 2, "coder")
     await manager.record_actual_outcome(pred1["id"], success=True)
-
-    # Predict success for hard task (should predict <0.5)
     pred2 = await manager.predict_outcome("T2", 9, "coder")
     await manager.record_actual_outcome(pred2["id"], success=False)
 
+    assert pred1["calibrated"] is True
+    assert pred2["calibrated"] is True
+    assert pred1["predicted_success"] > 0.7
+    assert pred2["predicted_success"] < 0.3
+
     accuracy = await manager.get_prediction_accuracy(agent_role="coder")
-    assert accuracy["sample_count"] == 2
-    assert accuracy["accuracy"] == 1.0  # Both predictions were correct
+    assert accuracy["sample_count"] == 12
+    assert accuracy["accuracy"] == 1.0  # all 12 classify correctly
 
 
 # ------------------------------------------------------------------

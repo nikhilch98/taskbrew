@@ -506,6 +506,8 @@ class TaskIntelligenceManager:
     # Feature 30: Task Outcome Predictor
     # ------------------------------------------------------------------
 
+    _MIN_CALIBRATION_SAMPLES = 5
+
     async def predict_outcome(
         self,
         task_id: str,
@@ -513,23 +515,49 @@ class TaskIntelligenceManager:
         agent_role: str,
         historical_success_rate: float | None = None,
     ) -> dict:
-        """Predict P(success) using a logistic-style formula.
+        """Predict P(success) for a task/agent pair.
 
-        P(success) = 1 / (1 + exp(0.5 * complexity - 3))
-        Adjusted by historical_success_rate if provided.
+        audit 09 F#15: the previous implementation used an uncalibrated
+        logistic (``z = 0.5 * complexity - 3``) with hardcoded coefficients
+        that swung P by 40 points across a single complexity step, and
+        the feedback loop on ``actual_success`` was never wired back in.
+        Replace it with an empirical lookup over past ``outcome_predictions``
+        rows that have an observed ``actual_success`` for the same
+        ``agent_role`` and a nearby ``complexity_score``. Fall back to
+        the caller-supplied ``historical_success_rate`` and finally to a
+        neutral 0.5 when there's insufficient history -- and flag the
+        response as uncalibrated so callers can treat it as a heuristic.
         """
         complexity_score = max(1, min(10, complexity_score))
 
-        # Base prediction via logistic function
-        z = 0.5 * complexity_score - 3
-        base_p = 1.0 / (1.0 + math.exp(z))
+        rows = await self._db.execute_fetchall(
+            "SELECT actual_success FROM outcome_predictions "
+            "WHERE agent_role = ? "
+            "AND complexity_score BETWEEN ? AND ? "
+            "AND actual_success IS NOT NULL",
+            (agent_role, complexity_score - 1, complexity_score + 1),
+        )
+        sample_count = len(rows)
+        calibrated = sample_count >= self._MIN_CALIBRATION_SAMPLES
 
-        if historical_success_rate is not None:
-            historical_success_rate = clamp(historical_success_rate)
-            # Blend: 60% model, 40% historical
-            predicted = 0.6 * base_p + 0.4 * historical_success_rate
+        if calibrated:
+            empirical = sum(int(r["actual_success"]) for r in rows) / sample_count
+            if historical_success_rate is not None:
+                historical_success_rate = clamp(historical_success_rate)
+                # Weight empirical by sample_count against a fixed prior weight
+                # of 4 on the caller-supplied historical rate -- this is a
+                # standard Bayesian shrinkage toward the prior when evidence
+                # is thin.
+                predicted = (
+                    sample_count * empirical + 4.0 * historical_success_rate
+                ) / (sample_count + 4.0)
+            else:
+                predicted = empirical
+        elif historical_success_rate is not None:
+            predicted = clamp(historical_success_rate)
+            historical_success_rate = predicted
         else:
-            predicted = base_p
+            predicted = 0.5  # neutral prior -- admitted as uncalibrated
 
         predicted = round(clamp(predicted), 4)
 
@@ -549,6 +577,8 @@ class TaskIntelligenceManager:
             "complexity_score": complexity_score,
             "agent_role": agent_role,
             "predicted_success": predicted,
+            "calibrated": calibrated,
+            "sample_count": sample_count,
             "created_at": now,
         }
 
