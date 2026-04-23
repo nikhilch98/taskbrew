@@ -1,8 +1,18 @@
-"""Dynamic tool selection based on task context."""
+"""Dynamic tool selection based on task context.
+
+Audit 09 F#1 note: this module historically exposed only ``select_tools``
+which returned a *recommended* tool list. Role-level tool allowlists
+declared in YAML (``role.tools``) were advisory — there was no programmatic
+``is_tool_allowed`` entrypoint, so no code path could actually refuse a
+tool call. ``is_tool_allowed`` is now the single source of truth for
+allowlist checks; the MCP tool dispatchers consult it via an environment
+variable contract when the parent orchestrator spawns them.
+"""
 
 from __future__ import annotations
 
 import logging
+from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -83,3 +93,39 @@ class ToolRouter:
     def get_role_tools(self, role: str) -> list[str]:
         """Return the tools specific to a role (sync, no DB)."""
         return ROLE_TOOLS.get(role, [])
+
+    @staticmethod
+    def is_tool_allowed(
+        allowed_tools: Iterable[str] | None,
+        tool_name: str,
+        *,
+        open_set_on_empty: bool = True,
+    ) -> bool:
+        """Return True iff *tool_name* is permitted by *allowed_tools*.
+
+        Parameters
+        ----------
+        allowed_tools:
+            The role's declared tool allowlist (role.tools from YAML, or a
+            pre-fetched set). ``None`` or empty iterable means "no allowlist
+            was configured."
+        tool_name:
+            The tool being invoked (e.g. ``"create_task"``, ``"Bash"``).
+        open_set_on_empty:
+            When True (default) and no allowlist was configured, permit every
+            tool -- preserves legacy behavior for un-configured roles.
+            Set False in policy-enforcement contexts to deny-by-default.
+
+        This is intentionally a pure function so callers can consult it from
+        any context (MCP dispatchers, subprocess spawn paths, dashboard)
+        without routing through a database.
+        """
+        if not tool_name or not isinstance(tool_name, str):
+            return False
+        if allowed_tools is None:
+            return bool(open_set_on_empty)
+        # Normalise to a set of non-empty strings.
+        normalized = {t for t in allowed_tools if isinstance(t, str) and t}
+        if not normalized:
+            return bool(open_set_on_empty)
+        return tool_name in normalized

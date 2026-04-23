@@ -59,8 +59,9 @@ services:
       # Dashboard / CORS
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8000,http://localhost:3000}
 
-      # Authentication
-      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      # Authentication — fail-closed by default. Unset the env var or
+      # set to "true" in production; "false" is for local dev only.
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
 
       # Python runtime
       - PYTHONUNBUFFERED=1          # flush stdout/stderr immediately

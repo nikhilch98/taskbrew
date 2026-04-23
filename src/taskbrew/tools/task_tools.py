@@ -16,6 +16,8 @@ import urllib.error
 
 from mcp.server.fastmcp import FastMCP
 
+from taskbrew.tools._tool_gating import gate_or_error
+
 
 def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
     mcp = FastMCP("task-tools")
@@ -75,6 +77,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             payload["parent_id"] = parent_id
         if blocked_by:
             payload["blocked_by"] = [t.strip() for t in blocked_by.split(",") if t.strip()]
+        denial = gate_or_error("create_task")
+        if denial:
+            return denial
         rf = requires_fanout.strip().lower()
         if rf in ("true", "1", "yes"):
             payload["requires_fanout"] = True
@@ -119,6 +124,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             assigned_to: Filter by assigned role (e.g. "verifier"). Leave empty for all roles.
             status: Filter by status: pending, in_progress, completed, blocked, failed. Default: pending.
         """
+        denial = gate_or_error("list_tasks")
+        if denial:
+            return denial
         params = []
         if group_id:
             params.append(f"group_id={group_id}")
@@ -166,6 +174,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             task_id: The ID of the task to complete (e.g. TSK-042).
             status: Final status — "completed" (default) or "failed".
         """
+        denial = gate_or_error("complete_task")
+        if denial:
+            return denial
         payload: dict = {"status": status}
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
@@ -201,6 +212,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             priority: New priority — critical, high, medium, or low. Leave empty to keep current.
             assigned_to: New assignee role. Leave empty to keep current.
         """
+        denial = gate_or_error("update_task")
+        if denial:
+            return denial
         payload: dict = {}
         if priority:
             payload["priority"] = priority
@@ -247,6 +261,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             content: Message content.
             priority: Message priority — normal (default), high, or urgent.
         """
+        denial = gate_or_error("send_message")
+        if denial:
+            return denial
         payload = {"from_agent": from_agent, "to_agent": to_agent, "content": content, "priority": priority}
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
@@ -278,6 +295,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             reason: Why you're escalating this task.
             severity: Escalation severity — low, medium (default), high, or critical.
         """
+        denial = gate_or_error("escalate_task")
+        if denial:
+            return denial
         payload = {"task_id": task_id, "from_agent": from_agent, "reason": reason, "severity": severity}
         data = json.dumps(payload).encode()
         req = urllib.request.Request(

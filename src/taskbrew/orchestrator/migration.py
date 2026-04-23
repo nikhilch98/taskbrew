@@ -1,11 +1,74 @@
-"""Simple database migration system."""
+"""Simple database migration system.
+
+Audit 04 F#1/F#2 fix notes
+--------------------------
+Migrations run inside a single explicit transaction that covers both the
+schema changes *and* the schema_migrations bookkeeping row. A crash or
+power loss between DDL and the bookkeeping insert therefore rolls back
+the DDL instead of leaving the DB wedged between versions.
+
+``ALTER TABLE ... ADD COLUMN`` statements are not natively idempotent in
+SQLite (no ``IF NOT EXISTS`` clause is accepted). We probe
+``PRAGMA table_info(<table>)`` first and skip the statement when the
+column already exists, so a retry of a partially-applied migration cannot
+crash with ``duplicate column name``.
+
+SQLite's ``busy_timeout`` (already set to 5000 ms by Database) combined
+with the transaction's implicit write lock serialises concurrent booting
+processes racing on the same migration.
+"""
 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# Match: ALTER TABLE <table> ADD [COLUMN] <column> ...
+# (case-insensitive; quoted and unquoted identifiers).
+_ADD_COLUMN_RE = re.compile(
+    r"^\s*ALTER\s+TABLE\s+([\w\"`]+)\s+ADD\s+(?:COLUMN\s+)?([\w\"`]+)\b",
+    re.IGNORECASE,
+)
+
+
+def _split_sql_statements(sql: str) -> list[str]:
+    """Split a SQL script into individual statements on ``;``.
+
+    Handles SQL line comments (``--``) that may contain semicolons.
+    Our migration scripts do not use string literals containing ``;``,
+    so this simple splitter is sufficient.
+    """
+    cleaned_lines = []
+    for line in sql.splitlines():
+        # Strip SQL line comments but preserve statements before them.
+        if "--" in line:
+            line = line.split("--", 1)[0]
+        cleaned_lines.append(line)
+    joined = "\n".join(cleaned_lines)
+    return [s.strip() for s in joined.split(";") if s.strip()]
+
+
+def _strip_ident(ident: str) -> str:
+    return ident.strip().strip('"').strip("`")
+
+
+async def _column_exists(conn, table: str, column: str) -> bool:
+    """Return True if *column* is already present on *table* (SQLite-specific)."""
+    # PRAGMA does not accept bound parameters; validate identifier shape
+    # before interpolation. All migration-defined tables match [\w]+.
+    safe_table = _strip_ident(table)
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", safe_table):
+        raise ValueError(f"Refusing to introspect non-identifier table name: {table!r}")
+    cursor = await conn.execute(f"PRAGMA table_info({safe_table})")
+    try:
+        rows = await cursor.fetchall()
+    finally:
+        await cursor.close()
+    target = _strip_ident(column).lower()
+    return any((row[1] or "").lower() == target for row in rows)
 
 
 # Define migrations as (version, name, sql) tuples.
@@ -1328,25 +1391,53 @@ class MigrationManager:
             return 0
 
     async def apply_pending(self) -> list[str]:
-        """Apply all pending migrations.
+        """Apply all pending migrations atomically and idempotently.
 
-        Returns
-        -------
-        list[str]
-            Names of the migrations that were applied.
+        For each pending migration we:
+
+        1. Open an explicit transaction on the shared connection.
+        2. Execute each statement in the migration SQL. ``ALTER TABLE ...
+           ADD COLUMN`` statements are guarded by a ``PRAGMA table_info``
+           probe and skipped when the column already exists, so
+           partially-applied migrations can be retried safely.
+        3. Insert the bookkeeping row into ``schema_migrations`` inside the
+           same transaction, then COMMIT. A crash or power loss at any
+           point before COMMIT rolls back the DDL, keeping the DB strictly
+           between two valid schema versions instead of wedging it mid-
+           migration.
         """
         current = await self.get_current_version()
         applied: list[str] = []
 
         for version, name, sql in MIGRATIONS:
-            if version > current:
-                logger.info("Applying migration %d: %s", version, name)
-                await self._db.executescript(sql)
-                await self._db.execute(
-                    "INSERT INTO schema_migrations (version, name, applied_at) "
-                    "VALUES (?, ?, ?)",
-                    (version, name, datetime.now(timezone.utc).isoformat()),
-                )
-                applied.append(name)
+            if version <= current:
+                continue
+            logger.info("Applying migration %d: %s", version, name)
+            await self._apply_one(version, name, sql)
+            applied.append(name)
 
         return applied
+
+    async def _apply_one(self, version: int, name: str, sql: str) -> None:
+        """Apply a single migration inside one transaction.
+
+        Idempotent on ALTER TABLE ADD COLUMN; transactional on everything.
+        """
+        statements = _split_sql_statements(sql)
+        async with self._db.transaction() as conn:
+            for stmt in statements:
+                m = _ADD_COLUMN_RE.match(stmt)
+                if m:
+                    table, column = m.group(1), m.group(2)
+                    if await _column_exists(conn, table, column):
+                        logger.debug(
+                            "migration %d: column %s.%s already present, skipping",
+                            version, _strip_ident(table), _strip_ident(column),
+                        )
+                        continue
+                await conn.execute(stmt)
+            await conn.execute(
+                "INSERT INTO schema_migrations (version, name, applied_at) "
+                "VALUES (?, ?, ?)",
+                (version, name, datetime.now(timezone.utc).isoformat()),
+            )

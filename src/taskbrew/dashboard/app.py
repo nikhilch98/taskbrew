@@ -96,50 +96,128 @@ def create_app(
         allow_headers=["Authorization", "Content-Type", "Accept"],
     )
 
+    # ------------------------------------------------------------------
+    # Auth dependency (env-var driven, fail-closed by default)
+    # audit 10 F#1/F#3/F#4: AUTH_ENABLED defaults to True in production.
+    # tests/conftest.py sets AUTH_ENABLED=false at import time to keep
+    # the existing test suite passing unchanged.
+    # ------------------------------------------------------------------
+    _auth_env = os.environ.get("AUTH_ENABLED")
+    if _auth_env is None:
+        _auth_enabled = True
+        _logger.warning(
+            "AUTH_ENABLED unset — defaulting to True (fail-closed). "
+            "Set AUTH_ENABLED=false explicitly for local development."
+        )
+    else:
+        _auth_enabled = _auth_env.lower() == "true"
+
+    _auth_manager = AuthManager(enabled=_auth_enabled)
+    if not _auth_enabled:
+        _logger.info(
+            "API authentication is disabled (AUTH_ENABLED=%s). Production "
+            "deployments should unset AUTH_ENABLED or set it to true.",
+            _auth_env,
+        )
+
     # Auth middleware
     tc = team_config
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        # Skip auth for pages, health, websocket, and static
-        _tc = tc
-        if not _tc and project_manager and project_manager.orchestrator:
-            _tc = project_manager.orchestrator.team_config
-        skip_paths = {"/", "/metrics", "/settings", "/api/health", "/docs", "/redoc", "/openapi.json"}
+        # Skip auth for pages, health, websocket, and static.
+        # WebSocket auth hardening is tracked in audit 10 F#4/F#7 and is
+        # deferred from this fix.
+        skip_paths = {
+            "/", "/metrics", "/settings", "/costs",
+            "/api/health", "/docs", "/redoc", "/openapi.json",
+        }
         if (
-            not _tc
-            or not _tc.auth_enabled
-            or request.url.path in skip_paths
+            request.url.path in skip_paths
             or request.url.path.startswith("/ws")
             or request.url.path.startswith("/static")
             or request.method == "OPTIONS"
         ):
             return await call_next(request)
 
+        # Resolve the active team_config (may arrive via project_manager).
+        _tc = tc
+        if not _tc and project_manager and project_manager.orchestrator:
+            _tc = project_manager.orchestrator.team_config
+
+        # FAIL-CLOSED POLICY (audit 10 F#3):
+        # The gate is "ANY of the configured auth surfaces demands a token".
+        # If the env-var AuthManager is enabled OR the team_config demands
+        # auth_enabled, we require a valid bearer. The previous code
+        # short-circuited to "no team_config -> pass-through", which was
+        # the dominant deployment path.
+        team_requires = bool(_tc and _tc.auth_enabled)
+        env_requires = bool(_auth_manager.enabled)
+        if not (team_requires or env_requires):
+            return await call_next(request)
+
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            return JSONResponse({"error": "Missing or invalid Authorization header"}, status_code=401)
-
+            return JSONResponse(
+                {"error": "Missing or invalid Authorization header"},
+                status_code=401,
+            )
         token = auth_header[7:]
-        if token not in (_tc.auth_tokens or []):
+        if not token:
+            return JSONResponse({"error": "Empty bearer token"}, status_code=401)
+
+        # Accept if EITHER the env-var AuthManager recognises the token OR
+        # it appears in team_config.auth_tokens. Using hmac.compare_digest
+        # below is a defense-in-depth vs. timing leaks.
+        env_ok = env_requires and _auth_manager.verify_token_string(token)
+        team_ok = False
+        if team_requires and _tc and _tc.auth_tokens:
+            import hmac as _hmac
+            # isinstance guard: YAML scalars that look like numbers are
+            # parsed as int by PyYAML unless quoted. hmac.compare_digest
+            # TypeErrors on mixed types, so silently skip non-string
+            # candidates. (Operators should quote tokens in team.yaml.)
+            team_ok = any(
+                isinstance(candidate, str)
+                and _hmac.compare_digest(token, candidate)
+                for candidate in _tc.auth_tokens
+            )
+        if not (env_ok or team_ok):
             return JSONResponse({"error": "Invalid token"}, status_code=401)
 
         return await call_next(request)
 
-    # ------------------------------------------------------------------
-    # Auth dependency (env-var driven, separate from team_config auth)
-    # ------------------------------------------------------------------
-    _auth_enabled = os.environ.get("AUTH_ENABLED", "false").lower() == "true"
-    _auth_manager = AuthManager(enabled=_auth_enabled)
-    if not _auth_enabled:
-        _logger.info("API authentication is disabled (set AUTH_ENABLED=true to enable)")
-
     async def verify_auth(request: Request):
-        """Optional auth dependency -- disabled by default for development."""
-        if not _auth_manager.enabled:
-            return  # Auth disabled
-        if not _auth_manager.verify(request):
-            raise HTTPException(status_code=401, detail="Invalid or missing token")
+        """Auth dependency that consults both env-var and team_config surfaces.
+
+        Fail-closed whenever either surface demands a bearer.
+        """
+        _tc = tc
+        if not _tc and project_manager and project_manager.orchestrator:
+            _tc = project_manager.orchestrator.team_config
+
+        team_requires = bool(_tc and _tc.auth_enabled)
+        env_requires = bool(_auth_manager.enabled)
+        if not (team_requires or env_requires):
+            return  # No auth surface demands a token
+
+        auth_header = request.headers.get("Authorization", "") if request else ""
+        token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+
+        if not token:
+            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+        env_ok = env_requires and _auth_manager.verify_token_string(token)
+        team_ok = False
+        if team_requires and _tc and _tc.auth_tokens:
+            import hmac as _hmac
+            team_ok = any(
+                isinstance(candidate, str)
+                and _hmac.compare_digest(token, candidate)
+                for candidate in _tc.auth_tokens
+            )
+        if not (env_ok or team_ok):
+            raise HTTPException(status_code=401, detail="Invalid token")
 
     async def verify_admin(request: Request):
         """Admin-only endpoint protection."""
@@ -265,8 +343,13 @@ def create_app(
         from taskbrew.dashboard.routers.interactions import set_interaction_deps
         from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
         interaction_mgr = InteractionManager(orch_obj.task_board._db)
-        set_interaction_deps(interaction_mgr)
-        set_mcp_deps(interaction_mgr, get_pipeline, orch_obj.task_board)
+        set_interaction_deps(interaction_mgr, verify_admin=verify_admin)
+        set_mcp_deps(
+            interaction_mgr,
+            get_pipeline,
+            orch_obj.task_board,
+            auth_manager=_auth_manager,
+        )
 
     # ------------------------------------------------------------------
     # Include routers
@@ -305,10 +388,28 @@ def create_app(
     app.include_router(collaboration_router, tags=["Collaboration"])
     app.include_router(usage_router, tags=["Usage"])
     app.include_router(presets_router.router, tags=["Presets"])
-    app.include_router(pipeline_editor_router, tags=["Pipeline Editor"])
+    # audit 11b F#1: admin routers get an explicit verify_admin dep at
+    # include time. This is belt-and-suspenders with the middleware gate
+    # above and hard-fails any unauthed mutation on these surfaces even
+    # if the middleware is ever disabled by future refactoring.
+    app.include_router(
+        pipeline_editor_router,
+        tags=["Pipeline Editor"],
+        dependencies=[Depends(verify_admin)],
+    )
     app.include_router(mcp_tools_router, tags=["MCP Tools"])
+    # interactions_router splits auth per-endpoint: the four POST routes
+    # (approve/reject/respond/skip) carry Depends(_verify_admin_dep)
+    # inline; the two GET polling routes stay open so UI polling does not
+    # require a token under default configuration. This was flipped from
+    # a blanket include-time dep after review identified the polling
+    # regression.
     app.include_router(interactions_router, tags=["Interactions"])
-    app.include_router(system_router.router, tags=["System"])
+    app.include_router(
+        system_router.router,
+        tags=["System"],
+        dependencies=[Depends(verify_admin)],
+    )
     app.include_router(ws_router.router)
 
     # ------------------------------------------------------------------

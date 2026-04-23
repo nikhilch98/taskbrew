@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import logging
 
+from taskbrew.tools._tool_gating import gate_or_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,6 +31,9 @@ def register_intelligence_tools(mcp_server, get_db):
     @mcp_server.tool()
     async def recall_memory(agent_role: str, query: str, memory_type: str = "", limit: int = 5) -> str:
         """Recall relevant memories for the current task context."""
+        denial = gate_or_error("recall_memory")
+        if denial:
+            return denial
         from taskbrew.intelligence.memory import MemoryManager
         db = get_db()
         mm = MemoryManager(db)
@@ -43,6 +48,9 @@ def register_intelligence_tools(mcp_server, get_db):
     @mcp_server.tool()
     async def store_lesson(agent_role: str, title: str, content: str, source_task_id: str = "") -> str:
         """Store a lesson learned from the current task."""
+        denial = gate_or_error("store_lesson")
+        if denial:
+            return denial
         from taskbrew.intelligence.memory import MemoryManager
         db = get_db()
         mm = MemoryManager(db)
@@ -60,6 +68,9 @@ def register_intelligence_tools(mcp_server, get_db):
 
         file_paths: comma-separated list of file paths
         """
+        denial = gate_or_error("check_impact")
+        if denial:
+            return denial
         from taskbrew.intelligence.impact import ImpactAnalyzer
         db = get_db()
         analyzer = ImpactAnalyzer(db)
@@ -73,6 +84,9 @@ def register_intelligence_tools(mcp_server, get_db):
     @mcp_server.tool()
     async def get_project_context(agent_role: str, query: str = "", project_id: str = "") -> str:
         """Get accumulated project knowledge for the current context."""
+        denial = gate_or_error("get_project_context")
+        if denial:
+            return denial
         from taskbrew.intelligence.memory import MemoryManager
         db = get_db()
         mm = MemoryManager(db)
@@ -86,6 +100,9 @@ def register_intelligence_tools(mcp_server, get_db):
     @mcp_server.tool()
     async def report_confidence(task_id: str, agent_role: str, output_text: str) -> str:
         """Analyze and report confidence level for the given output."""
+        denial = gate_or_error("report_confidence")
+        if denial:
+            return denial
         from taskbrew.intelligence.quality import QualityManager
         db = get_db()
         qm = QualityManager(db)
@@ -145,6 +162,9 @@ def build_intelligence_tools_server(db_path: str = "data/tasks.db"):
     @mcp.tool()
     async def recall_memory(agent_role: str, query: str, memory_type: str = "", limit: int = 5) -> str:
         """Recall relevant memories for the current task context."""
+        denial = gate_or_error("recall_memory")
+        if denial:
+            return denial
         from taskbrew.intelligence.memory import MemoryManager
         db = await _lazy.ensure_initialized()
         mm = MemoryManager(db)
@@ -159,6 +179,9 @@ def build_intelligence_tools_server(db_path: str = "data/tasks.db"):
     @mcp.tool()
     async def store_lesson(agent_role: str, title: str, content: str, source_task_id: str = "") -> str:
         """Store a lesson learned from the current task."""
+        denial = gate_or_error("store_lesson")
+        if denial:
+            return denial
         from taskbrew.intelligence.memory import MemoryManager
         db = await _lazy.ensure_initialized()
         mm = MemoryManager(db)
@@ -176,6 +199,9 @@ def build_intelligence_tools_server(db_path: str = "data/tasks.db"):
 
         file_paths: comma-separated list of file paths
         """
+        denial = gate_or_error("check_impact")
+        if denial:
+            return denial
         from taskbrew.intelligence.impact import ImpactAnalyzer
         db = await _lazy.ensure_initialized()
         analyzer = ImpactAnalyzer(db)
@@ -189,6 +215,9 @@ def build_intelligence_tools_server(db_path: str = "data/tasks.db"):
     @mcp.tool()
     async def get_project_context(agent_role: str, query: str = "", project_id: str = "") -> str:
         """Get accumulated project knowledge for the current context."""
+        denial = gate_or_error("get_project_context")
+        if denial:
+            return denial
         from taskbrew.intelligence.memory import MemoryManager
         db = await _lazy.ensure_initialized()
         mm = MemoryManager(db)
@@ -202,6 +231,9 @@ def build_intelligence_tools_server(db_path: str = "data/tasks.db"):
     @mcp.tool()
     async def report_confidence(task_id: str, agent_role: str, output_text: str) -> str:
         """Analyze and report confidence level for the given output."""
+        denial = gate_or_error("report_confidence")
+        if denial:
+            return denial
         from taskbrew.intelligence.quality import QualityManager
         db = await _lazy.ensure_initialized()
         qm = QualityManager(db)

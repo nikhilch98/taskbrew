@@ -31,6 +31,32 @@ from taskbrew.dashboard.routers._deps import get_orch, get_orch_optional, set_or
 
 router = APIRouter()
 
+# Role names are used to build YAML file paths under
+# <project_dir>/config/roles/, so any agent-controllable route
+# parameter must be strictly validated BEFORE it touches Path().
+_ROLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_MAX_ROLE_NAME_LEN = 64
+
+
+def _validated_role_yaml_path(project_dir: Path | str, role_name: str) -> Path:
+    """Return the YAML path for *role_name* after validating it is a
+    syntactically safe role name AND that the resolved path lives inside
+    <project_dir>/config/roles/. Raises HTTPException(400) on either failure.
+    """
+    if not role_name or len(role_name) > _MAX_ROLE_NAME_LEN or not _ROLE_NAME_PATTERN.match(role_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid role name: must be lowercase alphanumeric "
+                   "(underscores allowed, must start with a letter, max 64 chars)",
+        )
+    roles_dir = (Path(project_dir) / "config" / "roles").resolve()
+    candidate = (roles_dir / f"{role_name}.yaml").resolve()
+    # realpath containment: candidate MUST be a direct child of roles_dir.
+    if candidate.parent != roles_dir:
+        raise HTTPException(status_code=400, detail="Invalid role name")
+    return candidate
+
+
 # ------------------------------------------------------------------
 # Placeholders for auth dependencies -- set by app.py
 # ------------------------------------------------------------------
@@ -438,7 +464,7 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
 
     # Persist to YAML file
     if _project_dir:
-        yaml_path = Path(_project_dir) / "config" / "roles" / f"{role_name}.yaml"
+        yaml_path = _validated_role_yaml_path(_project_dir, role_name)
         if yaml_path.exists():
             with open(yaml_path) as f:
                 data = yaml.safe_load(f) or {}
@@ -480,11 +506,10 @@ async def create_role(body: CreateRoleBody):
     role_name = body.get("role", "").strip()
     if not role_name:
         raise HTTPException(status_code=400, detail="role name is required")
-    if not re.match(r"^[a-z][a-z0-9_]*$", role_name):
-        raise HTTPException(
-            status_code=400,
-            detail="Role name must be lowercase alphanumeric (underscores allowed, must start with a letter)",
-        )
+    # Validate early; also resolves the target YAML path for containment.
+    _validated_yaml_path_for_create = (
+        _validated_role_yaml_path(_project_dir, role_name) if _project_dir else None
+    )
     if _roles and role_name in _roles:
         raise HTTPException(status_code=409, detail=f"Role '{role_name}' already exists")
 
@@ -542,11 +567,10 @@ async def create_role(body: CreateRoleBody):
     if body.get("auto_scale"):
         yaml_data["auto_scale"] = body["auto_scale"]
 
-    # Write YAML file
-    if _project_dir:
-        roles_dir = Path(_project_dir) / "config" / "roles"
-        roles_dir.mkdir(parents=True, exist_ok=True)
-        yaml_path = roles_dir / f"{role_name}.yaml"
+    # Write YAML file (path was already validated above).
+    if _project_dir and _validated_yaml_path_for_create is not None:
+        yaml_path = _validated_yaml_path_for_create
+        yaml_path.parent.mkdir(parents=True, exist_ok=True)
         with open(yaml_path, "w") as f:
             yaml.dump(yaml_data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
@@ -568,7 +592,7 @@ async def delete_role(role_name: str):
 
     # Remove YAML file
     if _project_dir:
-        yaml_path = Path(_project_dir) / "config" / "roles" / f"{role_name}.yaml"
+        yaml_path = _validated_role_yaml_path(_project_dir, role_name)
         if yaml_path.exists():
             yaml_path.unlink()
 
@@ -586,8 +610,13 @@ async def delete_role(role_name: str):
             rt for rt in other_rc.routes_to if rt.role != role_name
         ]
         if len(other_rc.routes_to) < original_len and _project_dir:
-            # Persist the route cleanup to YAML
-            other_yaml = Path(_project_dir) / "config" / "roles" / f"{other_name}.yaml"
+            # Persist the route cleanup to YAML. other_name comes from the
+            # in-memory _roles dict keys (already validated at load time),
+            # but routing through the validator is defense-in-depth.
+            try:
+                other_yaml = _validated_role_yaml_path(_project_dir, other_name)
+            except HTTPException:
+                continue
             if other_yaml.exists():
                 with open(other_yaml) as f:
                     data = yaml.safe_load(f) or {}

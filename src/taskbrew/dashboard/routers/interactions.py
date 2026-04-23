@@ -1,8 +1,16 @@
-"""Dashboard endpoints for human interaction management -- approve, reject, respond."""
+"""Dashboard endpoints for human interaction management -- approve, reject, respond.
+
+Audit 03 F#12 / 10 F#33: the four POST endpoints (approve/reject/respond/skip)
+authorise destructive HITL decisions and MUST require admin auth. A blanket
+``dependencies=[Depends(verify_admin)]`` at include_router time was reviewed
+and rejected because it would also gate the two GET polling endpoints used
+by the dashboard UI, so the admin dep is attached per-endpoint below.
+"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from starlette.requests import Request
 
 from taskbrew.dashboard.models import (
     ApproveInteractionBody, RejectInteractionBody, RespondInteractionBody,
@@ -11,11 +19,29 @@ from taskbrew.dashboard.models import (
 router = APIRouter()
 
 _interaction_mgr = None
+_verify_admin = None
 
 
-def set_interaction_deps(interaction_mgr):
-    global _interaction_mgr
+def set_interaction_deps(interaction_mgr, verify_admin=None):
+    """Called by app.py to inject deps.
+
+    *verify_admin* is the admin-auth callable (same one passed to
+    system_router.set_auth_deps). When omitted (legacy/test shim), the
+    per-endpoint admin check becomes a no-op and the middleware is the
+    only gate.
+    """
+    global _interaction_mgr, _verify_admin
     _interaction_mgr = interaction_mgr
+    _verify_admin = verify_admin
+
+
+async def _verify_admin_dep(request: Request):
+    """Indirection so ``Depends(_verify_admin_dep)`` can reference the
+    injected callable at request time instead of module-load time.
+    """
+    if _verify_admin is None:
+        return  # legacy/test path
+    await _verify_admin(request)
 
 
 @router.get("/api/interactions/pending")
@@ -34,7 +60,10 @@ async def get_history(limit: int = Query(50)):
     return {"interactions": history, "count": len(history)}
 
 
-@router.post("/api/interactions/{request_id}/approve")
+@router.post(
+    "/api/interactions/{request_id}/approve",
+    dependencies=[Depends(_verify_admin_dep)],
+)
 async def approve_interaction(request_id: str, body: ApproveInteractionBody = None):
     if not _interaction_mgr:
         raise HTTPException(500, "Not configured")
@@ -57,7 +86,10 @@ async def approve_interaction(request_id: str, body: ApproveInteractionBody = No
     return result
 
 
-@router.post("/api/interactions/{request_id}/reject")
+@router.post(
+    "/api/interactions/{request_id}/reject",
+    dependencies=[Depends(_verify_admin_dep)],
+)
 async def reject_interaction(request_id: str, body: RejectInteractionBody):
     if not _interaction_mgr:
         raise HTTPException(500, "Not configured")
@@ -71,7 +103,10 @@ async def reject_interaction(request_id: str, body: RejectInteractionBody):
     return result
 
 
-@router.post("/api/interactions/{request_id}/respond")
+@router.post(
+    "/api/interactions/{request_id}/respond",
+    dependencies=[Depends(_verify_admin_dep)],
+)
 async def respond_interaction(request_id: str, body: RespondInteractionBody):
     if not _interaction_mgr:
         raise HTTPException(500, "Not configured")
@@ -85,7 +120,10 @@ async def respond_interaction(request_id: str, body: RespondInteractionBody):
     return result
 
 
-@router.post("/api/interactions/{request_id}/skip")
+@router.post(
+    "/api/interactions/{request_id}/skip",
+    dependencies=[Depends(_verify_admin_dep)],
+)
 async def skip_interaction(request_id: str):
     if not _interaction_mgr:
         raise HTTPException(500, "Not configured")

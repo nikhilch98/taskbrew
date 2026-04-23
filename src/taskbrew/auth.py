@@ -177,6 +177,21 @@ class AuthManager:
     # Public API
     # ------------------------------------------------------------------
 
+    def verify_token_string(self, token: str | None) -> bool:
+        """Return True iff *token* is a valid bearer token.
+
+        Used by contexts that have already extracted the token from a
+        carrier (e.g. an ``Authorization: Bearer ...`` header on an MCP
+        endpoint) and do not have a Starlette ``Request`` to pass to
+        :meth:`verify`. When authentication is disabled this always
+        returns True.
+        """
+        if not self.enabled:
+            return True
+        if not token or not isinstance(token, str):
+            return False
+        return self._hash_token(token) in self._tokens
+
     def verify(self, request: Request) -> bool:
         """Return ``True`` if the request carries a valid bearer token.
 
