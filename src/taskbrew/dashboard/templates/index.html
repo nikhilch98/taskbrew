@@ -9876,6 +9876,10 @@
             fetchSecurityFlags();
         }
 
+        // audit 13 F#1 / top-15 #15: safe-by-default cell rendering.
+        // Mirrors the implementation in static/js/intelligence.js; the
+        // duplicate exists because this template ships its own inline
+        // copies. See the canonical version for the design rationale.
         function v2SeverityBadge(severity) {
             var s = (severity || 'info').toLowerCase();
             var cls = 'v2-severity-info';
@@ -9883,7 +9887,16 @@
             else if (s === 'high') cls = 'v2-severity-high';
             else if (s === 'medium') cls = 'v2-severity-medium';
             else if (s === 'low') cls = 'v2-severity-low';
-            return '<span class="v2-severity-badge ' + cls + '">' + escapeHtml(severity || 'info') + '</span>';
+            return {html: '<span class="v2-severity-badge ' + cls + '">' + escapeHtml(severity || 'info') + '</span>'};
+        }
+
+        function _v2SafeCell(cell) {
+            if (cell === null || cell === undefined) return '';
+            if (typeof cell === 'object' && cell !== null && typeof cell.html === 'string') {
+                return cell.html;
+            }
+            var s = (typeof cell === 'string') ? cell : String(cell);
+            return s.indexOf('<') === -1 ? s : escapeHtml(s);
         }
 
         function v2RenderTable(headers, rows) {
@@ -9893,7 +9906,7 @@
             html += '</tr></thead><tbody>';
             rows.forEach(function(row) {
                 html += '<tr>';
-                row.forEach(function(cell) { html += '<td>' + cell + '</td>'; });
+                row.forEach(function(cell) { html += '<td>' + _v2SafeCell(cell) + '</td>'; });
                 html += '</tr>';
             });
             html += '</tbody></table>';
