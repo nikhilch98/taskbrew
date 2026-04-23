@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from taskbrew.intelligence._utils import safe_read_text, validate_path
+
 logger = logging.getLogger(__name__)
 
 # Checklist templates by task type
@@ -145,12 +147,23 @@ class TestingQualityManager:
     async def generate_test_skeletons(self, source_file: str) -> list[dict]:
         """Parse a Python file and generate test skeleton strings for each function."""
         await self._ensure_tables()
+        # audit 08b F#3: confine caller-supplied paths to the
+        # project root so absolute or traversal inputs can't read
+        # /etc/passwd etc. safe_read_text refuses symlinks and caps
+        # the read at 2 MiB.
+        try:
+            source_file = validate_path(source_file)
+        except (ValueError, OSError) as exc:
+            logger.warning("Rejecting source_file %r: %s", source_file, exc)
+            return []
         full_path = os.path.join(self._project_dir, source_file)
 
         try:
-            with open(full_path) as f:
-                tree = ast.parse(f.read())
-        except (FileNotFoundError, SyntaxError) as exc:
+            source = safe_read_text(full_path)
+            if not source:
+                return []
+            tree = ast.parse(source)
+        except (SyntaxError,) as exc:
             logger.warning("Cannot parse %s: %s", source_file, exc)
             return []
 
@@ -216,13 +229,20 @@ class TestingQualityManager:
         kill rate.
         """
         await self._ensure_tables()
+        # audit 08b F#3: confine to project root.
+        try:
+            file_path = validate_path(file_path)
+        except (ValueError, OSError) as exc:
+            logger.warning("Rejecting file_path %r: %s", file_path, exc)
+            return {"error": "invalid path"}
         full_path = os.path.join(self._project_dir, file_path)
 
         try:
-            with open(full_path) as f:
-                source = f.read()
+            source = safe_read_text(full_path)
+            if not source:
+                return {"error": "empty or unreadable"}
             tree = ast.parse(source)
-        except (FileNotFoundError, SyntaxError) as exc:
+        except (SyntaxError,) as exc:
             logger.warning("Cannot parse %s for mutation analysis: %s", file_path, exc)
             return {"error": str(exc)}
 
@@ -303,12 +323,20 @@ class TestingQualityManager:
 
     async def suggest_property_tests(self, source_file: str) -> list[dict]:
         """Identify pure functions and suggest property-based tests for them."""
+        # audit 08b F#3: confine to project root.
+        try:
+            source_file = validate_path(source_file)
+        except (ValueError, OSError) as exc:
+            logger.warning("Rejecting source_file %r: %s", source_file, exc)
+            return []
         full_path = os.path.join(self._project_dir, source_file)
 
         try:
-            with open(full_path) as f:
-                tree = ast.parse(f.read())
-        except (FileNotFoundError, SyntaxError) as exc:
+            source = safe_read_text(full_path)
+            if not source:
+                return []
+            tree = ast.parse(source)
+        except (SyntaxError,) as exc:
             logger.warning("Cannot parse %s: %s", source_file, exc)
             return []
 
@@ -365,14 +393,22 @@ class TestingQualityManager:
 
         for f in files_changed:
             # +0.2 per file with >500 lines
-            full_path = os.path.join(self._project_dir, f)
+            # audit 08b F#3: each entry in files_changed is caller-
+            # supplied and must be confined to the project root.
             try:
-                with open(full_path) as fh:
-                    line_count = len(fh.readlines())
-                if line_count > self.RISK_LINE_COUNT_THRESHOLD:
-                    risk_score += 0.2
-                    risk_factors.append(f"{f} has {line_count} lines (>{self.RISK_LINE_COUNT_THRESHOLD})")
-            except (FileNotFoundError, OSError) as exc:
+                validated_f = validate_path(f)
+            except (ValueError, OSError) as exc:
+                logger.warning("Skipping invalid path %r in files_changed: %s", f, exc)
+                continue
+            full_path = os.path.join(self._project_dir, validated_f)
+            try:
+                source = safe_read_text(full_path)
+                if source:
+                    line_count = source.count("\n") + 1
+                    if line_count > self.RISK_LINE_COUNT_THRESHOLD:
+                        risk_score += 0.2
+                        risk_factors.append(f"{f} has {line_count} lines (>{self.RISK_LINE_COUNT_THRESHOLD})")
+            except OSError as exc:
                 logger.warning("Cannot read %s for regression risk analysis: %s", f, exc)
 
             # +0.2 per file touching __init__ or main
