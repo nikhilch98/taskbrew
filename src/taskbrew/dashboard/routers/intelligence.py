@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from taskbrew.dashboard.models import (
     AssessRiskBody,
@@ -332,29 +332,53 @@ async def get_role_gaps():
 
 
 @router.get("/api/messages/{agent_id}")
-async def get_agent_messages(agent_id: str, unread_only: bool = True):
+async def get_agent_messages(
+    agent_id: str,
+    unread_only: bool = True,
+    limit: int = Query(50, ge=1, le=200),
+):
+    """audit 12a F#11: expose the LIMIT instead of hardcoding 50 on
+    the sibling branch. audit 12a F#2: cap at 200."""
     orch = get_orch()
     if unread_only:
         return await orch.task_board._db.execute_fetchall(
-            "SELECT * FROM agent_messages WHERE to_agent = ? AND read = 0 ORDER BY created_at DESC",
-            (agent_id,)
+            "SELECT * FROM agent_messages WHERE to_agent = ? AND read = 0 "
+            "ORDER BY created_at DESC LIMIT ?",
+            (agent_id, limit),
         )
     return await orch.task_board._db.execute_fetchall(
-        "SELECT * FROM agent_messages WHERE to_agent = ? OR from_agent = ? ORDER BY created_at DESC LIMIT 50",
-        (agent_id, agent_id)
+        "SELECT * FROM agent_messages WHERE to_agent = ? OR from_agent = ? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (agent_id, agent_id, limit),
     )
 
 
 @router.get("/api/messages")
-async def get_messages(agent_id: str = "", unread_only: bool = True, limit: int = 20):
+async def get_messages(
+    agent_id: str = "",
+    unread_only: bool = True,
+    limit: int = Query(20, ge=1, le=200),
+):
+    """audit 12a F#10: split into explicit branches per unread_only so
+    the truth table is obvious; the compact ``(? = 0 OR read = 0)``
+    form technically worked but was a readability land-mine that
+    would silently flip on a future edit."""
     orch = get_orch()
     if not agent_id:
         return await orch.task_board._db.execute_fetchall(
-            "SELECT * FROM agent_messages ORDER BY created_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM agent_messages ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+    if unread_only:
+        return await orch.task_board._db.execute_fetchall(
+            "SELECT * FROM agent_messages WHERE to_agent = ? AND read = 0 "
+            "ORDER BY created_at DESC LIMIT ?",
+            (agent_id, limit),
         )
     return await orch.task_board._db.execute_fetchall(
-        "SELECT * FROM agent_messages WHERE to_agent = ? AND (? = 0 OR read = 0) ORDER BY created_at DESC LIMIT ?",
-        (agent_id, 0 if not unread_only else 1, limit),
+        "SELECT * FROM agent_messages WHERE to_agent = ? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (agent_id, limit),
     )
 
 
