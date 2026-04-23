@@ -38,6 +38,47 @@ _ROLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _MAX_ROLE_NAME_LEN = 64
 
 
+def _atomic_yaml_dump(path: Path, data: dict) -> None:
+    """Write *data* as YAML to *path* using write-to-temp + os.replace.
+
+    audit 11b F#5: the previous pattern was ``open(path, "w")`` which
+    truncates immediately. A crash mid-write left an empty / partial
+    YAML file; if the YAML was team.yaml or a role's config, the next
+    boot refused to load. os.replace is atomic on POSIX and Windows
+    (Python 3.3+) and the tempfile is fsync'd before the rename.
+    """
+    import os
+    import tempfile
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name + ".",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.dump(
+                data, f,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+            )
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 def _validated_role_yaml_path(project_dir: Path | str, role_name: str) -> Path:
     """Return the YAML path for *role_name* after validating it is a
     syntactically safe role name AND that the resolved path lives inside
@@ -312,8 +353,7 @@ async def update_team_settings(body: UpdateTeamSettingsBody):
                 wh = data.setdefault("webhooks", {})
                 wh["enabled"] = body["webhooks_enabled"]
 
-            with open(yaml_path, "w") as f:
-                yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            _atomic_yaml_dump(yaml_path, data)
 
     return {"status": "ok"}
 
@@ -491,8 +531,7 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
             if "auto_scale" in body:
                 data["auto_scale"] = body["auto_scale"]
 
-            with open(yaml_path, "w") as f:
-                yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            _atomic_yaml_dump(yaml_path, data)
 
     return {"status": "ok", "role": role_name}
 
@@ -570,9 +609,7 @@ async def create_role(body: CreateRoleBody):
     # Write YAML file (path was already validated above).
     if _project_dir and _validated_yaml_path_for_create is not None:
         yaml_path = _validated_yaml_path_for_create
-        yaml_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(yaml_path, "w") as f:
-            yaml.dump(yaml_data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        _atomic_yaml_dump(yaml_path, yaml_data)
 
     # Parse and register in memory
     rc = _parse_role(yaml_data)
@@ -624,8 +661,7 @@ async def delete_role(role_name: str):
                     {"role": rt.role, "task_types": rt.task_types}
                     for rt in other_rc.routes_to
                 ]
-                with open(other_yaml, "w") as f:
-                    yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                _atomic_yaml_dump(other_yaml, data)
 
     # Clean up pipeline edges referencing deleted role
     from taskbrew.dashboard.routers.pipeline_editor import _cleanup_role_from_pipeline
@@ -792,6 +828,14 @@ async def create_webhook(body: CreateWebhookBody):
     events = body.events
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
+    # audit 11b F#11: reuse the SSRF-aware validator from WebhookManager.
+    # This checks scheme, literal-IP bans, blocked hostnames, and
+    # rejects hostnames that resolve to private/reserved ranges.
+    from taskbrew.orchestrator.webhook_manager import WebhookManager
+    try:
+        WebhookManager(orch.task_board._db)._validate_url(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     await orch.task_board._db.execute(
         "INSERT INTO webhooks (id, url, events, secret, created_at) VALUES (?, ?, ?, ?, ?)",
         (webhook_id, url, ",".join(events), body.secret, now)
