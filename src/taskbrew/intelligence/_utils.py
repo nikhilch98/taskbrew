@@ -20,6 +20,17 @@ def new_id(length: int = 12) -> str:
     return uuid.uuid4().hex[:length]
 
 
+def escape_like(s: str) -> str:
+    """Backslash-escape SQL LIKE meta-characters so user input can't widen a query.
+
+    audit 07b F#5: six intel modules pass user keywords into
+    ``f\"%{kw}%\"`` + LIKE. Without escaping, a keyword of ``%`` or
+    ``_`` matches every row. Callers must combine this with an
+    ``ESCAPE '\\'`` clause in the SQL itself.
+    """
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def validate_path(
     path: str,
     *,

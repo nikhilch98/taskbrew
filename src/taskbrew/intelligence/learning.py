@@ -417,9 +417,14 @@ class LearningManager:
         return clusters
 
     async def get_prevention_hints(self, error_pattern: str) -> list[dict]:
-        """Get prevention hints matching an error pattern."""
+        """Get prevention hints matching an error pattern.
+
+        audit 07b F#5: escape LIKE wildcards.
+        """
+        from taskbrew.intelligence._utils import escape_like
+        esc = escape_like(error_pattern)
         return await self._db.execute_fetchall(
             "SELECT cluster_name, prevention_hint, occurrence_count FROM error_clusters "
-            "WHERE error_pattern LIKE ?",
-            (f"%{error_pattern}%",),
+            "WHERE error_pattern LIKE ? ESCAPE '\\'",
+            (f"%{esc}%",),
         )

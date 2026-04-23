@@ -468,14 +468,17 @@ class SelfImprovementManager:
         self, task_description: str, limit: int = 5
     ) -> list[dict]:
         """Find reflections by keyword search on lessons."""
-        # Extract significant words (>3 chars) from description for LIKE matching
+        # audit 07b F#5/F#13: split on whitespace, cap at 10, escape
+        # LIKE meta-characters so a token of ``%`` can't match every
+        # reflection. Pair each clause with an ``ESCAPE '\\'``.
+        from taskbrew.intelligence._utils import escape_like
         words = [w for w in task_description.split() if len(w) > 3]
         if not words:
             return []
 
-        # Build OR conditions for keyword matching
-        conditions = " OR ".join(["lessons LIKE ?" for _ in words])
-        params = tuple(f"%{w}%" for w in words[:10])  # Cap at 10 keywords
+        words = words[:10]
+        conditions = " OR ".join(["lessons LIKE ? ESCAPE '\\'" for _ in words])
+        params = tuple(f"%{escape_like(w)}%" for w in words)
         return await self._db.execute_fetchall(
             f"SELECT * FROM task_reflections WHERE {conditions} "
             f"ORDER BY created_at DESC LIMIT ?",
