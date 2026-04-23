@@ -7,7 +7,7 @@ import logging
 import re
 from collections import deque
 
-from taskbrew.intelligence._utils import utcnow, new_id, validate_path, clamp
+from taskbrew.intelligence._utils import utcnow, new_id, validate_path, clamp, safe_read_text
 
 logger = logging.getLogger(__name__)
 
@@ -791,7 +791,10 @@ class CodeReasoningManager:
         from pathlib import Path
         full_path = Path(self._project_dir) / file_path
         try:
-            content = full_path.read_text(errors="replace")
+            content = safe_read_text(full_path)
+            # audit 07a F#1: safe_read_text returns "" on symlink /
+            # size-over-cap / OSError. An empty content simply yields
+            # no dependency edges.
         except OSError:
             # Cannot read file: all invariants are potentially violated
             return [

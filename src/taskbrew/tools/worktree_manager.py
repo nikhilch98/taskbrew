@@ -46,6 +46,13 @@ class WorktreeManager:
         # descendant of this resolved path.
         self._worktree_base_resolved: Path | None = None
         self._worktrees: dict[str, str] = {}  # agent_name -> worktree path
+        # audit 05 F#6: serialise mutations to the worktree base so two
+        # coroutines racing to create or cleanup for different agents
+        # cannot corrupt each other's state (or the shared
+        # ``git worktree list`` metadata) mid-operation. A single
+        # module-scope lock is enough -- worktree ops are not hot enough
+        # to warrant per-agent locks.
+        self._create_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Path-safety helpers
@@ -220,6 +227,11 @@ class WorktreeManager:
     async def create_worktree(self, agent_name: str, branch_name: str) -> str:
         """Create a git worktree for an agent. Returns the worktree path.
 
+        audit 05 F#6: serialised behind ``self._create_lock`` so two
+        concurrent claimers for the same agent_name (or two agents
+        racing on the same branch) cannot interleave the
+        check-stale / run-git / record-in-dict steps.
+
         Handles edge-cases from previous crashes:
         * If the worktree directory already exists it is force-removed first.
         * If the branch already exists the worktree checks it out instead of
@@ -227,6 +239,10 @@ class WorktreeManager:
         * If the branch is checked out in a stale worktree belonging to a
           different agent, that stale worktree is removed first.
         """
+        async with self._create_lock:
+            return await self._create_worktree_locked(agent_name, branch_name)
+
+    async def _create_worktree_locked(self, agent_name: str, branch_name: str) -> str:
         worktree_path_obj = self._safe_worktree_path(agent_name)
         worktree_path = str(worktree_path_obj)
 
@@ -266,18 +282,23 @@ class WorktreeManager:
         return worktree_path
 
     async def cleanup_worktree(self, agent_name: str) -> None:
-        """Remove an agent's worktree (keeps the branch and its commits)."""
-        path = self._worktrees.pop(agent_name, None)
-        if not path:
-            return
-        try:
-            await self._run_git("worktree", "remove", path, "--force")
-        except RuntimeError:
-            self._safe_rmtree(path)
+        """Remove an agent's worktree (keeps the branch and its commits).
+
+        Shares ``_create_lock`` with create_worktree so cleanup cannot
+        race against an in-flight create for the same agent.
+        """
+        async with self._create_lock:
+            path = self._worktrees.pop(agent_name, None)
+            if not path:
+                return
             try:
-                await self._run_git("worktree", "prune")
+                await self._run_git("worktree", "remove", path, "--force")
             except RuntimeError:
-                pass
+                self._safe_rmtree(path)
+                try:
+                    await self._run_git("worktree", "prune")
+                except RuntimeError:
+                    pass
 
     async def list_worktrees(self) -> list[dict]:
         """List all managed worktrees."""

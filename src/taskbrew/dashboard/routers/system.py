@@ -824,7 +824,9 @@ async def create_webhook(body: CreateWebhookBody):
     import uuid
     webhook_id = str(uuid.uuid4())[:8]
     now = datetime.now(timezone.utc).isoformat()
-    url = body.url
+    # pydantic HttpUrl stringifies to the canonical URL form; callers
+    # (DB, WebhookManager._validate_url) expect a plain str.
+    url = str(body.url) if body.url else ""
     events = body.events
     if not url:
         raise HTTPException(status_code=400, detail="url is required")

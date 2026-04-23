@@ -75,6 +75,7 @@ class AgentLoop:
         observability_manager=None,
         cli_provider: str = "claude",
         mcp_servers: dict | None = None,
+        preflight_checker=None,
     ) -> None:
         self.instance_id = instance_id
         self.role_config = role_config
@@ -88,6 +89,12 @@ class AgentLoop:
         self.api_url = api_url
         self.worktree_manager = worktree_manager
         self.memory_manager = memory_manager
+        # audit 06b F#12: PreflightChecker previously ran only from the
+        # dashboard API (a human-triggered path). If supplied, we run it
+        # between claim and execute; failures are logged and the task is
+        # returned to the board rather than silently executed under
+        # failing preconditions.
+        self.preflight_checker = preflight_checker
         self.context_registry = context_registry
         self._commit_planner = commit_planner
         self._debugging_helper = debugging_helper
@@ -742,6 +749,45 @@ class AgentLoop:
                 "correlation_id": correlation_id,
             },
         )
+
+        # audit 06b F#12: run preflight before execute. On failure we
+        # fail the task with a clear reason rather than let it proceed
+        # under a blown budget / missing dependency / etc. Exceptions
+        # from the checker itself are logged and treated as pass
+        # (fail-open on checker bugs so a flaky checker does not block
+        # the whole fleet).
+        if self.preflight_checker is not None:
+            try:
+                result = await self.preflight_checker.run_checks(
+                    task, self.role_config.role,
+                )
+            except Exception:
+                task_logger.warning(
+                    "preflight_checker raised for task %s; treating as pass",
+                    task["id"], exc_info=True,
+                )
+                result = {"passed": True}
+            if not result.get("passed", True):
+                task_logger.warning(
+                    "Task %s blocked by preflight: %s",
+                    task["id"], result.get("checks", result),
+                )
+                await self.board.fail_task(task["id"])
+                await self.event_bus.emit(
+                    "task.failed",
+                    {
+                        "task_id": task["id"],
+                        "instance_id": self.instance_id,
+                        "reason": "preflight_failed",
+                        "details": result,
+                        "model": self.role_config.model,
+                        "correlation_id": correlation_id,
+                    },
+                )
+                await self.instance_manager.update_status(
+                    self.instance_id, "idle", current_task=None,
+                )
+                return True
 
         # Create worktree ONCE, outside the retry loop
         worktree_path: str | None = None
