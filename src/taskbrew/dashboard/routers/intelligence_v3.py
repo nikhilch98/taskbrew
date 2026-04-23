@@ -453,6 +453,14 @@ def _validate_path(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 _init_lock = asyncio.Lock()
+# audit 12b F#7: module-level init flags didn't reset on orchestrator
+# swap, so set_orchestrator() to a new DB kept the flag True and new
+# tables were never created. Scope the ensure state to the manager
+# instance via a WeakSet -- same fix as intelligence_v2.
+import weakref as _weakref
+_ensured_managers_v3: "_weakref.WeakSet[object]" = _weakref.WeakSet()
+
+# Legacy booleans kept for fixtures that poke them directly.
 _self_improvement_init = False
 _social_intel_init = False
 _code_reasoning_init = False
@@ -463,16 +471,27 @@ _knowledge_init = False
 _compliance_init = False
 
 
+async def _ensure_once_v3(mgr) -> None:
+    try:
+        if mgr in _ensured_managers_v3:
+            return
+    except TypeError:
+        await mgr.ensure_tables()
+        return
+    async with _init_lock:
+        if mgr in _ensured_managers_v3:
+            return
+        await mgr.ensure_tables()
+        _ensured_managers_v3.add(mgr)
+
+
 async def _ensure_self_improvement():
     global _self_improvement_init
     orch = get_orch()
     if not orch.self_improvement_manager:
         raise HTTPException(503, "Self-improvement manager not initialized")
-    if not _self_improvement_init:
-        async with _init_lock:
-            if not _self_improvement_init:
-                await orch.self_improvement_manager.ensure_tables()
-                _self_improvement_init = True
+    await _ensure_once_v3(orch.self_improvement_manager)
+    _self_improvement_init = True
     return orch.self_improvement_manager
 
 
@@ -481,11 +500,8 @@ async def _ensure_social_intel():
     orch = get_orch()
     if not orch.social_intelligence_manager:
         raise HTTPException(503, "Social intelligence manager not initialized")
-    if not _social_intel_init:
-        async with _init_lock:
-            if not _social_intel_init:
-                await orch.social_intelligence_manager.ensure_tables()
-                _social_intel_init = True
+    await _ensure_once_v3(orch.social_intelligence_manager)
+    _social_intel_init = True
     return orch.social_intelligence_manager
 
 
@@ -494,11 +510,8 @@ async def _ensure_code_reasoning():
     orch = get_orch()
     if not orch.code_reasoning_manager:
         raise HTTPException(503, "Code reasoning manager not initialized")
-    if not _code_reasoning_init:
-        async with _init_lock:
-            if not _code_reasoning_init:
-                await orch.code_reasoning_manager.ensure_tables()
-                _code_reasoning_init = True
+    await _ensure_once_v3(orch.code_reasoning_manager)
+    _code_reasoning_init = True
     return orch.code_reasoning_manager
 
 
@@ -507,11 +520,8 @@ async def _ensure_task_intel():
     orch = get_orch()
     if not orch.task_intelligence_manager:
         raise HTTPException(503, "Task intelligence manager not initialized")
-    if not _task_intel_init:
-        async with _init_lock:
-            if not _task_intel_init:
-                await orch.task_intelligence_manager.ensure_tables()
-                _task_intel_init = True
+    await _ensure_once_v3(orch.task_intelligence_manager)
+    _task_intel_init = True
     return orch.task_intelligence_manager
 
 
@@ -520,11 +530,8 @@ async def _ensure_verification():
     orch = get_orch()
     if not orch.verification_manager:
         raise HTTPException(503, "Verification manager not initialized")
-    if not _verification_init:
-        async with _init_lock:
-            if not _verification_init:
-                await orch.verification_manager.ensure_tables()
-                _verification_init = True
+    await _ensure_once_v3(orch.verification_manager)
+    _verification_init = True
     return orch.verification_manager
 
 
@@ -533,11 +540,8 @@ async def _ensure_process_intel():
     orch = get_orch()
     if not orch.process_intelligence_manager:
         raise HTTPException(503, "Process intelligence manager not initialized")
-    if not _process_intel_init:
-        async with _init_lock:
-            if not _process_intel_init:
-                await orch.process_intelligence_manager.ensure_tables()
-                _process_intel_init = True
+    await _ensure_once_v3(orch.process_intelligence_manager)
+    _process_intel_init = True
     return orch.process_intelligence_manager
 
 
@@ -546,11 +550,8 @@ async def _ensure_knowledge():
     orch = get_orch()
     if not orch.knowledge_manager:
         raise HTTPException(503, "Knowledge management manager not initialized")
-    if not _knowledge_init:
-        async with _init_lock:
-            if not _knowledge_init:
-                await orch.knowledge_manager.ensure_tables()
-                _knowledge_init = True
+    await _ensure_once_v3(orch.knowledge_manager)
+    _knowledge_init = True
     return orch.knowledge_manager
 
 
@@ -559,11 +560,8 @@ async def _ensure_compliance():
     orch = get_orch()
     if not orch.compliance_manager:
         raise HTTPException(503, "Compliance manager not initialized")
-    if not _compliance_init:
-        async with _init_lock:
-            if not _compliance_init:
-                await orch.compliance_manager.ensure_tables()
-                _compliance_init = True
+    await _ensure_once_v3(orch.compliance_manager)
+    _compliance_init = True
     return orch.compliance_manager
 
 
