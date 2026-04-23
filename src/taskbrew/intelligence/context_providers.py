@@ -77,7 +77,14 @@ class ContextProviderRegistry:
 
 
 class GitHistoryProvider:
-    """Feature 25: Recent git history context."""
+    """Feature 25: Recent git history context.
+
+    audit 09 F#3: previous implementation swallowed EVERY exception
+    and returned "", making "empty history" indistinguishable from
+    "git binary missing" / "timeout" / "permission error". Now we
+    narrow the except clause and emit a WARNING log with the
+    specific failure so operators can tell which case fired.
+    """
     name = "git_history"
     ttl_seconds = 300  # 5 minutes
 
@@ -92,20 +99,32 @@ class GitHistoryProvider:
                 cwd=self._project_dir,
                 capture_output=True, text=True, timeout=10,
             )
-            if result.returncode != 0:
-                return ""
+        except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError) as exc:
+            logger.warning("GitHistoryProvider: git log failed (%s)", exc)
+            return ""
+        if result.returncode != 0:
+            logger.warning(
+                "GitHistoryProvider: git log exit=%s stderr=%r",
+                result.returncode, result.stderr.strip()[:200],
+            )
+            return ""
 
+        try:
             branch_result = await asyncio.to_thread(
                 subprocess.run,
                 ["git", "branch", "--show-current"],
                 cwd=self._project_dir,
                 capture_output=True, text=True, timeout=5,
             )
-            branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "unknown"
+            branch = (
+                branch_result.stdout.strip()
+                if branch_result.returncode == 0
+                else "unknown"
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError):
+            branch = "unknown"
 
-            return f"## Git Context\nBranch: {branch}\n\nRecent commits:\n{result.stdout.strip()}"
-        except Exception:
-            return ""
+        return f"## Git Context\nBranch: {branch}\n\nRecent commits:\n{result.stdout.strip()}"
 
 
 class CoverageContextProvider:
@@ -152,20 +171,38 @@ class DependencyGraphProvider:
         # Check pyproject.toml
         pyproject = Path(self._project_dir) / "pyproject.toml"
         if pyproject.exists():
-            content = pyproject.read_text()
-            # Extract dependencies section
-            in_deps = False
-            deps = []
-            for line in content.split("\n"):
-                if "dependencies" in line and "=" in line:
-                    in_deps = True
-                    continue
-                if in_deps:
-                    if line.strip().startswith("]"):
-                        in_deps = False
-                    elif line.strip().startswith('"'):
-                        dep = line.strip().strip('",')
-                        deps.append(dep)
+            # audit 09 F#4: the hand-rolled line-by-line scanner
+            # matched ``optional-dependencies`` blocks, commented
+            # lines, and inline-array values. Parse properly via
+            # stdlib ``tomllib`` (Python 3.11+) or fall back to
+            # ``tomli`` on older runtimes.
+            deps: list[str] = []
+            try:
+                try:
+                    import tomllib  # type: ignore[import-not-found]
+                except ImportError:
+                    import tomli as tomllib  # type: ignore[no-redef]
+                data = tomllib.loads(pyproject.read_text())
+                project = data.get("project") or {}
+                raw = project.get("dependencies") or []
+                deps = [d for d in raw if isinstance(d, str)]
+            except Exception as exc:
+                logger.warning(
+                    "DependencyGraphProvider: pyproject.toml parse failed (%s); "
+                    "falling back to line-by-line scan", exc,
+                )
+                content = pyproject.read_text()
+                in_deps = False
+                for line in content.split("\n"):
+                    if "dependencies" in line and "=" in line:
+                        in_deps = True
+                        continue
+                    if in_deps:
+                        if line.strip().startswith("]"):
+                            in_deps = False
+                        elif line.strip().startswith('"'):
+                            dep = line.strip().strip('",')
+                            deps.append(dep)
             if deps:
                 parts.append("Python dependencies: " + ", ".join(deps[:15]))
 
