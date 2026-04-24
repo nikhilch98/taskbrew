@@ -136,6 +136,180 @@ async def get_group_graph(group_id: str):
     return {"nodes": nodes, "edges": edges}
 
 
+_MAX_TRACE_TASKS = 1000
+
+
+@router.get("/api/groups/{group_id}/trace")
+async def get_group_trace(group_id: str):
+    """Execution trace for a feature: per-task timing + cost + status
+    + verification, plus group-level aggregates.
+
+    Complements ``/api/groups/{id}/graph`` (which returns the DAG
+    shape) with the timing / cost / correctness dimensions we need
+    for "where did this feature go" investigations.
+
+    Design:
+    docs/superpowers/specs/2026-04-24-execution-tracing-endpoint-design.md
+    """
+    import json as _json
+    from datetime import datetime, timezone
+    orch = get_orch()
+    db = orch.task_board._db
+
+    group = await db.execute_fetchone(
+        "SELECT id, title, status, created_at FROM groups WHERE id = ?",
+        (group_id,),
+    )
+    if group is None:
+        raise HTTPException(404, f"Group not found: {group_id}")
+
+    # Fetch tasks (soft-capped) and their usage rows in two queries
+    # so the response is O(N) DB work rather than N+1.
+    tasks = await db.execute_fetchall(
+        "SELECT id, group_id, parent_id, revision_of, title, task_type, "
+        "priority, assigned_to, claimed_by, status, merge_status, "
+        "requires_fanout, fanout_retries, verification_retries, "
+        "completion_checks, branch_name, parent_branch, "
+        "created_at, started_at, completed_at "
+        "FROM tasks WHERE group_id = ? "
+        "ORDER BY created_at "
+        f"LIMIT {_MAX_TRACE_TASKS + 1}",
+        (group_id,),
+    )
+    truncated = len(tasks) > _MAX_TRACE_TASKS
+    if truncated:
+        tasks = tasks[:_MAX_TRACE_TASKS]
+
+    task_ids = [t["id"] for t in tasks]
+    usage_by_task: dict[str, dict] = {}
+    if task_ids:
+        placeholders = ",".join("?" * len(task_ids))
+        usage_rows = await db.execute_fetchall(
+            "SELECT task_id, SUM(input_tokens) AS input_tokens, "
+            "SUM(output_tokens) AS output_tokens, SUM(cost_usd) AS cost_usd, "
+            "SUM(num_turns) AS num_turns, SUM(duration_api_ms) AS duration_api_ms "
+            f"FROM task_usage WHERE task_id IN ({placeholders}) "
+            "GROUP BY task_id",
+            tuple(task_ids),
+        )
+        usage_by_task = {r["task_id"]: r for r in usage_rows}
+
+    # Derive children relationships from the in-memory parent_id
+    # chain (no recursive CTE needed at realistic group sizes).
+    children_of: dict[str, list[str]] = {}
+    for t in tasks:
+        pid = t.get("parent_id")
+        if pid:
+            children_of.setdefault(pid, []).append(t["id"])
+
+    def _parse_iso(s):
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    def _duration_ms(started, completed):
+        ts = _parse_iso(started)
+        tc = _parse_iso(completed)
+        if ts is None or tc is None:
+            return None
+        return int((tc - ts).total_seconds() * 1000)
+
+    enriched: list[dict] = []
+    total_cost = 0.0
+    total_in = 0
+    total_out = 0
+    total_turns = 0
+    status_counts: dict[str, int] = {}
+    merge_status_counts: dict[str, int] = {}
+    verify_retries_total = 0
+    first_ts = None
+    last_ts = None
+
+    for t in tasks:
+        usage = usage_by_task.get(t["id"], {})
+        cost = float(usage.get("cost_usd") or 0.0)
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        num_turns = int(usage.get("num_turns") or 0)
+
+        try:
+            checks = _json.loads(t.get("completion_checks") or "{}")
+        except _json.JSONDecodeError:
+            checks = {}
+
+        entry = {
+            "id": t["id"],
+            "task_type": t["task_type"],
+            "assigned_to": t["assigned_to"],
+            "claimed_by": t.get("claimed_by"),
+            "title": t["title"],
+            "parent_id": t.get("parent_id"),
+            "revision_of": t.get("revision_of"),
+            "branch_name": t.get("branch_name"),
+            "parent_branch": t.get("parent_branch"),
+            "status": t["status"],
+            "merge_status": t.get("merge_status"),
+            "requires_fanout": t.get("requires_fanout"),
+            "fanout_retries": t.get("fanout_retries") or 0,
+            "verification_retries": t.get("verification_retries") or 0,
+            "created_at": t.get("created_at"),
+            "started_at": t.get("started_at"),
+            "completed_at": t.get("completed_at"),
+            "duration_ms": _duration_ms(t.get("started_at"), t.get("completed_at")),
+            "cost_usd": round(cost, 6),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "num_turns": num_turns,
+            "duration_api_ms": int(usage.get("duration_api_ms") or 0),
+            "completion_checks": checks,
+            "children": children_of.get(t["id"], []),
+        }
+        enriched.append(entry)
+
+        total_cost += cost
+        total_in += input_tokens
+        total_out += output_tokens
+        total_turns += num_turns
+        verify_retries_total += entry["verification_retries"]
+        status_counts[t["status"]] = status_counts.get(t["status"], 0) + 1
+        ms_key = t.get("merge_status") or "null"
+        merge_status_counts[ms_key] = merge_status_counts.get(ms_key, 0) + 1
+
+        c = _parse_iso(t.get("created_at"))
+        f = _parse_iso(t.get("completed_at"))
+        if c and (first_ts is None or c < first_ts):
+            first_ts = c
+        if f and (last_ts is None or f > last_ts):
+            last_ts = f
+
+    wall_clock_ms = None
+    if first_ts and last_ts and last_ts >= first_ts:
+        wall_clock_ms = int((last_ts - first_ts).total_seconds() * 1000)
+
+    return {
+        "group_id": group["id"],
+        "group_title": group["title"],
+        "group_status": group["status"],
+        "created_at": group["created_at"],
+        "last_activity_at": last_ts.isoformat() if last_ts else None,
+        "wall_clock_ms": wall_clock_ms,
+        "total_cost_usd": round(total_cost, 6),
+        "total_input_tokens": total_in,
+        "total_output_tokens": total_out,
+        "total_num_turns": total_turns,
+        "total_tasks": len(enriched),
+        "status_counts": status_counts,
+        "merge_status_counts": merge_status_counts,
+        "verification_retries_total": verify_retries_total,
+        "truncated": truncated,
+        "max_tasks": _MAX_TRACE_TASKS,
+        "tasks": enriched,
+    }
+
+
 # ------------------------------------------------------------------
 # Goals
 # ------------------------------------------------------------------

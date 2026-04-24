@@ -174,6 +174,152 @@ async def test_get_group_graph(app_client):
     assert parent_edges[0]["to"] == child["id"]
 
 
+# ------------------------------------------------------------------
+# Execution tracing endpoint
+# docs/superpowers/specs/2026-04-24-execution-tracing-endpoint-design.md
+# ------------------------------------------------------------------
+
+
+async def test_group_trace_unknown_group_returns_404(app_client):
+    resp = await app_client["client"].get("/api/groups/nonexistent/trace")
+    assert resp.status_code == 404
+
+
+async def test_group_trace_empty_group(app_client):
+    board = app_client["board"]
+    group = await board.create_group(title="Empty", origin="pm", created_by="pm")
+
+    resp = await app_client["client"].get(f"/api/groups/{group['id']}/trace")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["group_id"] == group["id"]
+    assert data["total_tasks"] == 0
+    assert data["tasks"] == []
+    assert data["total_cost_usd"] == 0
+    assert data["total_input_tokens"] == 0
+    assert data["wall_clock_ms"] is None
+    assert data["truncated"] is False
+
+
+async def test_group_trace_single_task_aggregates(app_client):
+    board = app_client["board"]
+    db = app_client["db"]
+    group = await board.create_group(title="Solo", origin="pm", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Implement thing",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="pm",
+    )
+    # Record usage so the aggregate paths have data.
+    await db.record_task_usage(
+        task_id=task["id"],
+        agent_id="coder-1",
+        input_tokens=1000,
+        output_tokens=500,
+        cost_usd=0.03,
+        num_turns=7,
+        duration_api_ms=12_500,
+    )
+
+    resp = await app_client["client"].get(f"/api/groups/{group['id']}/trace")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_tasks"] == 1
+    assert len(data["tasks"]) == 1
+    entry = data["tasks"][0]
+    assert entry["id"] == task["id"]
+    assert entry["cost_usd"] == 0.03
+    assert entry["input_tokens"] == 1000
+    assert entry["output_tokens"] == 500
+    assert entry["num_turns"] == 7
+    assert entry["duration_api_ms"] == 12_500
+    # Aggregates mirror the single task's values.
+    assert data["total_cost_usd"] == 0.03
+    assert data["total_input_tokens"] == 1000
+    assert data["total_output_tokens"] == 500
+    assert data["total_num_turns"] == 7
+
+
+async def test_group_trace_fanout_children_relationships(app_client):
+    """A fan-out group (architect + coders) should surface children[] on
+    the architect and parent_id on each coder."""
+    board = app_client["board"]
+    group = await board.create_group(title="Feature", origin="pm", created_by="pm")
+    arch = await board.create_task(
+        group_id=group["id"],
+        title="Design",
+        task_type="tech_design",
+        assigned_to="architect",
+        created_by="pm",
+    )
+    coder_a = await board.create_task(
+        group_id=group["id"],
+        title="Code A",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        parent_id=arch["id"],
+    )
+    coder_b = await board.create_task(
+        group_id=group["id"],
+        title="Code B",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        parent_id=arch["id"],
+    )
+
+    resp = await app_client["client"].get(f"/api/groups/{group['id']}/trace")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_tasks"] == 3
+    by_id = {t["id"]: t for t in data["tasks"]}
+    assert set(by_id[arch["id"]]["children"]) == {coder_a["id"], coder_b["id"]}
+    assert by_id[coder_a["id"]]["parent_id"] == arch["id"]
+    assert by_id[coder_b["id"]]["parent_id"] == arch["id"]
+    # Both coder tasks are implementation, architect is tech_design.
+    assert data["status_counts"]["pending"] == 3
+
+
+async def test_group_trace_surfaces_completion_checks_and_merge_status(app_client):
+    """The trace should include the new per-task verification fields
+    (completion_checks, merge_status, verification_retries) so the
+    dashboard can tell verified merges from unverified ones."""
+    board = app_client["board"]
+    db = app_client["db"]
+    import json as _json
+    group = await board.create_group(title="V", origin="pm", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="T",
+        task_type="bug_fix",
+        assigned_to="coder",
+        created_by="pm",
+    )
+    await db.execute(
+        "UPDATE tasks SET merge_status = ?, verification_retries = ?, "
+        "completion_checks = ? WHERE id = ?",
+        (
+            "merged",
+            1,
+            _json.dumps({"build": {"status": "pass"}, "tests": {"status": "pass"}}),
+            task["id"],
+        ),
+    )
+
+    resp = await app_client["client"].get(f"/api/groups/{group['id']}/trace")
+    assert resp.status_code == 200
+    data = resp.json()
+    entry = data["tasks"][0]
+    assert entry["merge_status"] == "merged"
+    assert entry["verification_retries"] == 1
+    assert entry["completion_checks"]["build"]["status"] == "pass"
+    assert data["merge_status_counts"]["merged"] == 1
+    assert data["verification_retries_total"] == 1
+
+
 async def test_get_group_graph_with_dependencies(app_client):
     board = app_client["board"]
     group = await board.create_group(title="Dep Graph Test", origin="pm", created_by="pm")
