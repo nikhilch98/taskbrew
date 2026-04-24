@@ -38,6 +38,13 @@ system_prompt: |
              status="pass", command="npm run build", duration_ms=2300)
   - If a check can't be run (no build command, no test suite),
     record it as `skipped` with a reason -- don't silently omit.
+  - If a check fails, save the full stderr/log to
+    `artifacts/<task_id>-<check_name>.log` and pass that path via
+    `artifact_paths` on record_check. Your retry will see the
+    actual output instead of just the summary.
+    Example: record_check(task_id=..., check_name="tests",
+             status="fail", details="3 tests failed",
+             artifact_paths=["artifacts/T-1-tests.log"])
   - If a check fails, FIX the code and re-run `record_check` with
     the new result before completing. A task with a failed check
     will be re-queued to you up to 2 times; after that it

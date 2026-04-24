@@ -154,3 +154,72 @@ async def test_record_check_rejects_unknown_task(client):
         headers={"Authorization": "Bearer test-token"},
     )
     assert resp.status_code == 404
+
+
+async def test_record_check_stores_artifact_paths(client):
+    """Structured failure feedback: artifact_paths is an optional list of
+    paths where the agent saved full stderr / logs. Retry context will
+    render them as pointers so the next attempt reads the actual output
+    rather than acting on the summarised details string."""
+    c, board, task_id = client
+    resp = await c.post(
+        "/mcp/tools/record_check",
+        json={
+            "task_id": task_id,
+            "check_name": "tests",
+            "status": "fail",
+            "details": "3 tests failed",
+            "artifact_paths": [
+                "artifacts/T-1-tests.log",
+                "artifacts/T-1-tests.stderr",
+            ],
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 200
+
+    row = await board.get_task(task_id)
+    checks = json.loads(row["completion_checks"])
+    assert checks["tests"]["artifact_paths"] == [
+        "artifacts/T-1-tests.log",
+        "artifacts/T-1-tests.stderr",
+    ]
+
+
+async def test_record_check_rejects_non_list_artifact_paths(client):
+    c, _board, task_id = client
+    resp = await c.post(
+        "/mcp/tools/record_check",
+        json={
+            "task_id": task_id, "check_name": "build", "status": "pass",
+            "artifact_paths": "single/string/not/list.log",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_record_check_rejects_empty_artifact_path(client):
+    c, _board, task_id = client
+    resp = await c.post(
+        "/mcp/tools/record_check",
+        json={
+            "task_id": task_id, "check_name": "build", "status": "pass",
+            "artifact_paths": [""],
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_record_check_rejects_oversize_artifact_path(client):
+    c, _board, task_id = client
+    resp = await c.post(
+        "/mcp/tools/record_check",
+        json={
+            "task_id": task_id, "check_name": "build", "status": "pass",
+            "artifact_paths": ["a" * 3000],
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 400

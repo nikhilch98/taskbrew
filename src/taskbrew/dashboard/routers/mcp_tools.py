@@ -228,6 +228,8 @@ _VALID_CHECK_STATUS = frozenset({"pass", "fail", "skipped"})
 _MAX_CHECK_NAME_LEN = 64
 _MAX_CHECK_DETAILS_LEN = 20_000
 _MAX_CHECK_COMMAND_LEN = 2_000
+_MAX_ARTIFACT_PATH_LEN = 2_048
+_MAX_ARTIFACT_PATH_COUNT = 20
 
 
 @router.post("/mcp/tools/record_check")
@@ -254,6 +256,7 @@ async def mcp_record_check(
     details = body.get("details")
     duration_ms = body.get("duration_ms")
     command = body.get("command")
+    artifact_paths = body.get("artifact_paths")
 
     if not isinstance(task_id, str) or not task_id:
         raise HTTPException(400, "task_id is required")
@@ -285,6 +288,33 @@ async def mcp_record_check(
         raise HTTPException(
             400, f"command must be a string of at most {_MAX_CHECK_COMMAND_LEN} chars",
         )
+    # artifact_paths: optional list of paths where the agent saved full
+    # stderr / logs. Retry context will render them as "Read <path>"
+    # pointers so the next attempt has the actual output, not a summary.
+    # Design:
+    # docs/superpowers/specs/2026-04-24-structured-failure-feedback-design.md
+    if artifact_paths is not None:
+        if not isinstance(artifact_paths, list):
+            raise HTTPException(
+                400, "artifact_paths must be a list of path strings",
+            )
+        if len(artifact_paths) > _MAX_ARTIFACT_PATH_COUNT:
+            raise HTTPException(
+                400,
+                f"artifact_paths may contain at most "
+                f"{_MAX_ARTIFACT_PATH_COUNT} entries",
+            )
+        for p in artifact_paths:
+            if (
+                not isinstance(p, str)
+                or not p
+                or len(p) > _MAX_ARTIFACT_PATH_LEN
+            ):
+                raise HTTPException(
+                    400,
+                    "each artifact_paths entry must be a non-empty string "
+                    f"of at most {_MAX_ARTIFACT_PATH_LEN} chars",
+                )
 
     if not _task_board:
         raise HTTPException(503, "task_board not configured")
@@ -312,6 +342,8 @@ async def mcp_record_check(
         entry["duration_ms"] = duration_ms
     if command is not None:
         entry["command"] = command
+    if artifact_paths is not None:
+        entry["artifact_paths"] = list(artifact_paths)
     current[check_name] = entry
 
     await db.execute(

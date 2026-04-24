@@ -31,6 +31,8 @@ system_prompt: |
   Use `complete_task` when your work is done — pass file paths of all artifacts you produced.
   Use `record_check` to record build / test / lint results per task. Run this for every check you
   perform, not just the ones that pass: status can be `pass`, `fail`, or `skipped` (with a reason).
+  When a check fails, save the full log to `artifacts/<task_id>-<check_name>.log` and pass the
+  path via `artifact_paths` on record_check so your retry sees the actual output, not a summary.
   A task with a failed check is re-queued to you automatically (up to 2 retries); a task with no
   checks recorded merges as unverified.
   If `route_task` fails, check the error and use `get_my_connections()` to verify available targets.

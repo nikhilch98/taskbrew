@@ -513,6 +513,108 @@ async def test_merge_gate_skips_tiny_diffs(
 
 
 # ------------------------------------------------------------------
+# Structured failure feedback on retries
+# docs/superpowers/specs/2026-04-24-structured-failure-feedback-design.md
+# ------------------------------------------------------------------
+
+
+async def test_build_context_first_attempt_omits_failure_block(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """Regression: on the first attempt (verification_retries=0) there
+    should be no 'Previous verification failed' block or
+    'Files you previously modified' section."""
+    group = await board.create_group(title="G", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="T",
+        task_type="bug_fix", assigned_to="coder", created_by="human",
+    )
+    task_row = await board.get_task(task["id"])
+
+    role = _make_role(role="coder")
+    loop = _make_loop(board, event_bus, instance_mgr, role_config=role)
+    context = await loop.build_context(task_row)
+
+    assert "Previous verification failed" not in context
+    assert "Files you previously modified" not in context
+
+
+async def test_build_context_retry_renders_artifact_paths(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """On retry, each failed check's artifact_paths surface as 'Full
+    output at: <path>' lines under the check."""
+    import json as _json
+    group = await board.create_group(title="G", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="T",
+        task_type="bug_fix", assigned_to="coder", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET verification_retries = 1, completion_checks = ? "
+        "WHERE id = ?",
+        (
+            _json.dumps({
+                "tests": {
+                    "status": "fail",
+                    "details": "3 tests failed",
+                    "command": "pytest",
+                    "artifact_paths": [
+                        "artifacts/T-1-tests.log",
+                        "artifacts/T-1-tests.stderr",
+                    ],
+                },
+            }),
+            task["id"],
+        ),
+    )
+    task_row = await board.get_task(task["id"])
+
+    role = _make_role(role="coder")
+    loop = _make_loop(board, event_bus, instance_mgr, role_config=role)
+    # No worktree manager -> files-modified section silently omitted.
+    context = await loop.build_context(task_row)
+
+    assert "Previous verification failed" in context
+    assert "3 tests failed" in context
+    assert "Full output at: `artifacts/T-1-tests.log`" in context
+    assert "Full output at: `artifacts/T-1-tests.stderr`" in context
+    # No worktree -> no files-modified section.
+    assert "Files you previously modified" not in context
+
+
+async def test_build_context_retry_without_worktree_skips_files_modified(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """Missing worktree is not an error: build_context quietly omits
+    the files-modified section and still renders the failure block."""
+    import json as _json
+    group = await board.create_group(title="G", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="T",
+        task_type="bug_fix", assigned_to="coder", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET verification_retries = 1, completion_checks = ? "
+        "WHERE id = ?",
+        (
+            _json.dumps({"build": {"status": "fail", "details": "oops"}}),
+            task["id"],
+        ),
+    )
+    task_row = await board.get_task(task["id"])
+
+    role = _make_role(role="coder")
+    loop = _make_loop(board, event_bus, instance_mgr, role_config=role)
+    assert loop.worktree_manager is None
+    context = await loop.build_context(task_row)
+
+    assert "Previous verification failed" in context
+    assert "Files you previously modified" not in context
+    assert "Read these files and any linked artifacts" in context
+
+
+# ------------------------------------------------------------------
 # VR gate skip-for-clean-checks matrix
 # docs/superpowers/specs/2026-04-24-vr-gate-skip-clean-checks-design.md
 # ------------------------------------------------------------------
