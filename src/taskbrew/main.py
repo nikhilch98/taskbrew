@@ -288,7 +288,7 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
         if role.can_create_groups and role.group_type:
             group_prefixes[name] = role.group_type
 
-    task_board = TaskBoard(db, group_prefixes=group_prefixes)
+    task_board = TaskBoard(db, group_prefixes=group_prefixes, event_bus=event_bus)
 
     # Register role prefixes
     role_prefixes = {name: role.prefix for name, role in roles.items()}

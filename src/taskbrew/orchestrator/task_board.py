@@ -42,11 +42,19 @@ class TaskBoard:
         self,
         db: Database,
         group_prefixes: dict[str, str] | None = None,
+        event_bus=None,
     ) -> None:
         self._db = db
         self._group_prefixes: dict[str, str] = dict(group_prefixes or {})
         # Mapping from role name to task-ID prefix (e.g. "coder" -> "CD").
         self._role_to_prefix: dict[str, str] = {}
+        # Optional event bus -- used to emit ``task.available`` when a
+        # task becomes claimable (pending or just-unblocked). Agents
+        # subscribe to this event so they can wake up immediately
+        # instead of waiting for the next poll tick. Event bus is
+        # optional for backwards compatibility with test fixtures
+        # that construct TaskBoard without one.
+        self._event_bus = event_bus
 
     # ------------------------------------------------------------------
     # Prefix helpers
@@ -208,6 +216,17 @@ class TaskBoard:
                 parent_branch,
             ),
         )
+        # Emit task.available only when the task is actually claimable.
+        # A blocked task becomes available later via _resolve_dependencies.
+        if self._event_bus is not None and status == "pending":
+            await self._event_bus.emit(
+                "task.available",
+                {
+                    "task_id": task_id,
+                    "role": assigned_to,
+                    "group_id": group_id,
+                },
+            )
 
         # Create dependency rows (with cycle detection).
         if blocked_by:
@@ -575,7 +594,7 @@ class TaskBoard:
 
         # Find tasks that were blocked and now have no remaining unresolved deps.
         newly_free = await self._db.execute_fetchall(
-            "SELECT t.id FROM tasks t "
+            "SELECT t.id, t.assigned_to, t.group_id FROM tasks t "
             "WHERE t.status = 'blocked' "
             "  AND NOT EXISTS ("
             "    SELECT 1 FROM task_dependencies d "
@@ -587,6 +606,18 @@ class TaskBoard:
                 "UPDATE tasks SET status = 'pending' WHERE id = ?",
                 (row["id"],),
             )
+            # Wake any idle agent for this role so it doesn't wait
+            # out the poll_interval before picking up work that is
+            # now claimable.
+            if self._event_bus is not None:
+                await self._event_bus.emit(
+                    "task.available",
+                    {
+                        "task_id": row["id"],
+                        "role": row["assigned_to"],
+                        "group_id": row["group_id"],
+                    },
+                )
 
     # ------------------------------------------------------------------
     # Board view
