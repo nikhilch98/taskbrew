@@ -85,16 +85,30 @@ def _make_loop(
     instance_mgr: InstanceManager,
     role_config: RoleConfig | None = None,
     instance_id: str = "coder-1",
+    include_verifier_role: bool = True,
 ) -> AgentLoop:
-    """Create an AgentLoop for testing."""
+    """Create an AgentLoop for testing.
+
+    all_roles is populated with the agent's own role plus a synthetic
+    ``verifier`` role by default — most tests exercise the VR
+    auto-create path which requires a verifier to exist in the
+    deployment (see the no-orphan-VR guard in
+    _should_require_verification). Tests that need to exercise the
+    missing-verifier branch pass ``include_verifier_role=False``.
+    """
     rc = role_config or _make_role()
+    all_roles: dict[str, RoleConfig] = {rc.role: rc}
+    if include_verifier_role and rc.role != "verifier":
+        all_roles["verifier"] = _make_role(
+            role="verifier", display_name="Verifier",
+        )
     return AgentLoop(
         instance_id=instance_id,
         role_config=rc,
         board=board,
         event_bus=event_bus,
         instance_manager=instance_mgr,
-        all_roles={rc.role: rc},
+        all_roles=all_roles,
     )
 
 
@@ -496,6 +510,149 @@ async def test_merge_gate_skips_tiny_diffs(
         "SELECT id FROM tasks WHERE parent_id = ?", (impl["id"],),
     )
     assert children == []
+
+
+# ------------------------------------------------------------------
+# VR gate skip-for-clean-checks matrix
+# docs/superpowers/specs/2026-04-24-vr-gate-skip-clean-checks-design.md
+# ------------------------------------------------------------------
+
+
+async def _impl_task_for_vr_gate(board, completion_checks=None):
+    import json as _json
+    group = await board.create_group(title="G", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="Impl",
+        task_type="implementation", assigned_to="coder", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'coder-1', "
+        "completion_checks = ? WHERE id = ?",
+        (_json.dumps(completion_checks or {}), task["id"]),
+    )
+    return await board.get_task(task["id"])
+
+
+async def test_vr_gate_skips_when_no_verifier_role_configured(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """No verifier role in the deployment -> no auto-VR (avoids orphan
+    tasks that sit in pending forever)."""
+    task_row = await _impl_task_for_vr_gate(
+        board,
+        completion_checks={"build": {"status": "pass"}},
+    )
+    role = _make_role(role="coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1",
+                      include_verifier_role=False)
+
+    async def mid_diff(*a, **kw):
+        return 50
+    monkeypatch.setattr(loop, "_count_changed_loc", mid_diff)
+
+    result = await loop._should_require_verification(
+        task_row, worktree_path=None, branch_name=None,
+    )
+    assert result is False
+
+
+async def test_vr_gate_skips_mid_diff_with_clean_checks(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Mid-diff (20-199 LOC) with all-pass completion_checks -> skip VR.
+    This is the new optimisation."""
+    task_row = await _impl_task_for_vr_gate(
+        board,
+        completion_checks={
+            "build": {"status": "pass"},
+            "tests": {"status": "pass"},
+            "lint":  {"status": "skipped", "details": "no linter"},
+        },
+    )
+    role = _make_role(role="coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+
+    async def mid_diff(*a, **kw):
+        return 50
+    monkeypatch.setattr(loop, "_count_changed_loc", mid_diff)
+
+    result = await loop._should_require_verification(
+        task_row, worktree_path=None, branch_name=None,
+    )
+    assert result is False
+
+
+async def test_vr_gate_keeps_vr_for_empty_checks_at_mid_diff(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Mid-diff with no completion_checks recorded -> keep VR. We
+    don't merge-blind on zero signal."""
+    task_row = await _impl_task_for_vr_gate(board, completion_checks={})
+    role = _make_role(role="coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+
+    async def mid_diff(*a, **kw):
+        return 50
+    monkeypatch.setattr(loop, "_count_changed_loc", mid_diff)
+
+    result = await loop._should_require_verification(
+        task_row, worktree_path=None, branch_name=None,
+    )
+    assert result is True
+
+
+async def test_vr_gate_keeps_vr_for_big_diff_regardless_of_checks(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Diff >= 200 LOC -> always keep VR, even with clean checks.
+    Semantic review carries its weight at scale."""
+    task_row = await _impl_task_for_vr_gate(
+        board,
+        completion_checks={"build": {"status": "pass"}, "tests": {"status": "pass"}},
+    )
+    role = _make_role(role="coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+
+    async def big_diff(*a, **kw):
+        return 500
+    monkeypatch.setattr(loop, "_count_changed_loc", big_diff)
+
+    result = await loop._should_require_verification(
+        task_row, worktree_path=None, branch_name=None,
+    )
+    assert result is True
+
+
+async def test_vr_gate_skips_tiny_diff_regardless_of_checks(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """Regression: tiny diffs (< 20 LOC) always skip VR regardless of
+    checks. This behaviour predates the optimisation and must stay."""
+    task_row = await _impl_task_for_vr_gate(
+        board,
+        completion_checks={},  # empty -- shouldn't matter for tiny diffs
+    )
+    role = _make_role(role="coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+
+    async def tiny_diff(*a, **kw):
+        return 5
+    monkeypatch.setattr(loop, "_count_changed_loc", tiny_diff)
+
+    result = await loop._should_require_verification(
+        task_row, worktree_path=None, branch_name=None,
+    )
+    assert result is False
 
 
 async def test_merge_gate_does_not_double_create_when_vr_exists(

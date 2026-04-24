@@ -728,6 +728,13 @@ class AgentLoop:
     _FANOUT_REQUIRED_TASK_TYPES = {"tech_design"}
     _VERIFICATION_REQUIRED_TASK_TYPES = {"implementation", "bug_fix", "revision"}
     _VR_DIFF_LOC_THRESHOLD = 20
+    # Diff size at which VR is always required regardless of how clean
+    # the coder's self-recorded checks are. Semantic review carries its
+    # weight at scale; we don't trust "build+tests+lint pass" to cover
+    # architectural regressions on a 500-line patch.
+    # Design:
+    # docs/superpowers/specs/2026-04-24-vr-gate-skip-clean-checks-design.md
+    _VR_DIFF_LOC_HARD_CEILING = 200
 
     async def _should_require_fanout(self, task: dict) -> bool:
         """Return True when the fan-out gate should enforce a child task.
@@ -858,11 +865,35 @@ class AgentLoop:
     ) -> bool:
         """Return True when the merge gate should demand a verifier child.
 
-        Cheap task types (documentation, research) and tiny diffs (<20 LOC)
-        are exempt. When we can't reach git (no worktree), we fall back to
-        output-length heuristic — err on the side of requiring a VR.
+        Four-part decision (in order):
+
+        1. Non-implementation task types (docs, research) are exempt.
+        2. No verifier role configured -> skip (no point creating an
+           orphan task that will never be claimed).
+        3. Diff below the floor (``_VR_DIFF_LOC_THRESHOLD``) -> skip.
+        4. Diff at or above the hard ceiling
+           (``_VR_DIFF_LOC_HARD_CEILING``) -> always require.
+        5. In between: trust the coder's completion_checks. If every
+           recorded check is ``pass`` or ``skipped`` (and at least
+           one was recorded), skip VR. Otherwise keep it as a safety
+           net.
+
+        Design:
+        docs/superpowers/specs/2026-04-24-vr-gate-skip-clean-checks-design.md
         """
         if task.get("task_type") not in self._VERIFICATION_REQUIRED_TASK_TYPES:
+            return False
+
+        # (a) No-orphan VR: if the deployment has no verifier role, the
+        # auto-created VR task would sit in pending forever.
+        if not any(
+            getattr(r, "role", None) == "verifier"
+            for r in (self.all_roles or {}).values()
+        ):
+            logger.debug(
+                "Skipping VR for %s: no verifier role configured",
+                task["id"],
+            )
             return False
 
         loc = await self._count_changed_loc(worktree_path, branch_name)
@@ -870,6 +901,26 @@ class AgentLoop:
             # Unknown diff — assume substantial and require VR.
             return True
         if loc < self._VR_DIFF_LOC_THRESHOLD:
+            return False
+        if loc >= self._VR_DIFF_LOC_HARD_CEILING:
+            return True
+
+        # (b) Mid-range: trust completion_checks if they're clean.
+        import json as _json
+        raw = task.get("completion_checks") or "{}"
+        try:
+            checks = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except _json.JSONDecodeError:
+            checks = {}
+        all_clean = bool(checks) and all(
+            isinstance(c, dict) and c.get("status") in {"pass", "skipped"}
+            for c in checks.values()
+        )
+        if all_clean:
+            logger.debug(
+                "Skipping VR for %s: %d LOC diff with clean completion_checks",
+                task["id"], loc,
+            )
             return False
         return True
 
