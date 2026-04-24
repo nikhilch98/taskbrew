@@ -264,7 +264,35 @@ class WorktreeManager:
         worktree_path_obj = self._safe_worktree_path(agent_name)
         worktree_path = str(worktree_path_obj)
 
-        # Clean up stale worktree from a previous crash
+        # Cross-task reuse: if this worktree already belongs to the
+        # same agent, switch branches in place instead of tearing it
+        # down. Untracked-but-ignored state (node_modules, .venv)
+        # survives so the agent's first Bash command on the next task
+        # doesn't pay the full dependency-install cost again.
+        # Design:
+        # docs/superpowers/specs/2026-04-24-worktree-reuse-across-tasks-design.md
+        owned_by_us = (
+            self._worktrees.get(agent_name) == worktree_path
+            and worktree_path_obj.exists()
+        )
+        if owned_by_us:
+            try:
+                return await self._reuse_worktree(
+                    worktree_path=worktree_path,
+                    branch_name=branch_name,
+                    base_branch=base_branch,
+                )
+            except RuntimeError as exc:
+                # Reuse failed for some unexpected reason — fall
+                # through to the tear-down-rebuild path rather than
+                # leave the agent stuck.
+                logger.warning(
+                    "Worktree reuse failed for %s (%s); rebuilding",
+                    agent_name, exc,
+                )
+
+        # Clean up stale worktree from a previous crash (or from the
+        # reuse fallback above).
         if worktree_path_obj.exists() or worktree_path_obj.is_symlink():
             logger.info("Removing stale worktree at %s", worktree_path)
             try:
@@ -305,6 +333,93 @@ class WorktreeManager:
 
         self._worktrees[agent_name] = worktree_path
         return worktree_path
+
+    async def _reuse_worktree(
+        self,
+        *,
+        worktree_path: str,
+        branch_name: str,
+        base_branch: str | None,
+    ) -> str:
+        """Switch an already-live worktree to a new branch without
+        tearing it down.
+
+        Assumes the caller verified the worktree belongs to us
+        (``_worktrees[agent_name] == worktree_path`` and the directory
+        exists). Preserves untracked-but-ignored state
+        (``node_modules`` etc.) across the branch switch so the next
+        task doesn't pay the dependency-install cost again.
+
+        Scrub policy:
+        - ``git reset --hard HEAD`` discards uncommitted tracked
+          changes from whatever the prior task left on the branch.
+        - ``git clean -fd`` removes UNIGNORED untracked files
+          (a stray file the prior task forgot to commit) but keeps
+          ignored files (``node_modules``, ``.venv``, build caches).
+          The retry-between-attempts scrub still uses ``-fdx``
+          because retries want a pristine state within the same
+          branch; this cross-task reuse wants the opposite.
+        - ``git checkout <base_branch>`` then ``git checkout -B
+          <new_branch>`` creates or resets the target branch at
+          base_branch's tip.
+
+        Design:
+        docs/superpowers/specs/2026-04-24-worktree-reuse-across-tasks-design.md
+        """
+        # Same-branch re-invocation is a no-op: the caller already has
+        # the right branch checked out.
+        current = await self._current_branch(worktree_path)
+        if current == branch_name:
+            logger.debug(
+                "Worktree reuse: agent already on branch %s at %s",
+                branch_name, worktree_path,
+            )
+            return worktree_path
+
+        logger.debug(
+            "Worktree reuse: agent at %s switching %s -> %s",
+            worktree_path, current, branch_name,
+        )
+
+        # 1. Drop any uncommitted tracked changes from the prior task.
+        await self._run_git(
+            "reset", "--hard", "HEAD",
+            cwd=worktree_path,
+        )
+        # 2. Remove UNIGNORED untracked; keep .gitignore'd dep caches.
+        await self._run_git(
+            "clean", "-fd",
+            cwd=worktree_path,
+        )
+        # 3. Create-or-reset the new branch at base_branch's commit in
+        # one step. Using ``checkout -B <new> <start>`` avoids a
+        # separate ``checkout <base>`` which would fail when base is
+        # already checked out by the primary repo (git refuses two
+        # worktrees on the same branch). This reads base_branch's ref
+        # without checking it out.
+        target_base = base_branch or "main"
+        await self._run_git(
+            "checkout", "-B", branch_name, target_base,
+            cwd=worktree_path,
+        )
+        return worktree_path
+
+    async def _current_branch(self, worktree_path: str) -> str | None:
+        """Return the branch currently checked out in the worktree.
+
+        Returns None on detached HEAD or any git failure.
+        """
+        try:
+            out = await self._run_git(
+                "rev-parse", "--abbrev-ref", "HEAD",
+                cwd=worktree_path,
+            )
+        except RuntimeError:
+            return None
+        branch = (out or "").strip()
+        if not branch or branch == "HEAD":
+            return None
+        return branch
 
     async def cleanup_worktree(self, agent_name: str) -> None:
         """Remove an agent's worktree (keeps the branch and its commits).

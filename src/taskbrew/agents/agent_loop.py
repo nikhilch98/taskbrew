@@ -1304,14 +1304,14 @@ class AgentLoop:
                 except Exception:
                     logger.debug("Failed to store post-mortem for %s", task["id"], exc_info=True)
         finally:
-            if self.worktree_manager:
-                try:
-                    await self.worktree_manager.cleanup_worktree(self.instance_id)
-                except Exception:
-                    logger.warning(
-                        "Failed to cleanup worktree for %s", self.instance_id,
-                        exc_info=True,
-                    )
+            # Worktree reuse: we no longer destroy the worktree per
+            # task. It survives across tasks for this agent so untracked-
+            # but-ignored state (node_modules, .venv) doesn't have to
+            # be re-installed on every task claim. The worktree is
+            # destroyed in run()'s outer finally when the agent itself
+            # stops.
+            # Design:
+            # docs/superpowers/specs/2026-04-24-worktree-reuse-across-tasks-design.md
             await self.instance_manager.update_status(self.instance_id, "idle", current_task=None)
 
         return True
@@ -1396,6 +1396,18 @@ class AgentLoop:
             # Always unsubscribe so a stopped agent doesn't leave
             # a dangling callback in the event bus.
             self.event_bus.unsubscribe("task.available", self._wake_handler)
+            # Destroy the agent's worktree at stop time, not per-task.
+            # Per-task cleanup was removed so untracked-ignored state
+            # (node_modules, .venv) survives across tasks on the same
+            # agent. See _reuse_worktree in WorktreeManager.
+            if self.worktree_manager:
+                try:
+                    await self.worktree_manager.cleanup_worktree(self.instance_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to cleanup worktree for %s at shutdown",
+                        self.instance_id, exc_info=True,
+                    )
 
     def stop(self) -> None:
         """Signal the run loop to stop after the current iteration.
