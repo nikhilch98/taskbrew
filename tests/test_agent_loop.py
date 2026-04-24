@@ -682,6 +682,137 @@ async def test_verification_gate_all_pass_merges(
     assert row["merge_status"] == "merged"
 
 
+# ------------------------------------------------------------------
+# Retry classification (_is_retryable)
+# docs/superpowers/specs/2026-04-24-retry-classification-design.md
+# ------------------------------------------------------------------
+
+
+import json as _json_mod
+import pytest as _pytest_for_param
+
+from taskbrew.agents.agent_loop import _is_retryable, MAX_RETRIES
+
+
+@_pytest_for_param.mark.parametrize(
+    "exc,expected",
+    [
+        # Retryable: stdlib connection errors
+        (ConnectionResetError("reset"), True),
+        (ConnectionRefusedError("refused"), True),
+        (OSError("[Errno 104] Connection reset by peer"), True),
+        # Retryable: substring fallback on bare exceptions
+        (RuntimeError("429 rate limit exceeded"), True),
+        (Exception("503 Service Unavailable"), True),
+        (Exception("Rate limit reached for model"), True),
+        # Non-retryable: schema / code errors
+        (ValueError("bad arg"), False),
+        (TypeError("wrong type"), False),
+        (KeyError("missing key"), False),
+        (AttributeError("no such attr"), False),
+        (_json_mod.JSONDecodeError("bad json", "", 0), False),
+        # Non-retryable: unknown exception (default is fail-fast)
+        (RuntimeError("something weird happened"), False),
+    ],
+)
+def test_is_retryable_classifier(exc, expected):
+    assert _is_retryable(exc) is expected
+
+
+async def _prepare_retry_test(board, event_bus, instance_mgr, exception_to_raise):
+    """Common setup: create a task, start it, stub execute_task to raise.
+    Returns (loop, task_id, attempts_counter)."""
+    group = await board.create_group(title="G", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="T",
+        task_type="bug_fix", assigned_to="coder", created_by="human",
+    )
+
+    role = _make_role(role="coder", display_name="Coder")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="coder-1")
+
+    # run_once calls update_status on the instance; pre-register it.
+    await instance_mgr.register_instance(loop.instance_id, role)
+
+    attempts = [0]
+
+    async def failing_execute_task(*args, **kwargs):
+        attempts[0] += 1
+        raise exception_to_raise
+
+    loop.execute_task = failing_execute_task
+    loop.worktree_manager = None
+    loop.preflight_checker = None
+
+    async def stub_poll_for_task():
+        task_row = await board.get_task(task["id"])
+        if task_row and task_row["status"] == "pending":
+            await board._db.execute(
+                "UPDATE tasks SET status = 'in_progress', claimed_by = ? "
+                "WHERE id = ?",
+                ("coder-1", task["id"]),
+            )
+            return await board.get_task(task["id"])
+        return None
+
+    loop.poll_for_task = stub_poll_for_task
+    return loop, task["id"], attempts
+
+
+async def test_retry_loop_fails_fast_on_non_retryable(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """A non-retryable exception triggers fail_task after the first
+    attempt -- no retries, no backoff, no 65s of wasted time."""
+    loop, task_id, attempts = await _prepare_retry_test(
+        board, event_bus, instance_mgr,
+        exception_to_raise=ValueError("schema violation"),
+    )
+
+    await loop.run_once()
+
+    row = await board.get_task(task_id)
+    assert attempts[0] == 1, (
+        f"expected 1 attempt for non-retryable error, got {attempts[0]}"
+    )
+    assert row["status"] == "failed"
+
+
+async def test_retry_loop_retries_on_retryable(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+    monkeypatch,
+):
+    """A retryable exception (e.g. 429) still burns through
+    MAX_RETRIES + 1 attempts before failing the task. The classifier
+    must NOT change behaviour on the retryable path."""
+    loop, task_id, attempts = await _prepare_retry_test(
+        board, event_bus, instance_mgr,
+        exception_to_raise=RuntimeError("429 rate limit"),
+    )
+
+    # Neuter asyncio.sleep inside agent_loop so the test doesn't wait
+    # the full 65s of exponential backoff; retries still run but the
+    # delays collapse to 0.
+    import taskbrew.agents.agent_loop as _al
+    original_sleep = _al.asyncio.sleep
+
+    async def fast_sleep(_delay):
+        await original_sleep(0)
+
+    monkeypatch.setattr(_al.asyncio, "sleep", fast_sleep)
+
+    await loop.run_once()
+
+    row = await board.get_task(task_id)
+    assert attempts[0] == MAX_RETRIES + 1, (
+        f"expected {MAX_RETRIES + 1} attempts on retryable error, "
+        f"got {attempts[0]}"
+    )
+    assert row["status"] == "failed"
+
+
 async def test_verification_requeue_respects_status_predicate(
     board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
 ):

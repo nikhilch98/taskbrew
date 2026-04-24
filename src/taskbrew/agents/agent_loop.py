@@ -20,6 +20,67 @@ DEFAULT_TASK_TIMEOUT = 1800  # 30 minutes
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 5
 
+
+# Retry classification
+# docs/superpowers/specs/2026-04-24-retry-classification-design.md
+#
+# Default is non-retryable. We opt in known-transient types here
+# rather than opt out; unknown exceptions fail fast so hidden bugs
+# surface immediately instead of hiding behind 65s of backoff.
+_RETRYABLE_MESSAGE_SUBSTRINGS = (
+    "rate limit",
+    "429",
+    "503",
+    "504",
+    "connection reset",
+    "connection refused",
+)
+
+
+def _retryable_type_set() -> tuple[type, ...]:
+    """Return the tuple of exception types treated as retryable.
+
+    Deferred import so ``agent_loop`` doesn't hard-fail when the
+    Anthropic SDK isn't installed; the stdlib set still works.
+    """
+    types: list[type] = [ConnectionError, OSError]
+    try:
+        from anthropic import (
+            APIConnectionError,
+            APITimeoutError,
+            InternalServerError,
+            RateLimitError,
+        )
+        types.extend([
+            RateLimitError,
+            APIConnectionError,
+            APITimeoutError,
+            InternalServerError,
+        ])
+    except ImportError:
+        pass
+    return tuple(types)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Classify an exception as retryable (transient) or not.
+
+    Retryable: rate limits, connection resets, 5xx server errors --
+    anything where trying the same prompt again might succeed.
+
+    Non-retryable: schema / validation / tool / authentication errors
+    -- retrying with the same prompt gets the same result.
+
+    Unknown exceptions default to non-retryable. Operators who hit a
+    false-positive on a genuinely transient error lose at most two
+    retries; operators whose real bugs used to hide behind the retry
+    loop see them immediately.
+    """
+    if isinstance(exc, _retryable_type_set()):
+        return True
+    msg = str(exc).lower()
+    return any(token in msg for token in _RETRYABLE_MESSAGE_SUBSTRINGS)
+
 if TYPE_CHECKING:
     from taskbrew.tools.worktree_manager import WorktreeManager
 
@@ -1010,7 +1071,14 @@ class AgentLoop:
                         )
                         return True
                     except Exception as e:
-                        if attempt < MAX_RETRIES:
+                        # Retry classification: short-circuit on hard
+                        # errors (schema/validation/tool) so they
+                        # escalate in 1 × task_time instead of
+                        # 3 × task_time + 65s of backoff.
+                        # Design:
+                        # docs/superpowers/specs/2026-04-24-retry-classification-design.md
+                        retryable = _is_retryable(e)
+                        if attempt < MAX_RETRIES and retryable:
                             # audit 02 F#6: backoff now carries random
                             # jitter so simultaneously-failing agents
                             # don't retry in lockstep (thundering herd).
@@ -1020,7 +1088,8 @@ class AgentLoop:
                             nominal = RETRY_BASE_DELAY * (3 ** attempt)
                             delay = int(nominal * (0.5 + random.random()))
                             task_logger.warning(
-                                "Task %s attempt %d failed, retrying in %ds: %s",
+                                "Task %s attempt %d failed (retryable), "
+                                "retrying in %ds: %s",
                                 task["id"], attempt + 1, delay, e,
                             )
                             await asyncio.sleep(delay)
@@ -1058,6 +1127,17 @@ class AgentLoop:
                                         task["id"], reset_exc,
                                     )
                         else:
+                            if not retryable:
+                                # Loud signal so operators see the
+                                # real error instead of inferring it
+                                # from a silent 3-attempt retry burst.
+                                task_logger.error(
+                                    "Task %s failed with non-retryable "
+                                    "error %s: %s — skipping remaining "
+                                    "%d retries, failing immediately",
+                                    task["id"], type(e).__name__, e,
+                                    MAX_RETRIES - attempt,
+                                )
                             raise  # let outer handler fail the task
             finally:
                 hb_task.cancel()
