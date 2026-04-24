@@ -211,6 +211,33 @@ class AgentLoop:
                     if entry.get("command"):
                         line += f" (command: `{entry['command']}`)"
                     parts.append(line)
+                    # Structured failure feedback: if the agent saved
+                    # full stderr / logs to artifact files, point the
+                    # retry agent at them so it has the raw output
+                    # instead of the summarised ``details`` string.
+                    # Design:
+                    # docs/superpowers/specs/2026-04-24-structured-failure-feedback-design.md
+                    for ap in entry.get("artifact_paths") or []:
+                        parts.append(f"  - Full output at: `{ap}`")
+
+                # Also surface which files the previous attempt
+                # modified, so the retry can Read them first rather
+                # than re-discovering via Grep / Glob.
+                modified = await self._list_modified_files(task)
+                if modified:
+                    parts.append("\n### Files you previously modified")
+                    for path in modified[:30]:
+                        parts.append(f"- `{path}`")
+                    if len(modified) > 30:
+                        parts.append(
+                            f"- ... and {len(modified) - 30} more "
+                            "(truncated)"
+                        )
+
+                parts.append(
+                    "\nRead these files and any linked artifacts "
+                    "before attempting the fix."
+                )
 
         if (
             task.get("parent_id")
@@ -923,6 +950,38 @@ class AgentLoop:
             )
             return False
         return True
+
+    async def _list_modified_files(self, task: dict) -> list[str]:
+        """Return the files changed on this task's branch vs its parent_branch.
+
+        Used by build_context on verification retries so the agent sees
+        which files its previous attempt touched. Silent on error: no
+        worktree, no branch, dirty state all just yield an empty list.
+        Design:
+        docs/superpowers/specs/2026-04-24-structured-failure-feedback-design.md
+        """
+        if not self.worktree_manager:
+            return []
+        cwd = self.worktree_manager.get_worktree_path(self.instance_id)
+        if not cwd:
+            return []
+        parent_branch = task.get("parent_branch") or "main"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", "--name-only", f"{parent_branch}...HEAD",
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                return []
+        except (asyncio.TimeoutError, FileNotFoundError, OSError):
+            return []
+        return [
+            line for line in stdout.decode(errors="replace").splitlines()
+            if line.strip()
+        ]
 
     async def _count_changed_loc(
         self, worktree_path: str | None, branch_name: str | None,
