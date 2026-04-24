@@ -711,6 +711,16 @@ class AgentLoop:
             "WHERE id = ? AND status = 'in_progress'",
             (current_retries + 1, task["id"]),
         )
+        # Wake any idle architect so the re-queued design gets picked
+        # up immediately rather than waiting out poll_interval.
+        await self.event_bus.emit(
+            "task.available",
+            {
+                "task_id": task["id"],
+                "role": task.get("assigned_to"),
+                "group_id": task["group_id"],
+            },
+        )
 
     async def _requeue_for_verification(
         self,
@@ -748,6 +758,15 @@ class AgentLoop:
                 "failed_checks": failed_checks,
                 "retries": current_retries + 1,
                 "agent_id": self.instance_id,
+            },
+        )
+        # Wake the coder immediately to fix the failing checks.
+        await self.event_bus.emit(
+            "task.available",
+            {
+                "task_id": task["id"],
+                "role": task.get("assigned_to"),
+                "group_id": task["group_id"],
             },
         )
         logger.warning(
@@ -1108,37 +1127,96 @@ class AgentLoop:
         return True
 
     async def run(self) -> None:
-        """Main continuous loop."""
+        """Main continuous loop.
+
+        Event-driven claim: the loop subscribes to ``task.available``
+        on the EventBus and uses an ``asyncio.Event`` to wake early
+        when a task for this role lands. ``poll_interval`` stays as
+        the crash-recovery backstop — if an emit is missed during
+        startup or reconnect, the next poll catches it.
+
+        Design:
+        docs/superpowers/specs/2026-04-24-event-driven-task-claims-design.md
+        """
         self._running = True
-        await self.instance_manager.register_instance(
-            self.instance_id, self.role_config
-        )
-        await self.event_bus.emit(
-            "agent.status_changed",
-            {"instance_id": self.instance_id, "status": "idle", "model": self.role_config.model},
-        )
-        logger.info("Agent %s started, polling every %ss", self.instance_id, self.poll_interval)
+        self._wake_event = asyncio.Event()
 
-        while self._running:
-            try:
-                processed = await self.run_once()
-                if not processed:
+        async def _wake_on_available(event):
+            # Filter in the callback so agents for other roles only
+            # pay a dict compare on each emit.
+            if event.get("role") == self.role_config.role:
+                self._wake_event.set()
+
+        self._wake_handler = _wake_on_available
+        self.event_bus.subscribe("task.available", _wake_on_available)
+
+        try:
+            await self.instance_manager.register_instance(
+                self.instance_id, self.role_config
+            )
+            await self.event_bus.emit(
+                "agent.status_changed",
+                {"instance_id": self.instance_id, "status": "idle",
+                 "model": self.role_config.model},
+            )
+            logger.info(
+                "Agent %s started; subscribed to task.available, "
+                "poll_interval=%ss (backstop)",
+                self.instance_id, self.poll_interval,
+            )
+
+            while self._running:
+                try:
+                    processed = await self.run_once()
+                    if not processed:
+                        # Sleep until either the wake event fires or
+                        # poll_interval elapses (backstop).
+                        try:
+                            await asyncio.wait_for(
+                                self._wake_event.wait(),
+                                timeout=self.poll_interval,
+                            )
+                        except asyncio.TimeoutError:
+                            pass
+                        self._wake_event.clear()
+                except Exception:
+                    logger.exception(
+                        "Agent %s crashed in run_once, recovering",
+                        self.instance_id,
+                    )
+                    # audit 02 F#8: reset current_task to None on crash so
+                    # a stale reference doesn't persist on the instance
+                    # row and confuse orphan recovery.
+                    await self.instance_manager.update_status(
+                        self.instance_id, "idle", current_task=None,
+                    )
                     await asyncio.sleep(self.poll_interval)
-            except Exception:
-                logger.exception("Agent %s crashed in run_once, recovering", self.instance_id)
-                # audit 02 F#8: reset current_task to None on crash so
-                # a stale reference doesn't persist on the instance
-                # row and confuse orphan recovery.
-                await self.instance_manager.update_status(
-                    self.instance_id, "idle", current_task=None,
-                )
-                await asyncio.sleep(self.poll_interval)
-            await self.instance_manager.heartbeat(self.instance_id)
+                await self.instance_manager.heartbeat(self.instance_id)
 
-        # Cleanup after loop exits
-        await self.instance_manager.update_status(self.instance_id, "stopped")
-        await self.event_bus.emit("agent.stopped", {"instance_id": self.instance_id, "model": self.role_config.model})
+            # Cleanup after loop exits
+            await self.instance_manager.update_status(
+                self.instance_id, "stopped",
+            )
+            await self.event_bus.emit(
+                "agent.stopped",
+                {"instance_id": self.instance_id,
+                 "model": self.role_config.model},
+            )
+        finally:
+            # Always unsubscribe so a stopped agent doesn't leave
+            # a dangling callback in the event bus.
+            self.event_bus.unsubscribe("task.available", self._wake_handler)
 
     def stop(self) -> None:
-        """Signal the run loop to stop after the current iteration."""
+        """Signal the run loop to stop after the current iteration.
+
+        Also sets the wake event so a loop currently blocked in
+        ``wait_for(wake_event.wait(), timeout=poll_interval)`` returns
+        immediately instead of sitting idle for the remainder of the
+        poll. Without this a stopped agent could take up to
+        ``poll_interval`` seconds to actually exit.
+        """
         self._running = False
+        wake = getattr(self, "_wake_event", None)
+        if wake is not None:
+            wake.set()
