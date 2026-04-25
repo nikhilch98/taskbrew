@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TaskBrew – Execution Trace</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0b0d12;
+            color: #e2e8f0;
+            margin: 0;
+            padding: 24px;
+        }
+        .trace-header {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        .trace-header input[type="text"] {
+            padding: 10px 14px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #f1f5f9;
+            border-radius: 8px;
+            font-size: 14px;
+            min-width: 280px;
+        }
+        .trace-header button {
+            padding: 10px 20px;
+            background: #6366f1;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .trace-header button:hover { background: #4f46e5; }
+        .agg-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .agg-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .agg-card-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #94a3b8;
+            margin-bottom: 6px;
+        }
+        .agg-card-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #f1f5f9;
+        }
+        table.trace-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            overflow: hidden;
+            font-size: 13px;
+        }
+        table.trace-table th {
+            background: #0f172a;
+            color: #cbd5e1;
+            text-align: left;
+            padding: 12px;
+            font-weight: 600;
+            border-bottom: 1px solid #334155;
+        }
+        table.trace-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #334155;
+            vertical-align: top;
+        }
+        table.trace-table tr:hover td { background: #243049; }
+        .status-pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: lowercase;
+        }
+        .status-completed   { background: #064e3b; color: #6ee7b7; }
+        .status-in_progress { background: #1e3a8a; color: #93c5fd; }
+        .status-pending     { background: #374151; color: #d1d5db; }
+        .status-blocked     { background: #4c1d95; color: #c4b5fd; }
+        .status-failed      { background: #7f1d1d; color: #fca5a5; }
+        .status-cancelled   { background: #1e293b; color: #64748b; }
+        .merge-merged              { background: #064e3b; color: #6ee7b7; }
+        .merge-merged_unverified   { background: #78350f; color: #fde68a; }
+        .merge-verification_failed { background: #7f1d1d; color: #fca5a5; }
+        .empty {
+            padding: 40px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 14px;
+        }
+        .checks-cell { font-size: 11px; color: #94a3b8; }
+        .checks-cell .check { display: inline-block; margin-right: 8px; }
+        .check-pass    { color: #6ee7b7; }
+        .check-fail    { color: #fca5a5; }
+        .check-skipped { color: #94a3b8; }
+        a.task-link { color: #93c5fd; text-decoration: none; }
+        a.task-link:hover { text-decoration: underline; }
+        .truncated-warning {
+            background: #78350f;
+            color: #fde68a;
+            padding: 10px 14px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="trace-header">
+        <h1 style="margin: 0; font-size: 20px;">Execution Trace</h1>
+        <input type="text" id="groupIdInput" placeholder="Enter group_id (e.g. FEAT-001)">
+        <button id="loadTraceBtn">Load</button>
+    </div>
+
+    <div id="traceBody">
+        <div class="empty">Enter a group_id above and click Load.</div>
+    </div>
+
+    <script>
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/`/g, '&#96;');
+    }
+    function fmtMs(ms) {
+        if (ms === null || ms === undefined) return '—';
+        if (ms < 1000) return ms + 'ms';
+        if (ms < 60_000) return (ms / 1000).toFixed(1) + 's';
+        if (ms < 3_600_000) return (ms / 60_000).toFixed(1) + 'm';
+        return (ms / 3_600_000).toFixed(1) + 'h';
+    }
+    function fmtUsd(c) {
+        if (c === null || c === undefined) return '—';
+        if (c < 0.0001) return '<$0.001';
+        return '$' + c.toFixed(4);
+    }
+    function fmtTs(s) {
+        if (!s) return '—';
+        try {
+            return new Date(s).toLocaleString();
+        } catch (e) {
+            return s;
+        }
+    }
+    function renderChecks(checks) {
+        var keys = Object.keys(checks || {});
+        if (keys.length === 0) return '—';
+        return keys.map(function (k) {
+            var c = checks[k] || {};
+            var s = c.status || '?';
+            return '<span class="check check-' + escapeHtml(s) + '">'
+                + escapeHtml(k) + ':' + escapeHtml(s) + '</span>';
+        }).join(' ');
+    }
+
+    function aggCard(label, value) {
+        return '<div class="agg-card"><div class="agg-card-label">'
+            + escapeHtml(label) + '</div><div class="agg-card-value">'
+            + value + '</div></div>';
+    }
+
+    function renderTrace(data) {
+        var html = '';
+
+        if (data.truncated) {
+            html += '<div class="truncated-warning">Result truncated to '
+                + data.max_tasks + ' tasks. Group has more rows.</div>';
+        }
+
+        var statusEntries = Object.entries(data.status_counts || {})
+            .map(function (e) { return e[1] + ' ' + e[0]; }).join(', ');
+        var mergeEntries = Object.entries(data.merge_status_counts || {})
+            .map(function (e) { return e[1] + ' ' + e[0]; }).join(', ');
+
+        html += '<div class="agg-grid">';
+        html += aggCard('Group', escapeHtml(data.group_id) + ' — '
+            + escapeHtml(data.group_status));
+        html += aggCard('Title', escapeHtml(data.group_title));
+        html += aggCard('Tasks', data.total_tasks);
+        html += aggCard('Wall clock', fmtMs(data.wall_clock_ms));
+        html += aggCard('Total cost', fmtUsd(data.total_cost_usd));
+        html += aggCard('Total tokens (in/out)',
+            (data.total_input_tokens || 0) + ' / '
+            + (data.total_output_tokens || 0));
+        html += aggCard('Total turns', data.total_num_turns || 0);
+        html += aggCard('Verification retries', data.verification_retries_total || 0);
+        html += aggCard('Status counts', statusEntries || '—');
+        html += aggCard('Merge status counts', mergeEntries || '—');
+        html += '</div>';
+
+        if (!data.tasks || data.tasks.length === 0) {
+            html += '<div class="empty">No tasks in this group.</div>';
+            return html;
+        }
+
+        html += '<table class="trace-table"><thead><tr>'
+            + '<th>ID</th><th>Type</th><th>Role</th><th>Status</th>'
+            + '<th>Merge</th><th>Started</th><th>Duration</th>'
+            + '<th>Cost</th><th>Turns</th>'
+            + '<th>Retries (fanout / verify)</th><th>Checks</th>'
+            + '</tr></thead><tbody>';
+
+        data.tasks.forEach(function (t) {
+            html += '<tr>'
+                + '<td>' + escapeHtml(t.id) + '</td>'
+                + '<td>' + escapeHtml(t.task_type || '—') + '</td>'
+                + '<td>' + escapeHtml(t.assigned_to || '—') + '</td>'
+                + '<td><span class="status-pill status-' + escapeHtml(t.status)
+                + '">' + escapeHtml(t.status) + '</span></td>'
+                + '<td>' + (t.merge_status
+                    ? '<span class="status-pill merge-' + escapeHtml(t.merge_status)
+                      + '">' + escapeHtml(t.merge_status) + '</span>'
+                    : '—') + '</td>'
+                + '<td>' + fmtTs(t.started_at) + '</td>'
+                + '<td>' + fmtMs(t.duration_ms) + '</td>'
+                + '<td>' + fmtUsd(t.cost_usd) + '</td>'
+                + '<td>' + (t.num_turns || 0) + '</td>'
+                + '<td>' + (t.fanout_retries || 0) + ' / '
+                  + (t.verification_retries || 0) + '</td>'
+                + '<td class="checks-cell">'
+                  + renderChecks(t.completion_checks) + '</td>'
+                + '</tr>';
+        });
+        html += '</tbody></table>';
+        return html;
+    }
+
+    async function loadTrace() {
+        var groupId = document.getElementById('groupIdInput').value.trim();
+        var body = document.getElementById('traceBody');
+        if (!groupId) {
+            body.innerHTML = '<div class="empty">Enter a group_id above and click Load.</div>';
+            return;
+        }
+        body.innerHTML = '<div class="empty">Loading…</div>';
+        try {
+            var resp = await fetch('/api/groups/' + encodeURIComponent(groupId) + '/trace');
+            if (resp.status === 404) {
+                body.innerHTML = '<div class="empty">Group not found: '
+                    + escapeHtml(groupId) + '</div>';
+                return;
+            }
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            var data = await resp.json();
+            body.innerHTML = renderTrace(data);
+            // Update URL so the view is bookmarkable.
+            var newUrl = new URL(window.location.href);
+            newUrl.searchParams.set('group_id', groupId);
+            history.replaceState({}, '', newUrl);
+        } catch (e) {
+            body.innerHTML = '<div class="empty">Failed to load trace: '
+                + escapeHtml(e.message) + '</div>';
+        }
+    }
+
+    document.getElementById('loadTraceBtn').addEventListener('click', loadTrace);
+    document.getElementById('groupIdInput').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') loadTrace();
+    });
+
+    // Auto-load on first paint if group_id is in the URL.
+    var url = new URL(window.location.href);
+    var initial = url.searchParams.get('group_id');
+    if (initial) {
+        document.getElementById('groupIdInput').value = initial;
+        loadTrace();
+    }
+    </script>
+</body>
+</html>

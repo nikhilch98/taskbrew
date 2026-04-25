@@ -167,7 +167,7 @@ def create_app(
         # WebSocket auth hardening is tracked in audit 10 F#4/F#7 and is
         # deferred from this fix.
         skip_paths = {
-            "/", "/metrics", "/settings", "/costs",
+            "/", "/metrics", "/settings", "/costs", "/trace",
             "/api/health", "/docs", "/redoc", "/openapi.json",
         }
         if (
@@ -593,6 +593,18 @@ def create_app(
     @app.get("/costs")
     async def costs_page(request: Request):
         return templates.TemplateResponse(request, "costs.html")
+
+    @app.get("/trace")
+    async def trace_page(request: Request):
+        """Standalone execution-trace view.
+
+        Bookmarkable URL: ``/trace?group_id=FEAT-001``. Fetches
+        ``/api/groups/{id}/trace`` client-side and renders the
+        per-task timing / cost / verification grid plus group
+        aggregates. Self-contained — doesn't touch the rest of
+        the dashboard's UI surface.
+        """
+        return templates.TemplateResponse(request, "trace.html")
 
 
 
