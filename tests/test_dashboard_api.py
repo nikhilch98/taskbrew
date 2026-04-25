@@ -180,6 +180,29 @@ async def test_get_group_graph(app_client):
 # ------------------------------------------------------------------
 
 
+async def test_trace_page_renders(app_client):
+    """GET /trace returns the standalone execution-trace HTML page."""
+    resp = await app_client["client"].get("/trace")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Execution Trace" in body
+    assert "groupIdInput" in body
+    assert "/api/groups/" in body  # the JS calls back into the API
+
+
+async def test_trace_page_with_group_id_query(app_client):
+    """The page works as a bookmarkable URL with ?group_id=X.
+    The page itself is the same; the JS auto-loads on paint."""
+    board = app_client["board"]
+    group = await board.create_group(title="X", origin="pm", created_by="pm")
+    resp = await app_client["client"].get(
+        f"/trace?group_id={group['id']}"
+    )
+    assert resp.status_code == 200
+    # The HTML is static; the JS reads the query param client-side.
+    assert "groupIdInput" in resp.text
+
+
 async def test_group_trace_unknown_group_returns_404(app_client):
     resp = await app_client["client"].get("/api/groups/nonexistent/trace")
     assert resp.status_code == 404
