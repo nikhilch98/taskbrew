@@ -1271,6 +1271,40 @@ async def test_task_artifacts_no_output_and_no_files(artifact_client):
     assert resp.json()["files"] == []
 
 
+async def test_artifact_content_returns_404_for_missing_file(artifact_client):
+    """Previously this returned 200 with empty content, masking the
+    "file never existed" case as "file is empty". Now 404."""
+    c = artifact_client["client"]
+    board = artifact_client["board"]
+    group = await board.create_group(title="X", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="T",
+        task_type="bug_fix", assigned_to="coder", created_by="human",
+    )
+
+    resp = await c.get(
+        f"/api/artifacts/{group['id']}/{task['id']}/never-existed.md"
+    )
+    assert resp.status_code == 404
+
+
+async def test_artifact_content_returns_404_for_synthetic_with_no_output(artifact_client):
+    """A request for the synthetic agent_output.md path on a task with no
+    output_text should 404 instead of returning empty content."""
+    c = artifact_client["client"]
+    board = artifact_client["board"]
+    group = await board.create_group(title="X", origin="pm", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="T",
+        task_type="bug_fix", assigned_to="coder", created_by="human",
+    )
+
+    resp = await c.get(
+        f"/api/artifacts/{group['id']}/{task['id']}/agent_output.md"
+    )
+    assert resp.status_code == 404
+
+
 async def test_list_all_artifacts_merges_flat_and_output_text(artifact_client):
     """/api/artifacts should list tasks whose only artifact is output_text or a flat file."""
     c = artifact_client["client"]

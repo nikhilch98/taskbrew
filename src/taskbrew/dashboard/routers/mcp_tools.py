@@ -10,6 +10,7 @@ to the shared :class:`AuthManager` when auth is enabled.
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import APIRouter, HTTPException, Header
 from typing import Optional
@@ -22,6 +23,7 @@ _pipeline_getter = None
 _task_board = None
 _auth_manager = None
 _event_bus = None
+_orchestrator_getter = None
 _auth_warning_emitted = False
 
 
@@ -31,8 +33,9 @@ def set_mcp_deps(
     task_board=None,
     auth_manager=None,
     event_bus=None,
+    orchestrator_getter=None,
 ):
-    """Set dependencies. Called from app.py startup.
+    """Set dependencies. Called by app.py at startup.
 
     *auth_manager* is optional for backward compatibility. When supplied
     (strongly recommended) _get_token validates the bearer token suffix
@@ -43,14 +46,21 @@ def set_mcp_deps(
     *event_bus* is used by record_check to emit task.check_recorded
     events; if omitted the tool still writes to the DB but the WS
     consumer won't see live updates.
+
+    *orchestrator_getter* is a callable that returns the active
+    orchestrator (or None). Used by complete_task to resolve the
+    agent's worktree path and ingest declared artifact_paths into
+    the artifact_store. If omitted the ingestion silently no-ops --
+    the rest of complete_task still works.
     """
     global _interaction_mgr, _pipeline_getter, _task_board
-    global _auth_manager, _event_bus
+    global _auth_manager, _event_bus, _orchestrator_getter
     _interaction_mgr = interaction_mgr
     _pipeline_getter = pipeline_getter
     _task_board = task_board
     _auth_manager = auth_manager
     _event_bus = event_bus
+    _orchestrator_getter = orchestrator_getter
 
 
 def _get_token(authorization: Optional[str] = Header(None)) -> str:
@@ -78,6 +88,98 @@ def _get_token(authorization: Optional[str] = Header(None)) -> str:
     return token
 
 
+_MAX_INGEST_ARTIFACT_COUNT = 50
+
+
+async def _ingest_artifact_paths(
+    *,
+    task_id: str,
+    group_id: str,
+    artifact_paths,
+) -> list[str]:
+    """Copy each declared artifact_path from the agent's worktree into
+    the artifact_store under ``<group>/<task>/<basename>`` so the
+    dashboard's artifact viewer can find it later.
+
+    Validates every path is contained inside the agent's own worktree
+    (no ``../etc/passwd``). Skips silently when the prerequisites for
+    ingestion aren't available -- the agent's complete_task call still
+    succeeds even if we can't copy the files (e.g., test fixtures with
+    no real worktree manager).
+
+    Returns the list of basenames successfully ingested.
+    """
+    if not artifact_paths or not isinstance(artifact_paths, list):
+        return []
+    if not _task_board or not _orchestrator_getter:
+        return []
+    orch = _orchestrator_getter()
+    worktree_mgr = getattr(orch, "worktree_manager", None) if orch else None
+    if not worktree_mgr:
+        return []
+
+    # Look up the task's claimant so we know which agent's worktree
+    # to read from.
+    task = await _task_board.get_task(task_id)
+    if not task:
+        return []
+    claimed_by = task.get("claimed_by") or ""
+    worktree_path = worktree_mgr.get_worktree_path(claimed_by)
+    if not worktree_path or not os.path.isdir(worktree_path):
+        return []
+
+    # Cap how many paths we'll process per call so a hostile / careless
+    # agent can't trigger 10k file copies.
+    paths_to_process = artifact_paths[:_MAX_INGEST_ARTIFACT_COUNT]
+
+    from taskbrew.orchestrator.artifact_store import ArtifactStore
+    base = orch.artifact_store.base_dir if hasattr(orch, "artifact_store") else None
+    if not base:
+        # Fall back to project_dir/artifacts to match the dashboard's
+        # _artifact_base_dir resolution.
+        tc = getattr(orch, "team_config", None)
+        artifacts_subdir = getattr(tc, "artifacts_base_dir", "artifacts") if tc else "artifacts"
+        base = os.path.join(orch.project_dir, artifacts_subdir)
+    store = ArtifactStore(base_dir=str(base))
+
+    worktree_real = os.path.realpath(worktree_path)
+    ingested: list[str] = []
+    for path_entry in paths_to_process:
+        if not isinstance(path_entry, str) or not path_entry.strip():
+            continue
+        # Reject absolute and parent-traversal inputs at the API
+        # boundary; rely on realpath containment as defense-in-depth.
+        if path_entry.startswith("/") or ".." in path_entry.split("/"):
+            logger.warning(
+                "Rejecting artifact_path %r for task %s: not relative or contains '..'",
+                path_entry, task_id,
+            )
+            continue
+        full = os.path.realpath(os.path.join(worktree_path, path_entry))
+        if full != worktree_real and not full.startswith(worktree_real + os.sep):
+            logger.warning(
+                "Rejecting artifact_path %r for task %s: outside worktree",
+                path_entry, task_id,
+            )
+            continue
+        try:
+            dest = store.ingest_file(group_id, task_id, full)
+        except Exception as exc:
+            logger.warning(
+                "Failed to ingest artifact %r for task %s: %s",
+                path_entry, task_id, exc,
+            )
+            continue
+        if dest:
+            ingested.append(os.path.basename(dest))
+    if ingested:
+        logger.info(
+            "Ingested %d artifact(s) for task %s: %s",
+            len(ingested), task_id, ingested,
+        )
+    return ingested
+
+
 @router.post("/mcp/tools/complete_task")
 async def mcp_complete_task(
     body: dict,
@@ -92,6 +194,14 @@ async def mcp_complete_task(
     agent_role = body.get("agent_role", "")
     approval_mode = body.get("approval_mode", "auto")
 
+    # Ingest declared artifact_paths into the artifact_store regardless
+    # of approval mode, so the dashboard's artifact viewer can find them
+    # later even after the worktree resets between tasks. Done before
+    # the auto/manual branch because both paths benefit.
+    ingested = await _ingest_artifact_paths(
+        task_id=task_id, group_id=group_id, artifact_paths=artifact_paths,
+    )
+
     if approval_mode == "auto":
         # Actually mark the task as completed in the DB and resolve deps
         if _task_board:
@@ -100,7 +210,11 @@ async def mcp_complete_task(
                 logger.info("Task %s auto-completed via MCP", task_id)
             except ValueError:
                 logger.warning("Task %s not found or not in_progress for auto-complete", task_id)
-        return {"status": "approved", "message": "Auto-approved"}
+        return {
+            "status": "approved",
+            "message": "Auto-approved",
+            "ingested_artifacts": ingested,
+        }
 
     if approval_mode == "first_run" and _interaction_mgr:
         already_approved = await _interaction_mgr.check_first_run(group_id, agent_role)

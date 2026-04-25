@@ -1207,11 +1207,24 @@ async function showArtifactViewer(groupId, taskId) {
         const data = await resp.json();
 
         if (data.files && data.files.length > 0) {
+            // audit 13 F#2 / artifact-flow fix: use data-* attributes +
+            // delegated listener instead of inline onclick="fn('...')"
+            // string-interpolation. The escape-encoded singlequote
+            // pattern is unreliable when the browser HTML-decodes the
+            // attribute before parsing it as JS.
             for (const file of data.files) {
-                html += '<div style="margin-bottom: 12px; cursor: pointer;" onclick="loadArtifactContent(\'' + escapeHtml(groupId) + '\', \'' + escapeHtml(String(taskId)) + '\', \'' + escapeHtml(file) + '\')">' +
-                    '<div style="padding: 12px; background: var(--bg-card); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); transition: border-color 0.2s;" onmouseover="this.style.borderColor=\'var(--border-hover)\'" onmouseout="this.style.borderColor=\'var(--border-subtle)\'">' +
-                    '<span style="font-size: 14px;">&#128196; ' + escapeHtml(file) + '</span>' +
-                    '</div></div>';
+                html += '<div class="artifact-row"'
+                    + ' data-group-id="' + escapeHtml(groupId) + '"'
+                    + ' data-task-id="' + escapeHtml(String(taskId)) + '"'
+                    + ' data-filename="' + escapeHtml(file) + '"'
+                    + ' style="margin-bottom: 12px; cursor: pointer;">'
+                    + '<div style="padding: 12px; background: var(--bg-card);'
+                    + ' border-radius: var(--radius-sm);'
+                    + ' border: 1px solid var(--border-subtle);'
+                    + ' transition: border-color 0.2s;">'
+                    + '<span style="font-size: 14px;">&#128196; '
+                    + escapeHtml(file) + '</span>'
+                    + '</div></div>';
             }
         } else {
             html += '<div style="color: var(--text-muted); text-align: center; padding: 40px;">No artifacts yet</div>';
@@ -1224,23 +1237,63 @@ async function showArtifactViewer(groupId, taskId) {
 
     panel.innerHTML = html;
     document.body.appendChild(panel);
+
+    // Delegated click listener: catch any .artifact-row click and load.
+    panel.addEventListener('click', function (ev) {
+        const row = ev.target.closest('.artifact-row');
+        if (!row || !panel.contains(row)) return;
+        const gid = row.getAttribute('data-group-id') || '';
+        const tid = row.getAttribute('data-task-id') || '';
+        const fn  = row.getAttribute('data-filename') || '';
+        if (gid && tid && fn) loadArtifactContent(gid, tid, fn);
+    });
+
     requestAnimationFrame(() => { panel.style.transform = 'translateX(0)'; });
 }
 
 async function loadArtifactContent(groupId, taskId, filename) {
+    const container = document.getElementById('artifactContent');
     try {
         const resp = await fetch('/api/artifacts/' + encodeURIComponent(groupId) + '/' + encodeURIComponent(taskId) + '/' + encodeURIComponent(filename));
-        const data = await resp.json();
-        const container = document.getElementById('artifactContent');
-        if (container) {
-            container.innerHTML = '<div style="background: var(--bg-card); border-radius: var(--radius-sm); padding: 16px; border: 1px solid var(--border-subtle);">' +
-                '<div style="font-weight: 600; margin-bottom: 8px;">' + escapeHtml(filename) + '</div>' +
-                '<pre style="white-space: pre-wrap; font-size: 12px; color: var(--text-secondary); max-height: 500px; overflow-y: auto; font-family: \'SF Mono\', \'Fira Code\', monospace;">' + escapeHtml(data.content || '') + '</pre>' +
-                '</div>';
+        if (resp.status === 404) {
+            if (container) {
+                container.innerHTML = '<div style="color: var(--text-muted); padding: 16px;">'
+                    + 'Artifact not found: ' + escapeHtml(filename) + '</div>';
+            }
+            return;
         }
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!container) return;
+        const raw = data.content || '';
+        // Render markdown-extension files through safeMarkdown so the
+        // viewer presents headings / lists / code blocks rendered
+        // rather than as raw markdown source.
+        const lower = filename.toLowerCase();
+        const isMarkdown = lower.endsWith('.md') || lower.endsWith('.markdown');
+        let bodyHtml;
+        if (isMarkdown && typeof safeMarkdown === 'function') {
+            bodyHtml = '<div class="artifact-md"'
+                + ' style="font-size: 13px; max-height: 500px; overflow-y: auto;">'
+                + safeMarkdown(raw) + '</div>';
+        } else {
+            bodyHtml = '<pre style="white-space: pre-wrap; font-size: 12px;'
+                + ' color: var(--text-secondary); max-height: 500px;'
+                + ' overflow-y: auto;'
+                + ' font-family: \'SF Mono\', \'Fira Code\', monospace;">'
+                + escapeHtml(raw) + '</pre>';
+        }
+        container.innerHTML = '<div style="background: var(--bg-card);'
+            + ' border-radius: var(--radius-sm); padding: 16px;'
+            + ' border: 1px solid var(--border-subtle);">'
+            + '<div style="font-weight: 600; margin-bottom: 8px;">'
+            + escapeHtml(filename) + '</div>'
+            + bodyHtml + '</div>';
     } catch(e) {
-        const container = document.getElementById('artifactContent');
-        if (container) container.innerHTML = '<div style="color: var(--accent-rose); padding: 16px;">Failed to load file content</div>';
+        if (container) {
+            container.innerHTML = '<div style="color: var(--accent-rose); padding: 16px;">'
+                + 'Failed to load file content</div>';
+        }
     }
 }
 
