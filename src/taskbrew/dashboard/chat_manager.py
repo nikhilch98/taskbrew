@@ -71,7 +71,17 @@ class ChatManager:
             return lock
 
     async def start_session(self, agent_name: str, agent_config: AgentConfig) -> ChatSession:
-        """Start a new chat session for an agent.
+        """Start a (or attach to an existing) chat session for an agent.
+
+        Idempotent: if a healthy session for ``agent_name`` already
+        exists, return it. The WS handler relies on this so that a
+        second tab / page refresh / reconnect after disconnect can
+        attach to a session another connection started, rather than
+        the user seeing "already exists" errors.
+
+        Stale sessions (``client is None`` or ``is_connected = False``)
+        are torn down and recreated. This catches the case where a
+        prior SDK process died but the dict entry survived.
 
         audit 10 F#25: take a per-agent lock around the
         check-then-spawn window so two concurrent callers for the same
@@ -80,8 +90,22 @@ class ChatManager:
         """
         lock = await self._get_start_lock(agent_name)
         async with lock:
-            if agent_name in self.sessions:
-                raise ValueError(f"Chat session for '{agent_name}' already exists")
+            existing = self.sessions.get(agent_name)
+            if existing is not None:
+                # Healthy: hand back the same object. The WS handler
+                # uses identity to decide ownership.
+                if existing.is_connected and existing.client is not None:
+                    return existing
+                # Stale entry from a crashed prior client. Best-effort
+                # disconnect, then drop it and fall through to create
+                # a fresh one.
+                if existing.client is not None:
+                    try:
+                        await existing.client.disconnect()
+                    except Exception:
+                        pass
+                existing.is_connected = False
+                self.sessions.pop(agent_name, None)
 
             session_id = str(uuid.uuid4())[:8]
             opts = ClaudeAgentOptions(
