@@ -63,8 +63,38 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- check, emitting merged_unverified events for tasks with no checks.
     completion_checks      TEXT DEFAULT '{}',
     merge_status           TEXT,
-    verification_retries   INTEGER DEFAULT 0
+    verification_retries   INTEGER DEFAULT 0,
+    -- Task-level pause anchor (migration 32). Set when the agent
+    -- enters a manual-mode ask_question wait; cleared on resolve
+    -- or task cancel. The activity-based idle watchdog skips tasks
+    -- while this is non-NULL.
+    awaiting_input_since   TEXT
 );
+
+-- Structured agent clarifications (migration 32). Persists every
+-- ask_question call the agent makes and the eventual selected
+-- answer + selector (agent | user). Indices match the dashboard's
+-- pending list and per-task lookup patterns.
+CREATE TABLE IF NOT EXISTS agent_questions (
+    id                TEXT PRIMARY KEY,
+    task_id           TEXT NOT NULL REFERENCES tasks(id),
+    group_id          TEXT NOT NULL,
+    agent_role        TEXT NOT NULL,
+    instance_id       TEXT,
+    question          TEXT NOT NULL,
+    options           TEXT NOT NULL,
+    preferred_answer  TEXT NOT NULL,
+    reasoning         TEXT NOT NULL,
+    selected_answer   TEXT,
+    selected_by       TEXT,
+    status            TEXT NOT NULL DEFAULT 'pending',
+    created_at        TEXT NOT NULL,
+    resolved_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_questions_task
+    ON agent_questions(task_id);
+CREATE INDEX IF NOT EXISTS idx_agent_questions_status
+    ON agent_questions(status);
 
 CREATE TABLE IF NOT EXISTS task_dependencies (
     task_id     TEXT NOT NULL REFERENCES tasks(id),

@@ -326,6 +326,74 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             return f"Error sending message: {e}"
 
     @mcp.tool()
+    def ask_question(
+        task_id: str,
+        group_id: str,
+        question: str,
+        options: list[str],
+        preferred_answer: str,
+        reasoning: str,
+    ) -> str:
+        """Ask a structured multiple-choice question when the task is ambiguous.
+
+        Use this INSTEAD of guessing when the task could be reasonably
+        completed in two or more meaningfully different ways. List 2-5
+        candidate answers, set ``preferred_answer`` to your best guess
+        (must be one of the options), and explain your choice in
+        ``reasoning``. The response returns the selected answer — your
+        own pick if the role is in auto mode, or the user's pick if
+        in manual mode (in which case this call blocks until answered).
+
+        Args:
+            task_id: The ID of the task you are working on.
+            group_id: The group ID the task belongs to.
+            question: The clarifying question (max 2000 chars).
+            options: 2-10 distinct candidate answers (each ≤ 500 chars).
+            preferred_answer: Your best guess — must be in ``options``.
+            reasoning: Why you'd pick that answer (max 4000 chars).
+        """
+        denial = gate_or_error("ask_question")
+        if denial:
+            return denial
+        bound_role = os.environ.get(_ENV_ROLE) or ""
+        payload = {
+            "task_id": task_id,
+            "group_id": group_id,
+            "agent_role": bound_role,
+            "question": question,
+            "options": options,
+            "preferred_answer": preferred_answer,
+            "reasoning": reasoning,
+        }
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{api_url}/mcp/tools/ask_question",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            # No timeout: manual mode blocks indefinitely until the user answers.
+            with urllib.request.urlopen(req, timeout=None) as resp:
+                result = json.loads(resp.read())
+            if result.get("status") == "cancelled":
+                return (
+                    f"Question was cancelled before resolution; "
+                    f"the task may have been cancelled by the user."
+                )
+            return (
+                f"Selected answer: {result.get('selected_answer')!r} "
+                f"(by {result.get('selected_by')}, request_id={result.get('request_id')})"
+            )
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            return f"Error asking question (HTTP {e.code}): {body}"
+        except urllib.error.URLError as e:
+            return f"Error asking question (connection failed): {e.reason}"
+        except Exception as e:
+            return f"Error asking question (unexpected error): {e}"
+
+    @mcp.tool()
     def escalate_task(
         task_id: str,
         from_agent: str,

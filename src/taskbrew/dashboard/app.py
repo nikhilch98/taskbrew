@@ -167,7 +167,7 @@ def create_app(
         # WebSocket auth hardening is tracked in audit 10 F#4/F#7 and is
         # deferred from this fix.
         skip_paths = {
-            "/", "/metrics", "/settings", "/costs", "/trace",
+            "/", "/metrics", "/settings", "/costs", "/trace", "/questions",
             "/api/health", "/docs", "/redoc", "/openapi.json",
         }
         if (
@@ -598,6 +598,17 @@ def create_app(
     @app.get("/costs")
     async def costs_page(request: Request):
         return templates.TemplateResponse(request, "costs.html")
+
+    @app.get("/questions")
+    async def questions_page(request: Request):
+        """Standalone pending-questions view.
+
+        Lists every pending agent_questions row with the agent's
+        recommendation collapsed by default; lets the human pick an
+        option and submit. Cancel-this-task button calls the existing
+        cancel endpoint.
+        """
+        return templates.TemplateResponse(request, "questions.html")
 
     @app.get("/trace")
     async def trace_page(request: Request):

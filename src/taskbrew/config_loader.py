@@ -457,6 +457,19 @@ class RoleConfig:
     max_revision_cycles: int = 0  # 0 = unlimited
     max_clarification_requests: int = 10
     max_route_tasks: int = 100
+    # Structured-clarification mode. ``auto`` -> agent picks its own
+    # answer (server records selected_by=agent and returns immediately).
+    # ``manual`` -> task pauses indefinitely until a human answers via
+    # the dashboard, or cancels the task.
+    # Design:
+    # docs/superpowers/specs/2026-04-25-agent-questions-design.md
+    clarification_mode: str = "auto"
+    # Max wall-clock seconds the agent can spend without producing any
+    # SDK activity (tool call / token / message). Replaces the old
+    # max_execution_time semantics: time spent legitimately waiting on
+    # ask_question / artifact review doesn't count toward this. If not
+    # set in YAML, falls back to max_execution_time for back-compat.
+    idle_timeout: int = 1800
     # ``None`` means "auto-detect from tools": a role with any file-
     # mutating tool (Bash/Edit/Write/NotebookEdit) gets a worktree.
     # Explicit ``True`` forces a worktree on (e.g. a plan-only role
@@ -520,6 +533,15 @@ def _parse_role(data: dict) -> RoleConfig:
         max_revision_cycles=data.get("max_revision_cycles", 0),
         max_clarification_requests=data.get("max_clarification_requests", 10),
         max_route_tasks=data.get("max_route_tasks", 100),
+        clarification_mode=data.get("clarification_mode", "auto"),
+        # idle_timeout falls back to max_execution_time for back-compat:
+        # operators that already tuned max_execution_time get the same
+        # number applied to the new activity-based watchdog.
+        idle_timeout=int(
+            data.get("idle_timeout")
+            or data.get("max_execution_time")
+            or 1800
+        ),
         # Preserve the three-state semantics: missing key means
         # "auto-detect" (None), not "disabled" (False).
         uses_worktree=data.get("uses_worktree"),
@@ -532,6 +554,13 @@ def _parse_role(data: dict) -> RoleConfig:
         _validate_range(role_cfg.max_turns, "max_turns", 1)
     if role_cfg.max_execution_time is not None:
         _validate_range(role_cfg.max_execution_time, "max_execution_time", 1)
+    if role_cfg.idle_timeout is not None:
+        _validate_range(role_cfg.idle_timeout, "idle_timeout", 1)
+    if role_cfg.clarification_mode not in ("auto", "manual"):
+        raise ValueError(
+            f"Invalid clarification_mode {role_cfg.clarification_mode!r}; "
+            "must be 'auto' or 'manual'"
+        )
 
     return role_cfg
 

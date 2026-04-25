@@ -128,13 +128,32 @@ class AgentRunner:
             + context[-tail_size:]
         )
 
-    async def run(self, prompt: str, cwd: str | None = None) -> str:
-        """Run the agent with a prompt and return the final result text."""
+    async def run(
+        self,
+        prompt: str,
+        cwd: str | None = None,
+        on_activity=None,
+    ) -> str:
+        """Run the agent with a prompt and return the final result text.
+
+        ``on_activity`` is an optional sync callback fired every time the
+        SDK emits a sign of life (tool use, text block, result message).
+        Used by the activity-based idle watchdog in AgentLoop to know
+        the agent isn't stuck. Exceptions in the callback are swallowed
+        so a buggy listener can't break execution.
+        """
         mtypes = get_message_types(self.provider)
         ResultMessage = mtypes["ResultMessage"]
         AssistantMessage = mtypes["AssistantMessage"]
         TextBlock = mtypes["TextBlock"]
         ToolUseBlock = mtypes["ToolUseBlock"]
+
+        def _ping():
+            if on_activity is not None:
+                try:
+                    on_activity()
+                except Exception:
+                    pass  # never let the callback break the run
 
         self.status = AgentStatus.WORKING
         options = self.build_options(cwd=cwd)
@@ -148,6 +167,7 @@ class AgentRunner:
                 if hasattr(message, "session_id"):
                     self.session_id = message.session_id
 
+                _ping()  # any incoming SDK message is activity
                 if isinstance(message, ResultMessage):
                     result_text = (message.result or "") if hasattr(message, "result") else ""
                     self._log.append(AgentEvent(

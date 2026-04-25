@@ -5,7 +5,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -137,6 +140,58 @@ async def get_group_graph(group_id: str):
 
 
 _MAX_TRACE_TASKS = 1000
+
+
+# ------------------------------------------------------------------
+# Agent questions (structured clarifications)
+# Design:
+# docs/superpowers/specs/2026-04-25-agent-questions-design.md
+# ------------------------------------------------------------------
+
+
+@router.get("/api/questions/pending")
+async def get_pending_questions():
+    orch = get_orch()
+    qmgr = getattr(orch, "agent_question_manager", None)
+    if qmgr is None:
+        return {"questions": [], "count": 0}
+    pending = await qmgr.get_pending()
+    return {"questions": pending, "count": len(pending)}
+
+
+@router.get("/api/questions/{question_id}")
+async def get_question(question_id: str):
+    orch = get_orch()
+    qmgr = getattr(orch, "agent_question_manager", None)
+    if qmgr is None:
+        raise HTTPException(404, f"Question not found: {question_id}")
+    row = await qmgr.get(question_id)
+    if row is None:
+        raise HTTPException(404, f"Question not found: {question_id}")
+    return row
+
+
+@router.post("/api/questions/{question_id}/answer")
+async def answer_question(question_id: str, body: dict):
+    """Human submits the chosen option for a pending agent question.
+
+    Body: ``{"selected_answer": str}``. Must match one of the
+    options the agent originally supplied. Wakes the blocked agent
+    via the in-memory event in AgentQuestionManager.
+    """
+    orch = get_orch()
+    qmgr = getattr(orch, "agent_question_manager", None)
+    if qmgr is None:
+        raise HTTPException(503, "agent_question_manager not configured")
+    selected = (body or {}).get("selected_answer")
+    if not isinstance(selected, str) or not selected:
+        raise HTTPException(400, "selected_answer is required")
+    try:
+        return await qmgr.answer(question_id, selected)
+    except ValueError as exc:
+        msg = str(exc)
+        status = 404 if "not found" in msg else 400
+        raise HTTPException(status, msg)
 
 
 @router.get("/api/groups/{group_id}/trace")
@@ -547,6 +602,15 @@ async def cancel_task(task_id: str, body: CancelTaskBody = CancelTaskBody()):
     orch = get_orch()
     reason = body.reason
     result = await orch.task_board.cancel_task(task_id, reason=reason)
+    # Wake any agent currently blocked on a manual ask_question for
+    # this task. Without this hook the agent would sit forever on
+    # its asyncio.Event despite the task row being cancelled.
+    qmgr = getattr(orch, "agent_question_manager", None)
+    if qmgr is not None:
+        try:
+            await qmgr.cancel_for_task(task_id)
+        except Exception:
+            logger.debug("cancel_for_task pending questions failed", exc_info=True)
     await orch.event_bus.emit("task.cancelled", {"task_id": task_id, "reason": reason})
     return result
 
