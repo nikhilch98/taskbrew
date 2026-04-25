@@ -259,6 +259,106 @@ async def mcp_request_clarification(
     raise HTTPException(500, "Interaction manager not configured")
 
 
+@router.post("/mcp/tools/ask_question")
+async def mcp_ask_question(
+    body: dict,
+    authorization: Optional[str] = Header(None),
+):
+    """Structured-options clarification with per-role auto / manual mode.
+
+    In ``auto`` mode (default), the agent's preferred_answer is
+    persisted with selected_by="agent" and the call returns
+    immediately. In ``manual`` mode the call blocks indefinitely
+    until either a human submits an answer via
+    ``POST /api/questions/{id}/answer`` or the task is cancelled.
+
+    Mode is read from the role's ``clarification_mode`` config.
+    Enforces ``max_clarification_requests`` per (task, role); the
+    n+1th call returns 429.
+
+    Design:
+    docs/superpowers/specs/2026-04-25-agent-questions-design.md
+    """
+    _get_token(authorization)
+    task_id = body.get("task_id") or ""
+    group_id = body.get("group_id") or ""
+    agent_role = body.get("agent_role") or ""
+    question = body.get("question") or ""
+    options = body.get("options") or []
+    preferred_answer = body.get("preferred_answer") or ""
+    reasoning = body.get("reasoning") or ""
+
+    for label, value in (
+        ("task_id", task_id), ("group_id", group_id),
+        ("agent_role", agent_role),
+    ):
+        if not isinstance(value, str) or not value:
+            raise HTTPException(400, f"{label} is required")
+
+    if not _orchestrator_getter:
+        raise HTTPException(503, "orchestrator not wired")
+    orch = _orchestrator_getter()
+    qmgr = getattr(orch, "agent_question_manager", None) if orch else None
+    if qmgr is None:
+        raise HTTPException(503, "agent_question_manager not configured")
+
+    # Resolve mode + budget from the role config. Unknown roles fall
+    # back to the safe defaults (auto, budget 10).
+    role_cfg = (orch.roles or {}).get(agent_role) if orch else None
+    if role_cfg is not None:
+        mode = getattr(role_cfg, "clarification_mode", "auto") or "auto"
+        budget = getattr(role_cfg, "max_clarification_requests", 10) or 10
+    else:
+        mode = "auto"
+        budget = 10
+
+    used = await qmgr.count_for_task(task_id, agent_role)
+    if used >= budget:
+        if _event_bus is not None:
+            try:
+                await _event_bus.emit(
+                    "task.clarification_budget_exhausted",
+                    {
+                        "task_id": task_id, "group_id": group_id,
+                        "agent_role": agent_role, "budget": budget,
+                    },
+                )
+            except Exception:
+                logger.debug("event emit failed", exc_info=True)
+        raise HTTPException(
+            429,
+            f"Clarification budget exhausted ({used}/{budget}); escalating",
+        )
+
+    # Identify the asking instance for audit. Best-effort lookup; the
+    # MCP layer doesn't authenticate identity, so we trust the task
+    # row's claimed_by as the agent's instance_id.
+    instance_id = None
+    if _task_board is not None:
+        try:
+            row = await _task_board.get_task(task_id)
+            if row:
+                instance_id = row.get("claimed_by")
+        except Exception:
+            pass
+
+    try:
+        result = await qmgr.ask(
+            task_id=task_id,
+            group_id=group_id,
+            agent_role=agent_role,
+            instance_id=instance_id,
+            question=question,
+            options=options,
+            preferred_answer=preferred_answer,
+            reasoning=reasoning,
+            mode=mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return result
+
+
 _VALID_TASK_PRIORITIES = frozenset({"low", "medium", "high", "critical"})
 _MAX_MCP_TITLE_LEN = 500
 _MAX_MCP_DESCRIPTION_LEN = 20_000

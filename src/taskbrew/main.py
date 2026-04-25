@@ -361,6 +361,12 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
     orch.review_learning = ReviewLearningManager(db)
     orch.tool_router = ToolRouter(db)
 
+    # Structured agent clarifications (per-role auto / manual mode).
+    # Design:
+    # docs/superpowers/specs/2026-04-25-agent-questions-design.md
+    from taskbrew.orchestrator.agent_questions import AgentQuestionManager
+    orch.agent_question_manager = AgentQuestionManager(db, event_bus=event_bus)
+
     # Intelligence managers v2
     from taskbrew.intelligence.autonomous import AutonomousManager
     from taskbrew.intelligence.code_intel import CodeIntelligenceManager

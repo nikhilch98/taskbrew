@@ -53,7 +53,16 @@ system_prompt: |
     surface in the dashboard -- prefer recording a `skipped`
     with a reason over recording nothing.
 
-tools: [Read, Write, Edit, Bash, Glob, Grep, mcp__task-tools__create_task]
+  Handling ambiguity:
+  - When the task is ambiguous, use `ask_question(question, options,
+    preferred_answer, reasoning)` instead of guessing. List 2-5
+    candidate answers; record your best guess in `preferred_answer`
+    and explain the choice in `reasoning`. The system returns the
+    selected answer (your own pick in auto mode, or the user's in
+    manual mode). Do not call this for trivial decisions; you have
+    a budget per task.
+
+tools: [Read, Write, Edit, Bash, Glob, Grep, mcp__task-tools__create_task, mcp__task-tools__ask_question]
 model: claude-sonnet-4-6
 produces: [implementation, bug_fix, revision]
 accepts: [implementation, bug_fix, revision]

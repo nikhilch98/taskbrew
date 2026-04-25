@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TaskBrew — Pending Agent Questions</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0b0d12; color: #e2e8f0;
+            margin: 0; padding: 24px;
+        }
+        h1 { margin: 0 0 16px 0; font-size: 22px; }
+        .empty {
+            padding: 40px; text-align: center;
+            color: #94a3b8; font-size: 14px;
+        }
+        .qcard {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 16px 18px; margin-bottom: 14px;
+        }
+        .qmeta {
+            display: flex; gap: 10px; align-items: center;
+            font-size: 12px; color: #94a3b8;
+            margin-bottom: 10px;
+        }
+        .badge {
+            background: #0f172a; padding: 2px 8px;
+            border-radius: 999px; color: #cbd5e1;
+        }
+        .badge-role { background: #1e3a8a; color: #93c5fd; }
+        .qtext {
+            font-size: 15px; font-weight: 600;
+            color: #f1f5f9; margin-bottom: 12px;
+        }
+        .options { display: flex; flex-direction: column; gap: 8px; }
+        .options label {
+            display: flex; gap: 10px; align-items: flex-start;
+            padding: 10px 12px;
+            background: #0f172a; border: 1px solid #334155;
+            border-radius: 6px; cursor: pointer;
+            font-size: 13px;
+        }
+        .options label:hover { border-color: #4f46e5; }
+        .options input[type="radio"] { margin-top: 2px; }
+        .actions {
+            margin-top: 14px;
+            display: flex; gap: 10px;
+        }
+        .actions button {
+            padding: 8px 16px;
+            border: none; border-radius: 6px; cursor: pointer;
+            font-size: 13px; font-weight: 600;
+        }
+        .btn-submit {
+            background: #6366f1; color: white;
+        }
+        .btn-submit:hover { background: #4f46e5; }
+        .btn-submit:disabled {
+            opacity: 0.5; cursor: not-allowed;
+        }
+        .btn-cancel {
+            background: transparent; color: #fca5a5;
+            border: 1px solid #7f1d1d;
+        }
+        .btn-cancel:hover {
+            background: #7f1d1d; color: #fca5a5;
+        }
+        details {
+            margin-top: 14px; padding: 8px 12px;
+            background: #0f172a; border-radius: 6px;
+            font-size: 12px;
+        }
+        details summary {
+            cursor: pointer; color: #94a3b8;
+            font-weight: 600;
+        }
+        details .reasoning {
+            margin-top: 8px; color: #cbd5e1;
+            white-space: pre-wrap;
+        }
+        details .preferred {
+            color: #93c5fd; font-weight: 600;
+        }
+        .feedback {
+            margin-top: 10px; font-size: 12px;
+            padding: 6px 10px; border-radius: 6px;
+        }
+        .feedback-success {
+            background: #064e3b; color: #6ee7b7;
+        }
+        .feedback-error {
+            background: #7f1d1d; color: #fca5a5;
+        }
+        .header-bar {
+            display: flex; gap: 12px; align-items: center;
+            margin-bottom: 24px;
+        }
+        .refresh {
+            margin-left: auto;
+            background: transparent; border: 1px solid #334155;
+            color: #cbd5e1; padding: 6px 12px;
+            border-radius: 6px; cursor: pointer; font-size: 12px;
+        }
+        .refresh:hover { border-color: #6366f1; }
+    </style>
+</head>
+<body>
+    <div class="header-bar">
+        <h1>Pending Agent Questions <span id="countBadge" class="badge">0</span></h1>
+        <button id="refreshBtn" class="refresh">Refresh</button>
+    </div>
+    <div id="list">
+        <div class="empty">Loading…</div>
+    </div>
+
+    <script>
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/`/g, '&#96;');
+    }
+
+    function renderQuestion(q) {
+        const opts = q.options || [];
+        let html = '<div class="qcard" data-question-id="' + escapeHtml(q.id) + '"'
+            + ' data-task-id="' + escapeHtml(q.task_id) + '">'
+            + '<div class="qmeta">'
+            + '<span class="badge">' + escapeHtml(q.task_id) + '</span>'
+            + '<span class="badge badge-role">' + escapeHtml(q.agent_role) + '</span>'
+            + '<span>asked ' + escapeHtml(q.created_at || '') + '</span>'
+            + '</div>'
+            + '<div class="qtext">' + escapeHtml(q.question) + '</div>'
+            + '<div class="options">';
+        opts.forEach(function (o, idx) {
+            const radioId = q.id + '-opt-' + idx;
+            html += '<label for="' + escapeHtml(radioId) + '">'
+                + '<input type="radio" id="' + escapeHtml(radioId) + '"'
+                + ' name="answer-' + escapeHtml(q.id) + '"'
+                + ' value="' + escapeHtml(o) + '">'
+                + '<span>' + escapeHtml(o) + '</span></label>';
+        });
+        html += '</div>'
+            + '<details>'
+            + '<summary>Agent’s recommendation: '
+            + '<span class="preferred">' + escapeHtml(q.preferred_answer) + '</span></summary>'
+            + '<div class="reasoning">' + escapeHtml(q.reasoning) + '</div>'
+            + '</details>'
+            + '<div class="actions">'
+            + '<button class="btn-submit" disabled data-action="submit">Submit answer</button>'
+            + '<button class="btn-cancel" data-action="cancel">Cancel this task</button>'
+            + '</div>'
+            + '<div class="feedback" style="display:none;"></div>'
+            + '</div>';
+        return html;
+    }
+
+    async function load() {
+        const list = document.getElementById('list');
+        const badge = document.getElementById('countBadge');
+        list.innerHTML = '<div class="empty">Loading…</div>';
+        try {
+            const resp = await fetch('/api/questions/pending');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            badge.textContent = data.count;
+            if (data.count === 0) {
+                list.innerHTML = '<div class="empty">No pending questions.</div>';
+                return;
+            }
+            list.innerHTML = data.questions.map(renderQuestion).join('');
+        } catch (e) {
+            list.innerHTML = '<div class="empty">Failed to load: '
+                + escapeHtml(e.message) + '</div>';
+        }
+    }
+
+    function showFeedback(card, type, text) {
+        const el = card.querySelector('.feedback');
+        el.className = 'feedback feedback-' + type;
+        el.textContent = text;
+        el.style.display = 'block';
+    }
+
+    document.addEventListener('change', function (ev) {
+        if (ev.target.matches('input[type="radio"]')) {
+            const card = ev.target.closest('.qcard');
+            if (card) {
+                const submit = card.querySelector('button[data-action="submit"]');
+                if (submit) submit.disabled = false;
+            }
+        }
+    });
+
+    document.addEventListener('click', async function (ev) {
+        const card = ev.target.closest('.qcard');
+        if (!card) return;
+        const action = ev.target.getAttribute('data-action');
+        if (!action) return;
+        const qid = card.getAttribute('data-question-id');
+        const tid = card.getAttribute('data-task-id');
+        if (action === 'submit') {
+            const selected = card.querySelector('input[type="radio"]:checked');
+            if (!selected) return;
+            ev.target.disabled = true;
+            try {
+                const resp = await fetch('/api/questions/' + encodeURIComponent(qid) + '/answer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ selected_answer: selected.value }),
+                });
+                if (!resp.ok) {
+                    const t = await resp.text();
+                    throw new Error(t || ('HTTP ' + resp.status));
+                }
+                showFeedback(card, 'success', 'Submitted. Agent has been notified.');
+                setTimeout(load, 800);
+            } catch (e) {
+                showFeedback(card, 'error', 'Failed: ' + e.message);
+                ev.target.disabled = false;
+            }
+        } else if (action === 'cancel') {
+            if (!confirm('Cancel task ' + tid + '? The agent will fail this task.')) return;
+            ev.target.disabled = true;
+            try {
+                const resp = await fetch('/api/tasks/' + encodeURIComponent(tid) + '/cancel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: 'Cancelled from question dashboard' }),
+                });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                showFeedback(card, 'success', 'Task cancelled.');
+                setTimeout(load, 800);
+            } catch (e) {
+                showFeedback(card, 'error', 'Failed: ' + e.message);
+                ev.target.disabled = false;
+            }
+        }
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', load);
+    load();
+    // Auto-refresh every 30s so a stale tab catches new questions.
+    setInterval(load, 30000);
+    </script>
+</body>
+</html>

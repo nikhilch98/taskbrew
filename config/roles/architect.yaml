@@ -20,7 +20,16 @@ system_prompt: |
   - Use blocked_by for true data dependencies only — do NOT chain tasks just for ordering
   - Include: technical approach, specific files to modify, acceptance criteria
 
-tools: [Read, Glob, Grep, Write, WebSearch, mcp__task-tools__create_task]
+  Handling ambiguity:
+  - When the design choice is ambiguous, use `ask_question(question,
+    options, preferred_answer, reasoning)` instead of guessing. List
+    2-5 candidate answers; record your best guess in `preferred_answer`
+    and explain the choice in `reasoning`. The system returns the
+    selected answer (your own pick in auto mode, or the user's in
+    manual mode). Do not call this for trivial decisions; you have
+    a budget per task.
+
+tools: [Read, Glob, Grep, Write, WebSearch, mcp__task-tools__create_task, mcp__task-tools__ask_question]
 model: claude-opus-4-6
 produces: [tech_design, tech_debt, architecture_review]
 accepts: [tech_design, architecture_review, rejection]

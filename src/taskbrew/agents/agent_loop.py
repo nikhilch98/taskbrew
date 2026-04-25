@@ -484,7 +484,17 @@ class AgentLoop:
                 f"branch — do NOT create new branches or switch branches."
             )
 
-        output = await runner.run(prompt=context, cwd=cwd)
+        # Activity callback for the idle watchdog. Each SDK message
+        # (tool use / text block / result) bumps the timestamp so an
+        # actively-working agent never trips the timeout.
+        import time as _time
+
+        def _on_activity():
+            self._last_activity_ts = _time.monotonic()
+
+        output = await runner.run(
+            prompt=context, cwd=cwd, on_activity=_on_activity,
+        )
 
         # Record usage from SDK
         if runner.last_usage:
@@ -1047,6 +1057,54 @@ class AgentLoop:
                     "Heartbeat failed for %s", self.instance_id, exc_info=True,
                 )
 
+    async def _idle_watchdog(
+        self,
+        *,
+        task_id: str,
+        idle_timeout: int,
+        target: "asyncio.Task",
+    ):
+        """Activity-based watchdog: kill ``target`` if the agent goes
+        ``idle_timeout`` seconds without any SDK activity.
+
+        Pauses while ``tasks.awaiting_input_since`` is non-NULL so an
+        agent legitimately waiting on a manual ask_question response
+        doesn't get killed during overnight runs.
+
+        Design:
+        docs/superpowers/specs/2026-04-25-agent-questions-design.md
+        """
+        import time as _time
+        # Initialised by the caller; set on the loop itself.
+        check_interval = 15
+        while not target.done():
+            await asyncio.sleep(check_interval)
+            if target.done():
+                return
+            try:
+                row = await self.board._db.execute_fetchone(
+                    "SELECT awaiting_input_since FROM tasks WHERE id = ?",
+                    (task_id,),
+                )
+            except Exception:
+                continue  # transient DB blip; try next tick
+            awaiting = row.get("awaiting_input_since") if row else None
+            if awaiting:
+                # Agent is waiting on user input; don't penalise.
+                # Slide the activity timestamp forward so that when
+                # the wait clears, we don't immediately fire on a
+                # stale baseline.
+                self._last_activity_ts = _time.monotonic()
+                continue
+            elapsed = _time.monotonic() - self._last_activity_ts
+            if elapsed > idle_timeout:
+                logger.error(
+                    "Task %s idle for %.0fs (limit %ds); cancelling",
+                    task_id, elapsed, idle_timeout,
+                )
+                target.cancel()
+                return
+
     async def run_once(self) -> bool:
         """One poll/claim/execute/complete cycle. Returns True if task processed."""
         # Skip polling if role is paused
@@ -1151,30 +1209,60 @@ class AgentLoop:
             )
 
         try:
-            timeout = getattr(self.role_config, 'max_execution_time', DEFAULT_TASK_TIMEOUT)
+            # Activity-based idle watchdog. ``idle_timeout`` is per-role
+            # (with back-compat fallback to legacy ``max_execution_time``)
+            # and counts only time the agent isn't legitimately waiting
+            # on user input.
+            # Design:
+            # docs/superpowers/specs/2026-04-25-agent-questions-design.md
+            import time as _time
+            idle_timeout = (
+                getattr(self.role_config, "idle_timeout", None)
+                or getattr(self.role_config, "max_execution_time", DEFAULT_TASK_TIMEOUT)
+                or DEFAULT_TASK_TIMEOUT
+            )
+            self._last_activity_ts = _time.monotonic()
             hb_task = asyncio.create_task(self._heartbeat_loop())
             try:
                 for attempt in range(MAX_RETRIES + 1):
                     try:
-                        output = await asyncio.wait_for(
-                            self.execute_task(
-                                task,
-                                worktree_path=worktree_path,
-                                branch_name=branch_name,
-                            ),
-                            timeout=timeout,
+                        # Reset activity baseline at the start of each
+                        # attempt so retry backoff doesn't count.
+                        self._last_activity_ts = _time.monotonic()
+                        exec_task = asyncio.create_task(self.execute_task(
+                            task,
+                            worktree_path=worktree_path,
+                            branch_name=branch_name,
+                        ))
+                        watchdog_task = asyncio.create_task(
+                            self._idle_watchdog(
+                                task_id=task["id"],
+                                idle_timeout=idle_timeout,
+                                target=exec_task,
+                            )
                         )
+                        try:
+                            output = await exec_task
+                        finally:
+                            watchdog_task.cancel()
+                            try:
+                                await watchdog_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
                         break  # success
-                    except asyncio.TimeoutError:
-                        # Don't retry timeouts
-                        task_logger.error("Task %s timed out after %ds", task["id"], timeout)
+                    except asyncio.CancelledError:
+                        # Watchdog killed us. Treat exactly like a timeout.
+                        task_logger.error(
+                            "Task %s killed by idle watchdog after %ds",
+                            task["id"], idle_timeout,
+                        )
                         await self.board.fail_task(task["id"])
                         await self.event_bus.emit(
                             "task.failed",
                             {
                                 "task_id": task["id"],
                                 "instance_id": self.instance_id,
-                                "reason": "timeout",
+                                "reason": "idle_timeout",
                                 "model": self.role_config.model,
                                 "correlation_id": correlation_id,
                             },

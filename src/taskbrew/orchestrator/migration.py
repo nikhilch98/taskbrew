@@ -1397,6 +1397,44 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE tasks ADD COLUMN merge_status TEXT;
         ALTER TABLE tasks ADD COLUMN verification_retries INTEGER DEFAULT 0;
     """),
+    (32, "add_agent_questions_and_awaiting_input", """
+        -- Structured agent clarifications with auto / manual modes.
+        -- The new ask_question MCP tool persists every question the
+        -- agent asks (its options, its preferred answer, its
+        -- reasoning) and the eventual selected answer + selector.
+        -- In auto mode the agent's preferred is recorded immediately;
+        -- in manual mode the row sits in 'pending' until a human
+        -- POSTs the answer via /api/questions/{id}/answer.
+        --
+        -- Design:
+        -- docs/superpowers/specs/2026-04-25-agent-questions-design.md
+        CREATE TABLE IF NOT EXISTS agent_questions (
+            id                TEXT PRIMARY KEY,
+            task_id           TEXT NOT NULL REFERENCES tasks(id),
+            group_id          TEXT NOT NULL,
+            agent_role        TEXT NOT NULL,
+            instance_id       TEXT,
+            question          TEXT NOT NULL,
+            options           TEXT NOT NULL,
+            preferred_answer  TEXT NOT NULL,
+            reasoning         TEXT NOT NULL,
+            selected_answer   TEXT,
+            selected_by       TEXT,
+            status            TEXT NOT NULL DEFAULT 'pending',
+            created_at        TEXT NOT NULL,
+            resolved_at       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_questions_task
+            ON agent_questions(task_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_questions_status
+            ON agent_questions(status);
+
+        -- Task-level pause anchor. Set when the agent enters a
+        -- manual-mode ask_question wait; cleared on resolve / cancel.
+        -- The activity-based watchdog skips tasks while this is set
+        -- so overnight pipelines aren't killed by the idle timeout.
+        ALTER TABLE tasks ADD COLUMN awaiting_input_since TEXT;
+    """),
 ]
 
 
