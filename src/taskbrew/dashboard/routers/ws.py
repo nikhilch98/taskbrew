@@ -222,12 +222,16 @@ def register_chat_routes(app, chat_manager):
                         config = get_agent_config(agent_name, config_roles=config_roles)
                         existing = chat_manager.get_session(agent_name)
                         session = await chat_manager.start_session(agent_name, config)
-                        # Only this connection "owns" the session if
-                        # ``start_session`` actually created a new one;
-                        # otherwise we attached to a session started
-                        # by another WS connection and must not tear
-                        # it down on our disconnect.
-                        _this_connection_started = existing is None
+                        # Use object identity to decide ownership.
+                        # start_session is idempotent: if it returns
+                        # the same object that get_session() returned
+                        # before the call, this connection attached to
+                        # an existing session (do NOT tear down on
+                        # disconnect). If it returns a different object
+                        # (None previously, or stale session was
+                        # replaced) this connection created the live
+                        # session and owns its lifetime.
+                        _this_connection_started = (session is not existing)
                         await ws.send_text(json.dumps({
                             "type": "session_started",
                             "agent": agent_name,

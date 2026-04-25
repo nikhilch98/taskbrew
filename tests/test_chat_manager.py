@@ -31,11 +31,39 @@ async def test_start_session_creates_client(mock_client_cls, chat_manager, agent
 
 
 @patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
-async def test_start_duplicate_session_raises(mock_client_cls, chat_manager, agent_config):
+async def test_start_session_is_idempotent_on_healthy_session(
+    mock_client_cls, chat_manager, agent_config,
+):
+    """start_session must be idempotent: calling it twice for the same
+    agent returns the SAME session object so a page refresh / second
+    tab / WS reconnect can attach to a session another connection
+    started, instead of seeing a ValueError.
+    """
     mock_client_cls.return_value = AsyncMock()
-    await chat_manager.start_session("coder", agent_config)
-    with pytest.raises(ValueError, match="already exists"):
-        await chat_manager.start_session("coder", agent_config)
+    first = await chat_manager.start_session("coder", agent_config)
+    second = await chat_manager.start_session("coder", agent_config)
+    assert second is first  # object identity — no new SDK client spawned
+    # And only one SDK client was constructed across the two calls.
+    assert mock_client_cls.call_count == 1
+
+
+@patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
+async def test_start_session_recreates_stale_session(
+    mock_client_cls, chat_manager, agent_config,
+):
+    """If the existing session is stale (client crashed, is_connected
+    flipped to False), start_session should tear it down and create a
+    fresh one rather than handing back the dead reference."""
+    mock_client_cls.return_value = AsyncMock()
+    first = await chat_manager.start_session("coder", agent_config)
+    # Simulate a stale entry: SDK process died but the dict survived.
+    first.is_connected = False
+
+    second = await chat_manager.start_session("coder", agent_config)
+    assert second is not first
+    assert second.is_connected is True
+    # Two SDK clients constructed across the two calls.
+    assert mock_client_cls.call_count == 2
 
 
 @patch("taskbrew.dashboard.chat_manager.ClaudeSDKClient")
