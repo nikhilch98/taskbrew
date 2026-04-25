@@ -796,6 +796,12 @@ async def get_task_artifacts(group_id: str, task_id: str):
 
 @router.get("/api/artifacts/{group_id}/{task_id}/{filename}")
 async def get_artifact_content(group_id: str, task_id: str, filename: str):
+    """Return one artifact's content.
+
+    Returns 404 when no source matches — previously this returned 200
+    with empty content, which masks the "file never existed" case as
+    "file is empty" and confuses the viewer UI.
+    """
     orch = get_orch()
     from taskbrew.orchestrator.artifact_store import ArtifactStore
 
@@ -804,9 +810,11 @@ async def get_artifact_content(group_id: str, task_id: str, filename: str):
 
     if filename == SYNTHETIC_OUTPUT_FILENAME:
         output_text = await _task_output_text(orch, task_id)
+        if not output_text:
+            raise HTTPException(status_code=404, detail="Artifact not found")
         return {
             "filename": filename,
-            "content": output_text or "",
+            "content": output_text,
             "group_id": group_id,
             "task_id": task_id,
         }
@@ -829,8 +837,21 @@ async def get_artifact_content(group_id: str, task_id: str, filename: str):
             flat_resolved.relative_to(base_resolved)
         except ValueError:
             raise HTTPException(status_code=400, detail="Path traversal detected")
+        # Same MAX_LOAD_ARTIFACT_BYTES cap as the structured store path,
+        # so a multi-GB flat-file can't OOM the dashboard either.
+        from taskbrew.orchestrator.artifact_store import MAX_LOAD_ARTIFACT_BYTES
         try:
-            content = flat_path.read_text()
+            with open(flat_path, encoding="utf-8", errors="replace") as f:
+                content = f.read(MAX_LOAD_ARTIFACT_BYTES)
+            try:
+                size = flat_path.stat().st_size
+            except OSError:
+                size = 0
+            if size > MAX_LOAD_ARTIFACT_BYTES:
+                content += (
+                    f"\n\n[truncated by TaskBrew: file is {size} bytes; "
+                    f"showing first {MAX_LOAD_ARTIFACT_BYTES} bytes]\n"
+                )
         except OSError:
             content = ""
         return {
@@ -840,12 +861,7 @@ async def get_artifact_content(group_id: str, task_id: str, filename: str):
             "task_id": task_id,
         }
 
-    return {
-        "filename": filename,
-        "content": "",
-        "group_id": group_id,
-        "task_id": task_id,
-    }
+    raise HTTPException(status_code=404, detail="Artifact not found")
 
 
 # ------------------------------------------------------------------

@@ -23,6 +23,11 @@ import re
 _COMPONENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 _DISALLOWED = ("/", "\\", "\x00", "..")
 
+# Single-file read cap. Audit-style guard: a multi-GB artifact (whether
+# accidental or hostile) should not OOM the dashboard process when the
+# user clicks "view file". Mirrors MAX_SCAN_FILE_SIZE in security_intel.
+MAX_LOAD_ARTIFACT_BYTES = 1_048_576  # 1 MiB
+
 
 def _validate_component(value: str, label: str) -> str:
     """Validate that *value* is safe for use as a path component.
@@ -118,22 +123,91 @@ class ArtifactStore:
         """
         dir_path = self.get_artifact_dir(group_id, task_id)
         file_path = self._safe_artifact_path(group_id, task_id, filename)
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
         return file_path
+
+    def ingest_file(
+        self,
+        group_id: str,
+        task_id: str,
+        source_path: str,
+        *,
+        max_bytes: int = MAX_LOAD_ARTIFACT_BYTES,
+    ) -> str | None:
+        """Copy a file from ``source_path`` into the artifact store.
+
+        Stores under ``base_dir/<group_id>/<task_id>/<basename>`` so the
+        artifact viewer can find it. Returns the destination path on
+        success, or ``None`` if the source file is missing / unreadable.
+        Caller must have already validated that ``source_path`` is an
+        appropriate, contained path; this method does not check
+        provenance — only that the file exists, fits under ``max_bytes``,
+        and the destination basename is shape-safe.
+        """
+        if not os.path.isfile(source_path):
+            return None
+        try:
+            size = os.path.getsize(source_path)
+        except OSError:
+            return None
+        if size > max_bytes:
+            # Truncated copy with a marker so the viewer still gets
+            # something but the dashboard process doesn't OOM.
+            try:
+                with open(source_path, "rb") as f:
+                    raw = f.read(max_bytes)
+            except OSError:
+                return None
+            try:
+                content = raw.decode("utf-8", errors="replace")
+            except Exception:
+                content = ""
+            content += (
+                f"\n\n[truncated by TaskBrew: source is {size} bytes; "
+                f"copied first {max_bytes}]\n"
+            )
+            basename = os.path.basename(source_path)
+            try:
+                return self.save_artifact(group_id, task_id, basename, content)
+            except ValueError:
+                return None
+        try:
+            with open(source_path, encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            return None
+        basename = os.path.basename(source_path)
+        try:
+            return self.save_artifact(group_id, task_id, basename, content)
+        except ValueError:
+            return None
 
     def load_artifact(
         self, group_id: str, task_id: str, filename: str
     ) -> str:
         """Load an artifact file's content.
 
-        Returns an empty string if the file does not exist.
+        Returns an empty string if the file does not exist. Reads at most
+        ``MAX_LOAD_ARTIFACT_BYTES`` to avoid OOM on a pathological
+        multi-GB file; if the file exceeds the cap the content is
+        truncated and a single-line marker is appended.
         """
         file_path = self._safe_artifact_path(group_id, task_id, filename)
         if not os.path.isfile(file_path):
             return ""
-        with open(file_path) as f:
-            return f.read()
+        try:
+            size = os.path.getsize(file_path)
+        except OSError:
+            size = 0
+        with open(file_path, encoding="utf-8", errors="replace") as f:
+            content = f.read(MAX_LOAD_ARTIFACT_BYTES)
+        if size > MAX_LOAD_ARTIFACT_BYTES:
+            content += (
+                f"\n\n[truncated by TaskBrew: file is {size} bytes; "
+                f"showing first {MAX_LOAD_ARTIFACT_BYTES} bytes]\n"
+            )
+        return content
 
     def get_task_artifacts(self, group_id: str, task_id: str) -> list[str]:
         """List all artifact filenames for a given task."""

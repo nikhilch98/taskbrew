@@ -394,12 +394,17 @@ def create_app(
         from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
         interaction_mgr = InteractionManager(orch_obj.task_board._db)
         set_interaction_deps(interaction_mgr, verify_admin=verify_admin)
+        # Capture orchestrator via a getter (not the value) so a future
+        # activate_project swap is visible to the MCP layer without
+        # re-wiring deps.
+        from taskbrew.dashboard.routers._deps import get_orch_optional
         set_mcp_deps(
             interaction_mgr,
             get_pipeline,
             orch_obj.task_board,
             auth_manager=_auth_manager,
             event_bus=orch_obj.event_bus,
+            orchestrator_getter=get_orch_optional,
         )
 
     # ------------------------------------------------------------------
