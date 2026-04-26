@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from typing import Any, TYPE_CHECKING
 
 from taskbrew.agents.provider import (
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from taskbrew.orchestrator.event_bus import EventBus
 
 
-class AgentStatus(StrEnum):
+class AgentStatus(str, Enum):
     IDLE = "idle"
     WORKING = "working"
     BLOCKED = "blocked"
