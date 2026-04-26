@@ -64,3 +64,18 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py310"
 line-length = 100
+
+[tool.bandit]
+skips = [
+    "B101", # asserts are used for local invariants in CLI stream setup
+    "B104", # dashboard bind host is user-configurable
+    "B105", # numeric readiness weights trigger a false-positive password check
+    "B110", # best-effort cleanup/fallback paths intentionally swallow errors
+    "B112", # retry polling intentionally ignores transient DB blips
+    "B310", # tool calls are constrained to configured API URLs
+    "B311", # retry jitter is not used for cryptographic purposes
+    "B404", # subprocess is used for local CLI orchestration
+    "B603", # subprocess calls pass argument lists with shell=False
+    "B607", # project scaffolding relies on PATH-resolved developer tools
+    "B608", # dynamic SQL fragments are built from allowlisted columns/placeholders
+]

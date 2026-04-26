@@ -306,7 +306,24 @@ class AgentLoop:
         except Exception:
             pass  # Pipeline not initialized yet
 
-        if pipeline_connections:
+        routing_mode = getattr(self.role_config, "routing_mode", "open")
+        if routing_mode == "open" and self.all_roles:
+            parts.append("\n## Available Agents")
+            parts.append("You may create tasks for any of these agents:")
+            for name, role in self.all_roles.items():
+                if name == self.role_config.role:
+                    continue
+                accepts = ", ".join(role.accepts) if role.accepts else "any"
+                prefix = f" ({role.prefix})" if getattr(role, "prefix", "") else ""
+                parts.append(
+                    f"- **{role.display_name}**{prefix}: "
+                    f'assigned_to="{name}", accepts: [{accepts}]'
+                )
+            parts.append(
+                '\nUse create_task(assigned_to="<role>", task_type="<type>") '
+                "to delegate work."
+            )
+        elif pipeline_connections:
             parts.append("\n## Connected Agents")
             parts.append("You can route tasks to these agents:")
             for edge in pipeline_connections:

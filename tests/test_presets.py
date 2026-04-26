@@ -1,7 +1,11 @@
 """Tests for agent preset system and extended RoleConfig fields."""
 
+from pathlib import Path
+
 import pytest
-from taskbrew.config_loader import RoleConfig, _parse_role
+from httpx import ASGITransport, AsyncClient
+
+from taskbrew.config_loader import _parse_role, load_presets
 
 
 class TestRoleConfigNewFields:
@@ -67,10 +71,6 @@ class TestRoleConfigNewFields:
             _parse_role(data)
 
 
-from pathlib import Path
-from taskbrew.config_loader import load_presets
-
-
 class TestLoadPresets:
     """Test preset YAML loading."""
 
@@ -119,9 +119,6 @@ class TestLoadPresets:
     def test_load_presets_missing_dir(self, tmp_path):
         presets = load_presets(tmp_path / "nonexistent")
         assert presets == {}
-
-
-from httpx import AsyncClient, ASGITransport
 
 
 @pytest.fixture

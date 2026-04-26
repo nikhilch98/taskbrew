@@ -94,19 +94,34 @@ class StartupValidationError(Exception):
 def _validate_startup(project_dir: Path, team_config, roles: dict, cli_provider: str):
     """Validate configuration before starting. Raises StartupValidationError on failure."""
     import shutil
+    from taskbrew.agents.provider import detect_provider
 
     errors = []
+    required_providers = {
+        detect_provider(
+            model=getattr(role_config, "model", None),
+            cli_provider=cli_provider,
+        )
+        for role_config in (roles or {}).values()
+    }
+    if not required_providers:
+        required_providers.add(cli_provider or "claude")
 
     # Check CLI binary exists
-    if cli_provider == "claude" and not shutil.which("claude"):
+    if "claude" in required_providers and not shutil.which("claude"):
         errors.append(
-            f"Claude CLI not found (provider: '{cli_provider}').\n"
+            "Claude CLI not found (provider: 'claude').\n"
             "  -> Install: npm install -g @anthropic-ai/claude-code"
         )
-    if cli_provider == "gemini" and not shutil.which("gemini"):
+    if "gemini" in required_providers and not shutil.which("gemini"):
         errors.append(
-            f"Gemini CLI not found (provider: '{cli_provider}').\n"
+            "Gemini CLI not found (provider: 'gemini').\n"
             "  -> Install: npm install -g @google/gemini-cli"
+        )
+    if "codex" in required_providers and not shutil.which("codex"):
+        errors.append(
+            "Codex CLI not found (provider: 'codex').\n"
+            "  -> Install: npm install -g @openai/codex"
         )
 
     # Warn (but don't block) if no roles exist — dashboard still works
@@ -907,6 +922,13 @@ def _cmd_doctor(args):
     else:
         print("  [WARN] Gemini CLI not found (install: npm install -g @google/gemini-cli)")
 
+    # Codex CLI
+    codex_path = shutil.which("codex")
+    if codex_path:
+        print(f"  [OK] Codex CLI found: {codex_path}")
+    else:
+        print("  [WARN] Codex CLI not found (install: npm install -g @openai/codex)")
+
     # Config files
     config_dir = Path(".") / "config"
     if (config_dir / "team.yaml").exists():
@@ -1002,7 +1024,7 @@ def _cmd_start(args):
     port = getattr(args, "port", None) or 8420
 
     print(f"TaskBrew started (PID: {proc.pid}). Dashboard: http://{host}:{port}")
-    print(f"Run `taskbrew logs` to view logs, `taskbrew stop` to stop.")
+    print("Run `taskbrew logs` to view logs, `taskbrew stop` to stop.")
 
 
 def _cmd_stop(_args):

@@ -169,20 +169,20 @@ new provider: YAML-only for simple cases, or a Python plugin for full control.
 Create a file in `config/providers/`:
 
 ```yaml
-# config/providers/codex.yaml
-name: codex
-display_name: "Codex CLI"
-binary: codex
-detect_models: ["codex-*", "gpt-4o-*"]
+# config/providers/ollama.yaml
+name: ollama
+display_name: "Ollama"
+binary: ollama
+detect_models: ["llama*", "mistral*"]
 command_template:
   prompt_flag: "--prompt"
   model_flag: "--model"
   output_format_flag: "--format"
   output_format_value: "json"
 models:
-  - id: "codex-mini"
+  - id: "llama3.1"
     tier: fast
-  - id: "gpt-4o"
+  - id: "mistral"
     tier: flagship
 ```
 

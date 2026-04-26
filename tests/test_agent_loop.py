@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json as _json_mod
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from taskbrew.agents.agent_loop import AgentLoop
+from taskbrew.agents.agent_loop import AgentLoop, MAX_RETRIES, _is_retryable
 from taskbrew.agents.instance_manager import InstanceManager
 from taskbrew.config_loader import RoleConfig, RouteTarget
 from taskbrew.orchestrator.database import Database
@@ -947,13 +948,8 @@ async def test_verification_gate_all_pass_merges(
 # ------------------------------------------------------------------
 
 
-import json as _json_mod
-import pytest as _pytest_for_param
 
-from taskbrew.agents.agent_loop import _is_retryable, MAX_RETRIES
-
-
-@_pytest_for_param.mark.parametrize(
+@pytest.mark.parametrize(
     "exc,expected",
     [
         # Retryable: stdlib connection errors

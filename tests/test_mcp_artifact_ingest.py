@@ -7,7 +7,6 @@ resets between tasks. Previously the list was silently dropped in
 the auto-approval path.
 """
 
-import os
 from unittest.mock import MagicMock
 
 import pytest

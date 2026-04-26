@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
@@ -82,6 +84,9 @@ class GeminiOptions:
     max_turns: int | None = None
     cwd: str | None = None
     cli_path: str | None = None
+    allowed_tools: list[str] = field(default_factory=list)
+    permission_mode: str = "default"
+    mcp_servers: dict[str, dict[str, Any]] = field(default_factory=dict)
     # audit 02 F#1: wall-clock timeout in seconds for the entire CLI run.
     # Defaults to 30 minutes, matching the typical max_execution_time in
     # role configs. Set to None to disable (not recommended).
@@ -163,6 +168,35 @@ def _build_command(
     return cmd
 
 
+def _gemini_settings_from_mcp(mcp_servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Build a Gemini settings payload with MCP servers enabled."""
+    settings: dict[str, Any] = {}
+    server_settings: dict[str, dict[str, Any]] = {}
+    for name, cfg in sorted((mcp_servers or {}).items()):
+        if cfg.get("type", "stdio") != "stdio":
+            url = cfg.get("url") or cfg.get("httpUrl")
+            if not url:
+                continue
+            server_settings[name] = {
+                "httpUrl": url,
+                "trust": True,
+            }
+            continue
+        command = cfg.get("command")
+        if not command:
+            logger.warning("Gemini MCP server '%s' has no command -- skipping", name)
+            continue
+        server_settings[name] = {
+            "command": command,
+            "args": cfg.get("args", []),
+            "env": cfg.get("env", {}),
+            "trust": True,
+        }
+    if server_settings:
+        settings["mcpServers"] = server_settings
+    return settings
+
+
 # ---------------------------------------------------------------------------
 # Stream-JSON parser and query generator
 # ---------------------------------------------------------------------------
@@ -200,11 +234,25 @@ async def _query_impl(
     cmd = _build_command(cli_path, effective_prompt, opts)
 
     cwd = opts.cwd or None
+    env = os.environ.copy()
+    settings_tmp: tempfile.TemporaryDirectory[str] | None = None
+    settings = _gemini_settings_from_mcp(opts.mcp_servers)
+    if settings:
+        settings_tmp = tempfile.TemporaryDirectory(prefix="taskbrew-gemini-")
+        settings_path = os.path.join(settings_tmp.name, "settings.json")
+        with open(settings_path, "w") as f:
+            json.dump(settings, f)
+        # Gemini CLI reads this settings file as a high-precedence system
+        # settings source, giving agents the same MCP tool surface Claude gets
+        # without mutating the project checkout.
+        env["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = settings_path
+
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
+        env=env,
     )
 
     session_id: str | None = None
@@ -342,6 +390,8 @@ async def _query_impl(
                 await stderr_task
             except (asyncio.CancelledError, Exception):
                 pass
+        if settings_tmp is not None:
+            settings_tmp.cleanup()
 
 
 async def query(

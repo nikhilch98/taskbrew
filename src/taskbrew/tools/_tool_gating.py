@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Iterable
 
 from taskbrew.intelligence.tool_router import ToolRouter
 

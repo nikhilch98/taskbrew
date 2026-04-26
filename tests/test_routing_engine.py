@@ -1,17 +1,18 @@
 """Tests for Plan 4: Routing Engine & Execution Policies."""
 
-import asyncio
 import textwrap
 from pathlib import Path
 
 import pytest
-import yaml
 
+from taskbrew.agents.provider import ProviderRegistry, resolve_cli_provider
 from taskbrew.config_loader import (
-    ExecutionConfig,
-    TeamConfig,
+    PipelineConfig,
+    PipelineEdge,
+    load_presets,
     load_team_config,
 )
+from taskbrew.orchestrator.system_prompt_builder import build_task_system_prompt
 
 
 class TestExecutionConfig:
@@ -103,10 +104,6 @@ class TestExecutionConfig:
 # ---------------------------------------------------------------------------
 # Task 2: System Prompt Builder
 # ---------------------------------------------------------------------------
-
-from taskbrew.orchestrator.system_prompt_builder import build_task_system_prompt
-from taskbrew.config_loader import PipelineConfig, PipelineEdge
-
 
 class TestSystemPromptBuilder:
     """Test the spec section 4.1 system prompt injection."""
@@ -245,9 +242,6 @@ class TestSystemPromptBuilder:
 # Task 3: CLI Provider Resolution
 # ---------------------------------------------------------------------------
 
-from taskbrew.agents.provider import resolve_cli_provider, ProviderRegistry
-
-
 class TestCLIProviderResolution:
     """Test model-to-CLI-tool mapping (spec section 5.1 step 4)."""
 
@@ -262,8 +256,12 @@ class TestCLIProviderResolution:
         assert resolve_cli_provider("gemini-3.1-pro-preview") == "gemini"
 
     def test_unknown_model_uses_fallback(self):
-        assert resolve_cli_provider("gpt-4o", fallback="claude") == "claude"
+        assert resolve_cli_provider("local-unknown-model", fallback="claude") == "claude"
         assert resolve_cli_provider("unknown-model") == "claude"
+
+    def test_openai_models_use_codex(self):
+        assert resolve_cli_provider("gpt-4o", fallback="claude") == "codex"
+        assert resolve_cli_provider("gpt-5.2", fallback="claude") == "codex"
 
     def test_none_model_uses_fallback(self):
         assert resolve_cli_provider(None, fallback="gemini") == "gemini"
@@ -274,17 +272,14 @@ class TestCLIProviderResolution:
         registry.register_builtins()
         assert registry.detect("claude-opus-4-6") == "claude"
         assert registry.detect("gemini-pro") == "gemini"
+        assert registry.detect("gpt-5.2") == "codex"
+        assert registry.detect("o3") == "codex"
         assert registry.detect("unknown") == "claude"
 
 
 # ---------------------------------------------------------------------------
 # Task 4: Integration Test — Preset to System Prompt
 # ---------------------------------------------------------------------------
-
-from taskbrew.config_loader import load_presets, PipelineEdge, PipelineConfig
-from taskbrew.orchestrator.system_prompt_builder import build_task_system_prompt
-from taskbrew.agents.provider import resolve_cli_provider
-
 
 class TestPresetToPipelineIntegration:
     """End-to-end: preset -> role config -> pipeline -> system prompt."""

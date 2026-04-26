@@ -105,6 +105,10 @@ _PROVIDER_MODEL_MAP: dict[str, dict[str, str]] = {
         "flagship": "gemini-3.1-pro-preview",
         "balanced": "gemini-3-flash-preview",
     },
+    "codex": {
+        "flagship": "gpt-5.2",
+        "balanced": "gpt-5.2",
+    },
 }
 
 _ROLE_MODEL_TIER: dict[str, str] = {

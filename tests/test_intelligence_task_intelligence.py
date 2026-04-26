@@ -272,7 +272,7 @@ async def test_prediction_accuracy(manager: TaskIntelligenceManager):
     # Seed outcomes directly so the calibration lookup has history,
     # without polluting accuracy with the seed's own neutral 0.5
     # predictions (those would skew the classification tally).
-    from taskbrew.intelligence.task_intelligence import new_id, utcnow
+    from taskbrew.intelligence.task_intelligence import utcnow
     for i in range(5):
         await manager._db.execute(
             "INSERT INTO outcome_predictions "

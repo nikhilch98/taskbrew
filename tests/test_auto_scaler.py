@@ -149,8 +149,8 @@ async def test_scale_down_calls_stopper(
     await instance_mgr.register_instance("coder-1", role)
     await instance_mgr.register_instance("coder-auto-1", role)
 
-    # Backdate heartbeats so they appear idle for > 5 minutes
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    # Backdate heartbeats so they appear idle for the default 15-minute threshold.
+    old_time = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
     await db.execute(
         "UPDATE agent_instances SET last_heartbeat = ? WHERE instance_id = ?",
         (old_time, "coder-1"),
@@ -310,8 +310,8 @@ async def test_scale_down_cooldown(
     await instance_mgr.register_instance("coder-auto-1", role)
     await instance_mgr.register_instance("coder-auto-2", role)
 
-    # Backdate heartbeats so they appear idle for > 5 minutes
-    old_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    # Backdate heartbeats so they appear idle for the default 15-minute threshold.
+    old_time = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
     for iid in ("coder-1", "coder-auto-1", "coder-auto-2"):
         await db.execute(
             "UPDATE agent_instances SET last_heartbeat = ? WHERE instance_id = ?",

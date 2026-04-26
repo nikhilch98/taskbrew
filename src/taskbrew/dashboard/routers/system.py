@@ -800,6 +800,11 @@ async def get_available_models(provider: str = ""):
             {"id": "gemini-3.1-pro-preview", "label": "Flagship"},
             {"id": "gemini-3-flash-preview", "label": "Balanced"},
         ]
+    if active_provider == "codex":
+        return [
+            {"id": "gpt-5.2", "label": "Flagship"},
+            {"id": "gpt-5.2", "label": "Balanced"},
+        ]
     return [
         {"id": "claude-opus-4-6", "label": "Flagship"},
         {"id": "claude-sonnet-4-6", "label": "Balanced"},

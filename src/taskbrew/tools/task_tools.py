@@ -378,8 +378,8 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
                 result = json.loads(resp.read())
             if result.get("status") == "cancelled":
                 return (
-                    f"Question was cancelled before resolution; "
-                    f"the task may have been cancelled by the user."
+                    "Question was cancelled before resolution; "
+                    "the task may have been cancelled by the user."
                 )
             return (
                 f"Selected answer: {result.get('selected_answer')!r} "
