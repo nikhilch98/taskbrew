@@ -121,7 +121,7 @@ class ArtifactStore:
 
         Creates directories as needed. Returns the full file path.
         """
-        dir_path = self.get_artifact_dir(group_id, task_id)
+        self.get_artifact_dir(group_id, task_id)
         file_path = self._safe_artifact_path(group_id, task_id, filename)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)

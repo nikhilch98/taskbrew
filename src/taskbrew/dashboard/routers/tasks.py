@@ -7,20 +7,13 @@ import io
 import json
 import logging
 import re
-
-logger = logging.getLogger(__name__)
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, Query
 from starlette.responses import Response
 
-# audit 11a F#4 / F#6: shared clamps for task endpoint pagination and
-# batch operations. 500 is generous for UI pagination; 200 tasks per
-# batch is plenty and stops a single request from walking the whole
-# board.
-SafeLimit = Annotated[int, Query(ge=1, le=500)]
-MAX_BATCH_SIZE = 200
 
 from taskbrew.dashboard.models import (
     BatchTasksBody,
@@ -36,6 +29,15 @@ from taskbrew.dashboard.models import (
     UpdateTaskBody,
 )
 from taskbrew.dashboard.routers._deps import get_orch, get_orch_optional
+
+# audit 11a F#4 / F#6: shared clamps for task endpoint pagination and
+# batch operations. 500 is generous for UI pagination; 200 tasks per
+# batch is plenty and stops a single request from walking the whole
+# board.
+SafeLimit = Annotated[int, Query(ge=1, le=500)]
+MAX_BATCH_SIZE = 200
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -207,7 +209,7 @@ async def get_group_trace(group_id: str):
     docs/superpowers/specs/2026-04-24-execution-tracing-endpoint-design.md
     """
     import json as _json
-    from datetime import datetime, timezone
+    from datetime import datetime
     orch = get_orch()
     db = orch.task_board._db
 

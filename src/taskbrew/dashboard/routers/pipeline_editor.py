@@ -15,14 +15,12 @@ import asyncio
 import uuid
 from pathlib import Path
 
-import yaml
 from fastapi import APIRouter, HTTPException
 
 from taskbrew.config_loader import (
     PipelineConfig,
     PipelineEdge,
     PipelineNodeConfig,
-    load_pipeline,
     save_pipeline,
 )
 from taskbrew.dashboard.models import (

@@ -4,15 +4,10 @@ testing-quality, security, observability, and advanced-planning (features 1-50).
 from __future__ import annotations
 
 import asyncio
-import os
+import weakref as _weakref
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-
-# audit 12a F#4: shared clamp for the ``limit: int = N`` params. Using
-# an Annotated alias keeps validation consistent without changing
-# call-site semantics beyond enforcing ``1 <= limit <= 500``.
-SafeLimit = Annotated[int, Query(ge=1, le=500)]
 
 from taskbrew.dashboard.models import (
     # Autonomous
@@ -53,6 +48,11 @@ from taskbrew.dashboard.models import (
 )
 from taskbrew.dashboard.routers._deps import get_orch
 
+# audit 12a F#4: shared clamp for the ``limit: int = N`` params. Using
+# an Annotated alias keeps validation consistent without changing
+# call-site semantics beyond enforcing ``1 <= limit <= 500``.
+SafeLimit = Annotated[int, Query(ge=1, le=500)]
+
 router = APIRouter()
 
 
@@ -90,7 +90,6 @@ _planning_tables_ensured = False
 _testing_tables_ensured = False
 _security_tables_ensured = False
 
-import weakref as _weakref
 _ensured_managers: "_weakref.WeakSet[object]" = _weakref.WeakSet()
 
 

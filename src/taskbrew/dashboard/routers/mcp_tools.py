@@ -416,7 +416,6 @@ async def mcp_route_task(
             400, f"invalid priority {priority!r}; expected one of {sorted(_VALID_TASK_PRIORITIES)}",
         )
     blocked_by_task = body.get("task_id")  # calling agent's current task
-    chain_id = body.get("chain_id")
     blocked_by = [blocked_by_task] if blocked_by_task else None
 
     if _task_board:

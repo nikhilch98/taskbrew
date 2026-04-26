@@ -672,7 +672,13 @@ async def get_usage_summary():
         }
 
     # ---- Weekly stats from stats-cache.json ----
-    week_start, week_end = _week_range()
+    week_ref = None
+    if stats.get("lastComputedDate"):
+        try:
+            week_ref = datetime.fromisoformat(stats["lastComputedDate"])
+        except (TypeError, ValueError):
+            week_ref = None
+    week_start, week_end = _week_range(week_ref)
     week_data: dict = {"start": week_start, "end": week_end, "models": [], "total_tokens": 0}
 
     if stats:

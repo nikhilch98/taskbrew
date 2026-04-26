@@ -1,8 +1,6 @@
 """Tests for human-in-the-loop database schema and interactions."""
 
 import pytest
-import aiosqlite
-from pathlib import Path
 from httpx import AsyncClient, ASGITransport
 from fastapi import FastAPI
 from taskbrew.orchestrator.interactions import InteractionManager
@@ -374,7 +372,7 @@ class TestHILIntegration:
             instance_token="tok-int-2", req_type="clarification",
             request_data={"question": "REST or GraphQL?", "suggested_options": ["REST", "GraphQL"]},
         )
-        resolved = await mgr.resolve(req["id"], "responded", {"response": "REST"})
+        await mgr.resolve(req["id"], "responded", {"response": "REST"})
         status = await mgr.check_status(req["id"])
         assert status["status"] == "responded"
         assert status["response_data"]["response"] == "REST"

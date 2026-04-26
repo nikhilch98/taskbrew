@@ -5,7 +5,6 @@ docs/superpowers/specs/2026-04-25-agent-questions-design.md
 """
 
 import asyncio
-import json
 from unittest.mock import MagicMock
 
 import pytest

@@ -1,8 +1,13 @@
 """Tests for editable pipeline data model, API, and migration."""
 
+import shutil
+import tempfile
+from pathlib import Path as RealPath
+from unittest.mock import MagicMock
+
 import pytest
 import yaml
-from pathlib import Path
+from fastapi.testclient import TestClient
 from taskbrew.config_loader import (
     PipelineEdge,
     PipelineNodeConfig,
@@ -298,13 +303,6 @@ class TestMigrateRoutesToPipeline:
 # ---------------------------------------------------------------------------
 # Pipeline API Tests (Task 3)
 # ---------------------------------------------------------------------------
-
-import json
-import tempfile
-import shutil
-from unittest.mock import MagicMock
-from fastapi.testclient import TestClient
-from pathlib import Path as RealPath
 
 
 def _make_test_app(roles_dict, pipeline_config=None, project_dir=None):

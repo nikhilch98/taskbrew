@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import weakref as _weakref
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -457,7 +457,6 @@ _init_lock = asyncio.Lock()
 # swap, so set_orchestrator() to a new DB kept the flag True and new
 # tables were never created. Scope the ensure state to the manager
 # instance via a WeakSet -- same fix as intelligence_v2.
-import weakref as _weakref
 _ensured_managers_v3: "_weakref.WeakSet[object]" = _weakref.WeakSet()
 
 # Legacy booleans kept for fixtures that poke them directly.
