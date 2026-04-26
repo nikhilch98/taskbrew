@@ -219,7 +219,15 @@ def register_chat_routes(app, chat_manager):
                         # the hardcoded AGENT_ROLES dict) are resolved correctly.
                         orch = get_orch_optional()
                         config_roles = getattr(orch, "roles", None) if orch else None
-                        config = get_agent_config(agent_name, config_roles=config_roles)
+                        # agent_name is an instance id like "pm-1"; the role
+                        # config is keyed by the role name ("pm"). Strip the
+                        # trailing "-N" suffix when present so the lookup hits.
+                        role_lookup = agent_name
+                        if config_roles and agent_name not in config_roles:
+                            base = agent_name.rsplit("-", 1)[0]
+                            if base in config_roles:
+                                role_lookup = base
+                        config = get_agent_config(role_lookup, config_roles=config_roles)
                         existing = chat_manager.get_session(agent_name)
                         session = await chat_manager.start_session(agent_name, config)
                         # Use object identity to decide ownership.

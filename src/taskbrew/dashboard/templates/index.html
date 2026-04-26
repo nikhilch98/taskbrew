@@ -913,6 +913,7 @@
         .accent-in_progress { background: var(--accent-blue); box-shadow: 0 0 8px rgba(59, 130, 246, 0.4); }
         .accent-completed { background: var(--accent-emerald); box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
         .accent-rejected { background: var(--accent-rose); box-shadow: 0 0 8px rgba(244, 63, 94, 0.4); }
+        .accent-failed { background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
 
         .kanban-column-header .count {
             background: rgba(255, 255, 255, 0.06);
@@ -5091,6 +5092,12 @@
                     </div>
                     <div class="column-tasks" id="tasksRejected" role="list" aria-label="Rejected task cards"></div>
                 </div>
+                <div class="kanban-column" id="col-failed" role="listitem" aria-label="Failed tasks">
+                    <div class="kanban-column-header">
+                        <h3><span class="accent-bar accent-failed"></span> Failed <span class="count" id="countFailed">0</span></h3>
+                    </div>
+                    <div class="column-tasks" id="tasksFailed" role="list" aria-label="Failed task cards"></div>
+                </div>
             </div>
         </div>
 
@@ -6401,6 +6408,7 @@
                 in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
                 completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
                 rejected:    { el: 'tasksRejected',   count: 'countRejected' },
+                failed:      { el: 'tasksFailed',     count: 'countFailed' },
             };
 
             for (const [status, cfg] of Object.entries(columns)) {
@@ -8398,7 +8406,7 @@
             });
 
             // Render filtered results in the board view
-            const grouped = { blocked: [], pending: [], in_progress: [], completed: [], rejected: [] };
+            const grouped = { blocked: [], pending: [], in_progress: [], completed: [], rejected: [], failed: [] };
             for (const t of filtered) {
                 const s = t._status || 'pending';
                 if (grouped[s]) grouped[s].push(t);
@@ -8409,7 +8417,7 @@
         function renderSearchResults(data) {
             // data may be an array of tasks or an object with results
             const tasks = Array.isArray(data) ? data : (data.results || data.tasks || []);
-            const grouped = { blocked: [], pending: [], in_progress: [], completed: [], rejected: [] };
+            const grouped = { blocked: [], pending: [], in_progress: [], completed: [], rejected: [], failed: [] };
             for (const t of tasks) {
                 const s = t.status || t._status || 'pending';
                 if (grouped[s]) grouped[s].push(t);

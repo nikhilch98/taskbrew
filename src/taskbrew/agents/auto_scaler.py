@@ -118,6 +118,17 @@ class AutoScaler:
         except (ValueError, TypeError):
             return 0.0
 
+    def _idle_threshold_for(self, role_cfg: RoleConfig) -> float:
+        """Resolve the idle threshold (seconds) for *role_cfg*.
+
+        Per-role ``auto_scale.scale_down_idle`` is interpreted in MINUTES
+        (matching the rest of the YAML schema). Falls back to the
+        constructor default when unset.
+        """
+        if role_cfg.auto_scale and role_cfg.auto_scale.scale_down_idle is not None:
+            return float(role_cfg.auto_scale.scale_down_idle) * 60.0
+        return self._idle_threshold_seconds
+
     async def _check_and_scale(self) -> None:
         """Check queue depths and decide scaling actions."""
         for role_name, role_cfg in self._roles.items():
@@ -136,6 +147,7 @@ class AutoScaler:
 
             threshold = role_cfg.auto_scale.scale_up_threshold
             max_instances = role_cfg.max_instances
+            idle_threshold = self._idle_threshold_for(role_cfg)
 
             # Scale up: if pending > threshold and room to grow (with cooldown)
             if (
@@ -183,15 +195,35 @@ class AutoScaler:
                 if spawned > 0:
                     self._record_scale(role_name, "up")
 
-            # Scale down: idle instances with no pending tasks and idle long enough
+            # Scale down: terminate idle instances when (a) current count
+            # exceeds max_instances (operator lowered the limit), or
+            # (b) auto-spawned extras are idle with no pending work.
             extra = self._active_extra.get(role_name, 0)
-            if extra > 0 and pending_count == 0 and not self._is_on_cooldown(role_name, "down"):
+            over_max = max(active_count - max_instances, 0)
+            want_down = max(extra, over_max)
+            allow_idle_only = pending_count == 0
+            # When we're over the configured ceiling, scale down even
+            # if there are pending tasks: the operator explicitly asked
+            # for fewer instances.
+            if want_down > 0 and (allow_idle_only or over_max > 0) and not self._is_on_cooldown(role_name, "down"):
                 idle_instances = [
                     i for i in instances
                     if i["status"] == "idle"
-                    and self._idle_seconds(i) >= self._idle_threshold_seconds
+                    and self._idle_seconds(i) >= idle_threshold
                 ]
-                scale_down = min(extra, len(idle_instances))
+                # Prefer terminating auto-spawned instances first, then
+                # the highest-numbered base instances. This keeps stable
+                # IDs (pm-1, pm-2, ...) intact when possible.
+                idle_instances.sort(
+                    key=lambda i: (
+                        "-auto-" not in i["instance_id"],
+                        # Numeric suffix descending: pm-4 before pm-2.
+                        -int(i["instance_id"].rsplit("-", 1)[-1])
+                        if i["instance_id"].rsplit("-", 1)[-1].isdigit()
+                        else 0,
+                    )
+                )
+                scale_down = min(want_down, len(idle_instances))
                 if scale_down > 0:
                     logger.info(
                         "Auto-scaling %s: scaling down by %d",
@@ -220,7 +252,14 @@ class AutoScaler:
                                 "direction": "down",
                                 "needed": scale_down,
                             })
-                    self._active_extra[role_name] = max(0, extra - scale_down)
+                    # Decrement the auto-spawned counter only by the
+                    # number that were genuinely auto-spawned. Base
+                    # instances we terminated for over_max do not count.
+                    auto_stopped = sum(
+                        1 for inst in idle_instances[:scale_down]
+                        if "-auto-" in inst["instance_id"]
+                    )
+                    self._active_extra[role_name] = max(0, extra - auto_stopped)
                     if stopped > 0:
                         self._record_scale(role_name, "down")
 

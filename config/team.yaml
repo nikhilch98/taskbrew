@@ -1,15 +1,11 @@
-team_name: "AI Development Team"
-
+team_name: AI Development Team
 database:
-  path: "~/.taskbrew/data/taskbrew.db"
-
+  path: ~/.taskbrew/data/taskbrew.db
 dashboard:
-  host: "0.0.0.0"
+  host: 0.0.0.0
   port: 8420
-
 artifacts:
-  base_dir: "artifacts"
-
+  base_dir: artifacts
 defaults:
   max_instances: 1
   poll_interval_seconds: 5
@@ -18,7 +14,51 @@ defaults:
     enabled: false
     scale_up_threshold: 3
     scale_down_idle: 15
-
 group_prefixes:
-  pm: "FEAT"
-  architect: "DEBT"
+  pm: FEAT
+  architect: DEBT
+pipeline:
+  id: default-pipeline
+  name: Default Pipeline
+  start_agent: pm
+  edges:
+  - id: migrated-edge-1
+    from: architect
+    to: coder
+    task_types:
+    - implementation
+    - bug_fix
+    on_failure: block
+  - id: migrated-edge-2
+    from: architect
+    to: architect
+    task_types:
+    - architecture_review
+    on_failure: block
+  - id: migrated-edge-3
+    from: coder
+    to: verifier
+    task_types:
+    - verification
+    on_failure: block
+  - id: migrated-edge-4
+    from: pm
+    to: architect
+    task_types:
+    - tech_design
+    - architecture_review
+    on_failure: block
+  - id: migrated-edge-5
+    from: verifier
+    to: coder
+    task_types:
+    - revision
+    - bug_fix
+    on_failure: block
+  - id: migrated-edge-6
+    from: verifier
+    to: architect
+    task_types:
+    - rejection
+    on_failure: block
+  node_config: {}
