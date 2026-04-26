@@ -8112,7 +8112,10 @@
                 prevBtn.style.display = 'inline-flex';
                 nextBtn.textContent = 'Next';
                 nextBtn.disabled = false;
-                var isClaude = projectWizardData.cli_provider === 'claude';
+                var activeProvider = projectWizardData.cli_provider;
+                var isClaude = activeProvider === 'claude';
+                var isGemini = activeProvider === 'gemini';
+                var isCodex = activeProvider === 'codex';
                 content.innerHTML =
                     '<div class="wizard-step">' +
                     '<h3>CLI Provider</h3>' +
@@ -8124,11 +8127,17 @@
                     '<strong style="display:flex;align-items:center;gap:8px"><span style="font-size:1.3em">C</span> Claude Code</strong>' +
                     '<p>Opus 4.6 for PM &amp; Architect, Sonnet 4.6 for Coder &amp; Verifier. MCP tool servers included.</p>' +
                     '</div></label>' +
-                    '<label class="wizard-option ' + (!isClaude ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'gemini\'; renderWizardStep();" style="border-color:' + (!isClaude ? '#4285f4' : '') + '">' +
-                    '<div class="option-radio ' + (!isClaude ? 'checked' : '') + '" style="' + (!isClaude ? 'border-color:#4285f4;background:#4285f4' : '') + '"></div>' +
+                    '<label class="wizard-option ' + (isGemini ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'gemini\'; renderWizardStep();" style="border-color:' + (isGemini ? '#4285f4' : '') + '">' +
+                    '<div class="option-radio ' + (isGemini ? 'checked' : '') + '" style="' + (isGemini ? 'border-color:#4285f4;background:#4285f4' : '') + '"></div>' +
                     '<div class="option-content">' +
                     '<strong style="display:flex;align-items:center;gap:8px"><span style="font-size:1.3em">G</span> Gemini CLI</strong>' +
-                    '<p>3.1 Pro for PM &amp; Architect, 3 Flash for Coder &amp; Verifier.</p>' +
+                    '<p>3.1 Pro for PM &amp; Architect, 3 Flash for Coder &amp; Verifier. MCP tool servers included.</p>' +
+                    '</div></label>' +
+                    '<label class="wizard-option ' + (isCodex ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'codex\'; renderWizardStep();" style="border-color:' + (isCodex ? '#10a37f' : '') + '">' +
+                    '<div class="option-radio ' + (isCodex ? 'checked' : '') + '" style="' + (isCodex ? 'border-color:#10a37f;background:#10a37f' : '') + '"></div>' +
+                    '<div class="option-content">' +
+                    '<strong style="display:flex;align-items:center;gap:8px"><span style="font-size:1.3em">O</span> Codex CLI</strong>' +
+                    '<p>OpenAI GPT models via codex exec. MCP tool servers included.</p>' +
                     '</div></label>' +
                     '</div></div>';
             } else {

@@ -18,6 +18,7 @@ from taskbrew.agents.gemini_cli import (
     _build_command,
     _build_prompt,
     _find_cli,
+    _gemini_settings_from_mcp,
     query,
 )
 
@@ -63,6 +64,29 @@ class TestBuildCommand:
         opts = GeminiOptions()
         cmd = _build_command("/usr/bin/gemini", "hello", opts)
         assert "-m" not in cmd
+
+
+class TestMCPSettings:
+    def test_mcp_servers_become_gemini_settings(self):
+        settings = _gemini_settings_from_mcp({
+            "task-tools": {
+                "type": "stdio",
+                "command": "/usr/bin/python",
+                "args": ["-m", "taskbrew.tools.task_tools"],
+                "env": {"TASKBREW_API_URL": "http://127.0.0.1:8420"},
+            }
+        })
+        assert settings["mcpServers"]["task-tools"]["command"] == "/usr/bin/python"
+        assert settings["mcpServers"]["task-tools"]["args"] == [
+            "-m", "taskbrew.tools.task_tools",
+        ]
+        assert settings["mcpServers"]["task-tools"]["trust"] is True
+
+    def test_http_mcp_server_uses_http_url(self):
+        settings = _gemini_settings_from_mcp({
+            "remote": {"type": "http", "url": "http://127.0.0.1:9999/mcp"}
+        })
+        assert settings["mcpServers"]["remote"]["httpUrl"] == "http://127.0.0.1:9999/mcp"
 
 
 class TestFindCli:
