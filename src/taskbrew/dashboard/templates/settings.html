@@ -2206,6 +2206,54 @@
             return String(str).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
         }
 
+        function providerForModel(model) {
+            model = model || '';
+            if (model.indexOf('gemini') === 0) return 'gemini';
+            if (model.indexOf('gpt-') === 0 || /^o\d/.test(model) || model.indexOf('codex') === 0) return 'codex';
+            return 'claude';
+        }
+
+        function modelOptionsForProvider(provider, currentModel) {
+            var filtered = availableModels.filter(function(m) {
+                return (m.provider || providerForModel(m.id || m)) === provider;
+            });
+            if (filtered.length === 0) {
+                var fallback = {
+                    claude: [
+                        { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
+                        { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+                        { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' }
+                    ],
+                    gemini: [
+                        { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro' },
+                        { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash' }
+                    ],
+                    codex: [
+                        { id: 'gpt-5.5', name: 'GPT-5.5' },
+                        { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
+                        { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark' },
+                        { id: 'gpt-4o', name: 'GPT-4o' },
+                        { id: 'o3', name: 'o3' }
+                    ]
+                };
+                filtered = fallback[provider] || fallback.claude;
+            }
+            if (currentModel && !filtered.some(function(m) { return (m.id || m) === currentModel; })) {
+                filtered = [{ id: currentModel, name: currentModel + ' (custom)' }].concat(filtered);
+            }
+            return filtered;
+        }
+
+        function defaultModelForProvider(provider) {
+            var models = modelOptionsForProvider(provider, '');
+            return models.length ? (models[0].id || models[0]) : '';
+        }
+
+        function updateRoleProvider(roleName, provider) {
+            updateRole(roleName, 'model', defaultModelForProvider(provider));
+            renderAll();
+        }
+
         function autoPrefix(name) {
             if (!name) return '';
             const words = name.trim().split(/\s+/);
@@ -3211,11 +3259,8 @@
         function renderModelFields(role) {
             var r = escapeHtml(role.role);
             var modelOpts = '';
-            var models = availableModels.length > 0 ? availableModels : [
-                { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
-                { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
-                { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' }
-            ];
+            var provider = providerForModel(role.model);
+            var models = modelOptionsForProvider(provider, role.model);
             models.forEach(function(m) {
                 var mid = m.id || m;
                 var mname = m.name || m.label || mid;
@@ -3225,8 +3270,18 @@
             var autoScale = role.auto_scale || {};
             var autoEnabled = autoScale.enabled || false;
 
-            var html = '<div class="form-group" role="group" aria-label="Model selection for ' + r + '"><label class="form-label" for="model-' + r + '">Model</label>' +
-                '<select class="form-select" id="model-' + r + '" onchange="updateRole(\'' + r + '\',\'model\',this.value)">' + modelOpts + '</select></div>';
+            var html = '<div class="form-row">' +
+                '<div class="form-group" role="group" aria-label="Provider selection for ' + r + '"><label class="form-label" for="provider-' + r + '">Provider</label>' +
+                '<select class="form-select" id="provider-' + r + '" onchange="updateRoleProvider(\'' + r + '\',this.value)">' +
+                '<option value="claude"' + (provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
+                '<option value="gemini"' + (provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
+                '<option value="codex"' + (provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
+                '</select></div>' +
+                '<div class="form-group" role="group" aria-label="Model selection for ' + r + '"><label class="form-label" for="model-' + r + '">Model Version</label>' +
+                '<select class="form-select" id="model-' + r + '" onchange="updateRole(\'' + r + '\',\'model\',this.value);var input=document.getElementById(\'model-custom-' + r + '\');if(input)input.value=this.value;">' + modelOpts + '</select></div>' +
+                '</div>';
+            html += '<div class="form-group" role="group" aria-label="Custom model id for ' + r + '"><label class="form-label" for="model-custom-' + r + '">Model ID</label>' +
+                '<input class="form-input" id="model-custom-' + r + '" value="' + escapeHtml(role.model || '') + '" onchange="updateRole(\'' + r + '\',\'model\',this.value)"></div>';
             html += '<div class="form-row-3">';
             html += '<div class="form-group" role="group" aria-label="Max turns for ' + r + '"><label class="form-label" for="maxturns-' + r + '">Max Turns</label>' +
                 '<input type="number" class="form-input" id="maxturns-' + r + '" value="' + (role.max_turns || '') + '" min="1" onchange="updateRole(\'' + r + '\',\'max_turns\',parseInt(this.value)||0)"></div>';

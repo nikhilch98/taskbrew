@@ -12,6 +12,7 @@ from taskbrew.agents.instance_manager import InstanceManager
 from taskbrew.config_loader import RoleConfig, RouteTarget
 from taskbrew.orchestrator.database import Database
 from taskbrew.orchestrator.event_bus import EventBus
+from taskbrew.orchestrator.merge_queue import MergeQueue
 from taskbrew.orchestrator.task_board import TaskBoard
 
 
@@ -349,6 +350,32 @@ async def test_fanout_gate_requeues_tech_design_without_children(
     assert row["fanout_retries"] == 1
 
 
+async def test_fanout_gate_requeues_goal_without_architect_child(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    """PM goal tasks must create an architect handoff before completion."""
+    group = await board.create_group(title="F", origin="human", created_by="human")
+    task = await board.create_task(
+        group_id=group["id"], title="Build feature",
+        task_type="goal", assigned_to="pm", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'pm-1' WHERE id = ?",
+        (task["id"],),
+    )
+    task_row = await board.get_task(task["id"])
+    role = _make_role(role="pm", display_name="Product Manager")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="pm-1")
+
+    await loop.complete_and_handoff(task_row, "PRD without handoff.")
+
+    row = await board.get_task(task["id"])
+    assert row["status"] == "pending"
+    assert row["claimed_by"] is None
+    assert row["fanout_retries"] == 1
+
+
 async def test_fanout_gate_escalates_after_two_retries(
     board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
 ):
@@ -398,6 +425,34 @@ async def test_fanout_gate_passes_when_actionable_child_exists(
     loop = _make_loop(board, event_bus, instance_mgr,
                       role_config=role, instance_id="architect-1")
     await loop.complete_and_handoff(parent_row, "done")
+    row = await board.get_task(parent["id"])
+    assert row["status"] == "completed"
+
+
+async def test_goal_fanout_gate_passes_with_architect_child(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    group = await board.create_group(title="F", origin="human", created_by="human")
+    parent = await board.create_task(
+        group_id=group["id"], title="Build feature",
+        task_type="goal", assigned_to="pm", created_by="human",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'pm-1' WHERE id = ?",
+        (parent["id"],),
+    )
+    await board.create_task(
+        group_id=group["id"], title="Design feature",
+        task_type="tech_design", assigned_to="architect", created_by="pm-1",
+        parent_id=parent["id"],
+    )
+    task_row = await board.get_task(parent["id"])
+    role = _make_role(role="pm", display_name="Product Manager")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="pm-1")
+
+    await loop.complete_and_handoff(task_row, "PRD with handoff.")
+
     row = await board.get_task(parent["id"])
     assert row["status"] == "completed"
 
@@ -940,6 +995,189 @@ async def test_verification_gate_all_pass_merges(
     row = await board.get_task(task_row["id"])
     assert row["status"] == "completed"
     assert row["merge_status"] == "merged"
+
+
+async def test_brokered_merge_runs_for_approved_verification(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    group = await board.create_group(title="F", origin="human", created_by="human")
+    parent = await board.create_task(
+        group_id=group["id"], title="Implement feature",
+        task_type="implementation", assigned_to="coder", created_by="architect-1",
+        branch_name="feat/cd-001", parent_branch="main",
+    )
+    verifier = await board.create_task(
+        group_id=group["id"], title="Verify feature",
+        task_type="verification", assigned_to="verifier", created_by="coder-1",
+        parent_id=parent["id"],
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'verifier-1' WHERE id = ?",
+        (verifier["id"],),
+    )
+    task_row = await board.get_task(verifier["id"])
+    role = _make_role(role="verifier", display_name="Verifier")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="verifier-1",
+                      include_verifier_role=False)
+    loop._attempt_brokered_merge = AsyncMock(  # type: ignore[method-assign]
+        return_value={"status": "merged", "details": "ok"}
+    )
+
+    await loop.complete_and_handoff(task_row, "Decision: APPROVE. Tests pass.")
+
+    loop._attempt_brokered_merge.assert_awaited_once()
+    parent_row = await board.get_task(parent["id"])
+    verifier_row = await board.get_task(verifier["id"])
+    assert parent_row["merge_status"] == "merged"
+    assert verifier_row["merge_status"] == "merged"
+
+
+async def test_approved_verification_enqueues_merge_when_queue_available(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    group = await board.create_group(title="F", origin="human", created_by="human")
+    parent = await board.create_task(
+        group_id=group["id"], title="Implement feature",
+        task_type="implementation", assigned_to="coder", created_by="architect-1",
+        branch_name="feat/cd-001", parent_branch="main",
+    )
+    verifier = await board.create_task(
+        group_id=group["id"], title="Verify feature",
+        task_type="verification", assigned_to="verifier", created_by="coder-1",
+        parent_id=parent["id"],
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'verifier-1' WHERE id = ?",
+        (verifier["id"],),
+    )
+    task_row = await board.get_task(verifier["id"])
+    role = _make_role(role="verifier", display_name="Verifier")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="verifier-1",
+                      include_verifier_role=False)
+    loop.merge_queue = MergeQueue(board._db)
+    loop._attempt_brokered_merge = AsyncMock(  # type: ignore[method-assign]
+        return_value={"status": "merged", "details": "ok"}
+    )
+
+    await loop.complete_and_handoff(task_row, "Decision: APPROVE. Tests pass.")
+
+    loop._attempt_brokered_merge.assert_not_awaited()
+    rows = await board._db.execute_fetchall("SELECT * FROM merge_queue")
+    parent_row = await board.get_task(parent["id"])
+    verifier_row = await board.get_task(verifier["id"])
+    assert len(rows) == 1
+    assert rows[0]["source_branch"] == "feat/cd-001"
+    assert parent_row["merge_status"] == "merge_queued"
+    assert verifier_row["merge_status"] == "merge_queued"
+
+
+async def test_brokered_merge_skips_unapproved_verification(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    group = await board.create_group(title="F", origin="human", created_by="human")
+    parent = await board.create_task(
+        group_id=group["id"], title="Implement feature",
+        task_type="implementation", assigned_to="coder", created_by="architect-1",
+        branch_name="feat/cd-001", parent_branch="main",
+    )
+    verifier = await board.create_task(
+        group_id=group["id"], title="Verify feature",
+        task_type="verification", assigned_to="verifier", created_by="coder-1",
+        parent_id=parent["id"],
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'verifier-1' WHERE id = ?",
+        (verifier["id"],),
+    )
+    task_row = await board.get_task(verifier["id"])
+    role = _make_role(role="verifier", display_name="Verifier")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="verifier-1",
+                      include_verifier_role=False)
+    loop._attempt_brokered_merge = AsyncMock(  # type: ignore[method-assign]
+        return_value={"status": "merged", "details": "ok"}
+    )
+
+    await loop.complete_and_handoff(task_row, "Decision: REJECT. Needs revision.")
+
+    loop._attempt_brokered_merge.assert_not_awaited()
+    verifier_row = await board.get_task(verifier["id"])
+    assert verifier_row["merge_status"] is None
+
+
+async def test_brokered_merge_rejects_do_not_approve_wording(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    group = await board.create_group(title="F", origin="human", created_by="human")
+    parent = await board.create_task(
+        group_id=group["id"], title="Implement feature",
+        task_type="implementation", assigned_to="coder", created_by="architect-1",
+        branch_name="feat/cd-001", parent_branch="main",
+    )
+    verifier = await board.create_task(
+        group_id=group["id"], title="Verify feature",
+        task_type="verification", assigned_to="verifier", created_by="coder-1",
+        parent_id=parent["id"],
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'verifier-1' WHERE id = ?",
+        (verifier["id"],),
+    )
+    task_row = await board.get_task(verifier["id"])
+    role = _make_role(role="verifier", display_name="Verifier")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="verifier-1",
+                      include_verifier_role=False)
+    loop._attempt_brokered_merge = AsyncMock(  # type: ignore[method-assign]
+        return_value={"status": "merged", "details": "ok"}
+    )
+
+    await loop.complete_and_handoff(task_row, "Decision: do not approve. Tests failed.")
+
+    loop._attempt_brokered_merge.assert_not_awaited()
+    verifier_row = await board.get_task(verifier["id"])
+    assert verifier_row["merge_status"] is None
+
+
+async def test_brokered_merge_conflict_creates_revision_task(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager,
+):
+    group = await board.create_group(title="F", origin="human", created_by="human")
+    parent = await board.create_task(
+        group_id=group["id"], title="Implement feature",
+        task_type="implementation", assigned_to="coder", created_by="architect-1",
+        branch_name="feat/cd-001", parent_branch="main",
+    )
+    verifier = await board.create_task(
+        group_id=group["id"], title="Verify feature",
+        task_type="verification", assigned_to="verifier", created_by="coder-1",
+        parent_id=parent["id"],
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'in_progress', claimed_by = 'verifier-1' WHERE id = ?",
+        (verifier["id"],),
+    )
+    task_row = await board.get_task(verifier["id"])
+    role = _make_role(role="verifier", display_name="Verifier")
+    loop = _make_loop(board, event_bus, instance_mgr,
+                      role_config=role, instance_id="verifier-1",
+                      include_verifier_role=False)
+    loop._attempt_brokered_merge = AsyncMock(  # type: ignore[method-assign]
+        return_value={"status": "conflict", "details": "CONFLICT content"}
+    )
+
+    await loop.complete_and_handoff(task_row, "APPROVED after verification.")
+
+    rows = await board._db.execute_fetchall(
+        "SELECT * FROM tasks WHERE revision_of = ?", (parent["id"],),
+    )
+    verifier_row = await board.get_task(verifier["id"])
+    assert len(rows) == 1
+    assert rows[0]["assigned_to"] == "coder"
+    assert rows[0]["task_type"] == "revision"
+    assert verifier_row["merge_status"] == "merge_conflict"
 
 
 # ------------------------------------------------------------------

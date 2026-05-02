@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from taskbrew.agents.instance_manager import InstanceManager
@@ -137,6 +138,7 @@ class AgentLoop:
         cli_provider: str = "claude",
         mcp_servers: dict | None = None,
         preflight_checker=None,
+        merge_queue=None,
     ) -> None:
         self.instance_id = instance_id
         self.role_config = role_config
@@ -163,6 +165,7 @@ class AgentLoop:
         self._observability_manager = observability_manager
         self.cli_provider = cli_provider
         self.mcp_servers = mcp_servers
+        self.merge_queue = merge_queue
         self._running = False
 
     async def poll_for_task(self) -> dict | None:
@@ -636,54 +639,67 @@ class AgentLoop:
         #   - all pass -> merge as merged
         # Design: docs/superpowers/specs/2026-04-24-per-task-completion-checks-design.md
         import json as _json
-        raw_checks = task.get("completion_checks") or "{}"
-        try:
-            checks_map = _json.loads(raw_checks) if isinstance(raw_checks, str) else (raw_checks or {})
-        except _json.JSONDecodeError:
-            checks_map = {}
-        failed_checks = [
-            name for name, c in checks_map.items()
-            if isinstance(c, dict) and c.get("status") == "fail"
-        ]
-
         merge_status: str | None = None
-        if failed_checks:
-            retries = task.get("verification_retries") or 0
-            if retries < 2:
-                await self._requeue_for_verification(
-                    task, retries, failed_checks, checks_map,
+        if task.get("task_type") != "verification":
+            raw_checks = task.get("completion_checks") or "{}"
+            try:
+                checks_map = (
+                    _json.loads(raw_checks)
+                    if isinstance(raw_checks, str)
+                    else (raw_checks or {})
                 )
-                return
-            # Exhausted — escalate, fall through to complete so the queue
-            # doesn't stall. Dashboard surfaces via merge_status.
-            await self.event_bus.emit(
-                "task.escalation_required",
-                {
-                    "task_id": task["id"],
-                    "group_id": task["group_id"],
-                    "reason": "verification_failed_after_retries",
-                    "failed_checks": failed_checks,
-                    "retries": retries,
-                },
-            )
-            logger.error(
-                "Task %s still has failing checks %s after %d retries; "
-                "completing with merge_status=verification_failed and escalating.",
-                task["id"], failed_checks, retries,
-            )
-            merge_status = "verification_failed"
-        elif not checks_map:
-            merge_status = "merged_unverified"
-            await self.event_bus.emit(
-                "task.unverified_merge",
-                {
-                    "task_id": task["id"],
-                    "group_id": task["group_id"],
-                    "agent_id": self.instance_id,
-                },
-            )
-        else:
+            except _json.JSONDecodeError:
+                checks_map = {}
+            failed_checks = [
+                name for name, c in checks_map.items()
+                if isinstance(c, dict) and c.get("status") == "fail"
+            ]
+
+            if failed_checks:
+                retries = task.get("verification_retries") or 0
+                if retries < 2:
+                    await self._requeue_for_verification(
+                        task, retries, failed_checks, checks_map,
+                    )
+                    return
+                # Exhausted — escalate, fall through to complete so the queue
+                # doesn't stall. Dashboard surfaces via merge_status.
+                await self.event_bus.emit(
+                    "task.escalation_required",
+                    {
+                        "task_id": task["id"],
+                        "group_id": task["group_id"],
+                        "reason": "verification_failed_after_retries",
+                        "failed_checks": failed_checks,
+                        "retries": retries,
+                    },
+                )
+                logger.error(
+                    "Task %s still has failing checks %s after %d retries; "
+                    "completing with merge_status=verification_failed and escalating.",
+                    task["id"], failed_checks, retries,
+                )
+                merge_status = "verification_failed"
+            elif not checks_map:
+                merge_status = "merged_unverified"
+                await self.event_bus.emit(
+                    "task.unverified_merge",
+                    {
+                        "task_id": task["id"],
+                        "group_id": task["group_id"],
+                        "agent_id": self.instance_id,
+                    },
+                )
+            else:
+                merge_status = "merged"
+
+        broker_status = await self._broker_verification_merge_if_needed(task, output)
+        if broker_status in {"merged", "already_merged"}:
             merge_status = "merged"
+        elif broker_status == "queued":
+            merge_status = "merge_queued"
+        elif broker_status in {"conflict", "blocked", "failed", "root_refresh_blocked"}:
+            merge_status = f"merge_{broker_status}"
 
         # Guard against duplicate handoff tasks created by retries
         existing = await self.board._db.execute_fetchone(
@@ -779,7 +795,7 @@ class AgentLoop:
     # Stage-1 completion gate helpers (Fix #1 + Fix #2)
     # ------------------------------------------------------------------
 
-    _FANOUT_REQUIRED_TASK_TYPES = {"tech_design"}
+    _FANOUT_REQUIRED_TASK_TYPES = {"goal", "tech_design"}
     _VERIFICATION_REQUIRED_TASK_TYPES = {"implementation", "bug_fix", "revision"}
     _VR_DIFF_LOC_THRESHOLD = 20
     # Diff size at which VR is always required regardless of how clean
@@ -789,6 +805,251 @@ class AgentLoop:
     # Design:
     # docs/superpowers/specs/2026-04-24-vr-gate-skip-clean-checks-design.md
     _VR_DIFF_LOC_HARD_CEILING = 200
+
+    _MERGE_APPROVAL_TOKENS = (
+        "approve",
+        "approved",
+        "approval",
+        "verification passed",
+        "decision: pass",
+        "decision: approve",
+    )
+    _MERGE_REJECTION_TOKENS = (
+        "reject",
+        "rejected",
+        "needs revision",
+        "decision: fail",
+        "decision: reject",
+        "failed verification",
+        "do not merge",
+        "do not approve",
+        "not approve",
+        "not approved",
+    )
+
+    def _verification_output_approves_merge(self, output: str | None) -> bool:
+        """Return True when verifier output clearly approves integration."""
+        text = (output or "").lower()
+        if not any(token in text for token in self._MERGE_APPROVAL_TOKENS):
+            return False
+        return not any(token in text for token in self._MERGE_REJECTION_TOKENS)
+
+    async def _broker_verification_merge_if_needed(
+        self, task: dict, output: str | None,
+    ) -> str | None:
+        """Provider-neutral merge broker for approved verification tasks.
+
+        Agents still do the semantic review. TaskBrew owns the git operation
+        that mutates the primary checkout, which avoids provider-specific
+        sandbox differences between Claude Code and Codex.
+        """
+        if task.get("task_type") != "verification" or task.get("assigned_to") != "verifier":
+            return None
+        parent_id = task.get("parent_id")
+        if not parent_id:
+            return None
+        if not self._verification_output_approves_merge(output):
+            logger.info(
+                "Skipping brokered merge for %s: verifier output did not clearly approve",
+                task["id"],
+            )
+            return None
+
+        parent = await self.board.get_task(parent_id)
+        if not parent:
+            return None
+        source_branch = parent.get("branch_name")
+        target_branch = parent.get("parent_branch") or "main"
+        if not source_branch:
+            return None
+
+        if self.merge_queue is not None:
+            row = await self.merge_queue.enqueue(
+                group_id=task["group_id"],
+                parent_task_id=parent["id"],
+                verifier_task_id=task["id"],
+                source_branch=source_branch,
+                target_branch=target_branch,
+            )
+            await self.board._db.execute(
+                "UPDATE tasks SET merge_status = ? WHERE id = ?",
+                ("merge_queued", parent["id"]),
+            )
+            await self.event_bus.emit(
+                "task.merge_queued",
+                {
+                    "queue_id": row["id"],
+                    "task_id": parent["id"],
+                    "verification_task_id": task["id"],
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "agent_id": self.instance_id,
+                },
+            )
+            return "queued"
+
+        result = await self._attempt_brokered_merge(
+            source_branch=source_branch,
+            target_branch=target_branch,
+            task=task,
+            parent=parent,
+        )
+        status = result.get("status")
+
+        if status in {"merged", "already_merged"}:
+            await self.board._db.execute(
+                "UPDATE tasks SET merge_status = ? WHERE id = ?",
+                ("merged", parent["id"]),
+            )
+            await self.event_bus.emit(
+                "task.branch_merged",
+                {
+                    "task_id": parent["id"],
+                    "verification_task_id": task["id"],
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "status": status,
+                    "agent_id": self.instance_id,
+                },
+            )
+            return status
+
+        reason = result.get("details") or f"Merge {status or 'failed'}"
+        if status == "conflict":
+            await self._create_merge_conflict_task(
+                verifier_task=task,
+                parent=parent,
+                source_branch=source_branch,
+                target_branch=target_branch,
+                reason=reason,
+            )
+        else:
+            await self._record_merge_escalation(
+                task_id=task["id"],
+                reason=(
+                    f"Brokered merge of {source_branch} into {target_branch} "
+                    f"failed: {reason}"
+                ),
+                severity="high",
+            )
+        await self.event_bus.emit(
+            "task.merge_blocked",
+            {
+                "task_id": parent["id"],
+                "verification_task_id": task["id"],
+                "source_branch": source_branch,
+                "target_branch": target_branch,
+                "status": status,
+                "reason": reason,
+                "agent_id": self.instance_id,
+            },
+        )
+        return status if isinstance(status, str) else "failed"
+
+    async def _attempt_brokered_merge(
+        self,
+        *,
+        source_branch: str,
+        target_branch: str,
+        task: dict,
+        parent: dict,
+    ) -> dict[str, str]:
+        """Try to merge *source_branch* into *target_branch* in the main repo."""
+        repo_dir = getattr(self.worktree_manager, "repo_dir", None) or self.project_dir
+        if not repo_dir:
+            return {"status": "failed", "details": "No repository directory configured"}
+
+        async def run_git(*args: str) -> tuple[int, str, str]:
+            proc = await asyncio.create_subprocess_exec(
+                "git", *args,
+                cwd=repo_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            return (
+                int(proc.returncode or 0),
+                stdout.decode(errors="replace"),
+                stderr.decode(errors="replace"),
+            )
+
+        try:
+            rc, _out, _err = await run_git("rev-parse", "--verify", source_branch)
+            if rc != 0:
+                return {"status": "failed", "details": f"Source branch {source_branch!r} not found"}
+
+            rc, _out, _err = await run_git(
+                "merge-base", "--is-ancestor", source_branch, target_branch,
+            )
+            if rc == 0:
+                return {"status": "already_merged", "details": "Source branch is already merged"}
+
+            rc, out, err = await run_git("checkout", target_branch)
+            if rc != 0:
+                return {"status": "blocked", "details": (err or out).strip()}
+
+            rc, out, err = await run_git(
+                "merge", "--no-edit", source_branch,
+            )
+            details = (out + err).strip()
+            if rc == 0:
+                return {"status": "merged", "details": details}
+
+            if "CONFLICT" in details or "Automatic merge failed" in details:
+                await run_git("merge", "--abort")
+                return {"status": "conflict", "details": details}
+
+            await run_git("merge", "--abort")
+            return {"status": "blocked", "details": details}
+        except asyncio.TimeoutError:
+            return {"status": "failed", "details": "git merge timed out"}
+        except Exception as exc:
+            return {"status": "failed", "details": str(exc)}
+
+    async def _create_merge_conflict_task(
+        self,
+        *,
+        verifier_task: dict,
+        parent: dict,
+        source_branch: str,
+        target_branch: str,
+        reason: str,
+    ) -> None:
+        existing = await self.board._db.execute_fetchone(
+            "SELECT id FROM tasks WHERE revision_of = ? AND status != 'cancelled' "
+            "AND task_type = 'revision' LIMIT 1",
+            (parent["id"],),
+        )
+        if existing:
+            return
+        await self.board.create_task(
+            group_id=verifier_task["group_id"],
+            title=f"Resolve merge conflict for {parent['id']}",
+            task_type="revision",
+            assigned_to="coder",
+            created_by=self.instance_id,
+            parent_id=parent["id"],
+            revision_of=parent["id"],
+            priority="high",
+            description=(
+                f"TaskBrew attempted to merge `{source_branch}` into "
+                f"`{target_branch}` after verifier approval in "
+                f"{verifier_task['id']}, but git reported a merge conflict.\n\n"
+                f"Conflict details:\n{reason}\n\n"
+                "Resolve the conflict on the task branch, run the relevant "
+                "tests, commit the fix, and create a fresh verification task."
+            ),
+        )
+
+    async def _record_merge_escalation(
+        self, *, task_id: str, reason: str, severity: str,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        await self.board._db.execute(
+            "INSERT INTO escalations (task_id, from_agent, to_agent, reason, severity, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'open', ?)",
+            (task_id, self.instance_id, None, reason, severity, now),
+        )
 
     async def _should_require_fanout(self, task: dict) -> bool:
         """Return True when the fan-out gate should enforce a child task.
@@ -805,15 +1066,20 @@ class AgentLoop:
     async def _count_actionable_children(self, task_id: str) -> int:
         """Count non-cancelled children that represent actual downstream work.
 
-        "Actionable" means the child is routed to a role that does work
-        against the parent's design (coder, verifier, reviewer, integrator).
-        Peer architect reviews don't count — they don't produce code.
+        "Actionable" means the child is routed to the next role that does work
+        against the parent's output. PM goal tasks should fan out to architect;
+        architect design tasks should fan out to coder/verifier/reviewer work.
         """
+        task = await self.board.get_task(task_id)
+        actionable_roles = ["coder", "verifier", "reviewer", "integrator"]
+        if task and task.get("assigned_to") == "pm":
+            actionable_roles.append("architect")
+        placeholders = ",".join("?" for _ in actionable_roles)
         row = await self.board._db.execute_fetchone(
             "SELECT COUNT(*) AS n FROM tasks "
             "WHERE parent_id = ? AND status != 'cancelled' "
-            "AND assigned_to IN ('coder', 'verifier', 'reviewer', 'integrator')",
-            (task_id,),
+            f"AND assigned_to IN ({placeholders})",
+            (task_id, *actionable_roles),
         )
         return int(row["n"] or 0) if row else 0
 

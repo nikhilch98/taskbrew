@@ -268,6 +268,36 @@ async def deactivate_project():
 # Settings
 # ------------------------------------------------------------------
 
+_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
+    "claude": [
+        {"id": "claude-opus-4-6", "label": "Flagship", "name": "Claude Opus 4.6"},
+        {"id": "claude-sonnet-4-6", "label": "Balanced", "name": "Claude Sonnet 4.6"},
+        {"id": "claude-haiku-4-5-20251001", "label": "Fast", "name": "Claude Haiku 4.5"},
+    ],
+    "gemini": [
+        {"id": "gemini-3.1-pro-preview", "label": "Flagship", "name": "Gemini 3.1 Pro"},
+        {"id": "gemini-3-flash-preview", "label": "Balanced", "name": "Gemini 3 Flash"},
+        {"id": "gemini-2.5-pro", "label": "Previous Pro", "name": "Gemini 2.5 Pro"},
+        {"id": "gemini-2.5-flash", "label": "Previous Flash", "name": "Gemini 2.5 Flash"},
+    ],
+    "codex": [
+        {"id": "gpt-5.5", "label": "Flagship", "name": "GPT-5.5"},
+        {"id": "gpt-5.3-codex", "label": "Balanced", "name": "GPT-5.3 Codex"},
+        {"id": "gpt-5.3-codex-spark", "label": "Fast", "name": "GPT-5.3 Codex Spark"},
+        {"id": "gpt-4o", "label": "Legacy", "name": "GPT-4o"},
+        {"id": "o3", "label": "Reasoning", "name": "o3"},
+    ],
+}
+
+
+def _available_models(provider: str = "") -> list[dict[str, str]]:
+    providers = [provider] if provider else ["claude", "gemini", "codex"]
+    models: list[dict[str, str]] = []
+    for provider_name in providers:
+        for model in _MODEL_CATALOG.get(provider_name, []):
+            models.append({"provider": provider_name, **model})
+    return models
+
 
 @router.get("/api/settings/team")
 async def get_team_settings():
@@ -792,24 +822,11 @@ async def get_available_models(provider: str = ""):
     orch = get_orch_optional()
     active_provider = provider
     if not active_provider and orch and hasattr(orch.team_config, "cli_provider"):
-        active_provider = orch.team_config.cli_provider
-    active_provider = active_provider or "claude"
-
-    if active_provider == "gemini":
-        return [
-            {"id": "gemini-3.1-pro-preview", "label": "Flagship"},
-            {"id": "gemini-3-flash-preview", "label": "Balanced"},
-        ]
-    if active_provider == "codex":
-        return [
-            {"id": "gpt-5.2", "label": "Flagship"},
-            {"id": "gpt-5.2", "label": "Balanced"},
-        ]
-    return [
-        {"id": "claude-opus-4-6", "label": "Flagship"},
-        {"id": "claude-sonnet-4-6", "label": "Balanced"},
-        {"id": "claude-haiku-4-5-20251001", "label": "Fast"},
-    ]
+        # Backward compatibility: callers can still request the active
+        # provider explicitly, but the settings UI needs all families so
+        # existing team members can be moved across Claude/Gemini/Codex.
+        active_provider = ""
+    return _available_models(active_provider)
 
 
 # ------------------------------------------------------------------

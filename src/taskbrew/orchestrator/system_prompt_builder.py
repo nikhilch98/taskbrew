@@ -96,7 +96,8 @@ def build_task_system_prompt(
         "Use `route_task` to send work. Use `request_clarification` for human input."
     )
     parts.append(
-        "Use `complete_task` when done. Do NOT route to agents not listed above."
+        "When done, return your final summary; TaskBrew records task completion. "
+        "Do NOT route to agents not listed above."
     )
 
     return "\n".join(parts)

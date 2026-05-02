@@ -378,3 +378,8 @@ def test_provider_model_mapping():
     assert _model_for_role("architect", "gemini") == "gemini-3.1-pro-preview"
     assert _model_for_role("coder", "gemini") == "gemini-3-flash-preview"
     assert _model_for_role("verifier", "gemini") == "gemini-3-flash-preview"
+
+    assert _model_for_role("pm", "codex") == "gpt-5.5"
+    assert _model_for_role("architect", "codex") == "gpt-5.5"
+    assert _model_for_role("coder", "codex") == "gpt-5.5"
+    assert _model_for_role("verifier", "codex") == "gpt-5.5"

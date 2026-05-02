@@ -228,6 +228,15 @@ def register_chat_routes(app, chat_manager):
                             if base in config_roles:
                                 role_lookup = base
                         config = get_agent_config(role_lookup, config_roles=config_roles)
+                        if orch:
+                            config.cli_provider = getattr(orch.team_config, "cli_provider", "claude") or "claude"
+                            config.mcp_servers = getattr(orch.team_config, "mcp_servers", None)
+                            config.cwd = getattr(orch, "project_dir", None)
+                            config.api_url = (
+                                f"http://127.0.0.1:{getattr(orch.team_config, 'dashboard_port', 8420)}"
+                            )
+                            if getattr(orch, "db", None):
+                                config.db_path = str(orch.db.db_path)
                         existing = chat_manager.get_session(agent_name)
                         session = await chat_manager.start_session(agent_name, config)
                         # Use object identity to decide ownership.

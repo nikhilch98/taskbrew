@@ -143,6 +143,25 @@ async def test_complete_task(board: TaskBoard):
     assert result["completed_at"] is not None
 
 
+async def test_complete_task_with_output_updates_already_completed_task(board: TaskBoard):
+    """Agent output should still persist if an MCP call completed the task first."""
+    group = await board.create_group(title="Feature output", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.claim_task("coder", "coder-1")
+    await board.complete_task(task["id"])
+
+    output = "x" * 2500
+    result = await board.complete_task_with_output(task["id"], output)
+
+    assert result["status"] == "completed"
+    assert result["output_text"] == output
+
+
 async def test_reject_task(board: TaskBoard):
     """reject_task should set status and store the reason."""
     group = await board.create_group(title="Feature E", created_by="pm")

@@ -128,4 +128,9 @@ class ToolRouter:
         normalized = {t for t in allowed_tools if isinstance(t, str) and t}
         if not normalized:
             return bool(open_set_on_empty)
-        return tool_name in normalized
+        if tool_name in normalized:
+            return True
+        # Role YAML often stores MCP tools in client-facing form, e.g.
+        # ``mcp__task-tools__create_task``. The in-process MCP dispatcher
+        # gates on the local function name, e.g. ``create_task``.
+        return any(t.endswith(f"__{tool_name}") for t in normalized)

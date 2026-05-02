@@ -416,9 +416,35 @@ async def mcp_route_task(
             400, f"invalid priority {priority!r}; expected one of {sorted(_VALID_TASK_PRIORITIES)}",
         )
     blocked_by_task = body.get("task_id")  # calling agent's current task
+    parent_id = body.get("parent_id") or blocked_by_task
     blocked_by = [blocked_by_task] if blocked_by_task else None
 
     if _task_board:
+        if (
+            agent_role == "architect"
+            and target_agent == "coder"
+            and not parent_id
+        ):
+            raise HTTPException(
+                400,
+                "Coder tasks routed by an architect must include parent_id "
+                "or task_id referencing the tech_design task.",
+            )
+
+        if target_agent == "verifier" and parent_id:
+            existing_vr = await _task_board._db.execute_fetchone(
+                "SELECT id FROM tasks "
+                "WHERE parent_id = ? AND assigned_to = 'verifier' "
+                "AND status != 'cancelled' LIMIT 1",
+                (parent_id,),
+            )
+            if existing_vr:
+                raise HTTPException(
+                    409,
+                    f"A verification task already exists for parent "
+                    f"'{parent_id}' ({existing_vr['id']}).",
+                )
+
         task = await _task_board.create_task(
             group_id=group_id or "",
             title=title,
@@ -427,6 +453,7 @@ async def mcp_route_task(
             assigned_to=target_agent,
             created_by=agent_role,
             priority=priority,
+            parent_id=parent_id,
             blocked_by=blocked_by,
         )
         logger.info("Task %s routed from %s to %s via MCP", task["id"], agent_role, target_agent)

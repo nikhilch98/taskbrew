@@ -60,9 +60,20 @@ def _build_mcp_dict(
     servers: dict[str, MCPServerConfig],
     api_url: str = "http://127.0.0.1:8420",
     db_path: str = "data/tasks.db",
+    allowed_tools: list[str] | None = None,
+    agent_role: str | None = None,
+    agent_instance: str | None = None,
 ) -> dict[str, dict]:
     """Convert MCPServerConfig objects into SDK-compatible dicts."""
     env_sources = {"api_url": api_url, "db_path": db_path}
+    policy_env: dict[str, str] = {}
+    if allowed_tools is not None:
+        policy_env["TASKBREW_ALLOWED_TOOLS"] = ",".join(allowed_tools)
+        policy_env["TASKBREW_TOOL_ENFORCEMENT"] = "deny"
+    if agent_role:
+        policy_env["TASKBREW_AGENT_ROLE"] = agent_role
+    if agent_instance:
+        policy_env["TASKBREW_AGENT_INSTANCE"] = agent_instance
     result = {}
     for name, cfg in servers.items():
         if cfg.builtin and name in _BUILTIN_MCP_SERVERS:
@@ -71,7 +82,10 @@ def _build_mcp_dict(
                 "type": "stdio",
                 "command": sys.executable,
                 "args": ["-m", builtin["module"]],
-                "env": {builtin["env_key"]: env_sources[builtin["env_source"]]},
+                "env": {
+                    builtin["env_key"]: env_sources[builtin["env_source"]],
+                    **policy_env,
+                },
             }
         elif not cfg.builtin:
             if not cfg.command or not cfg.command.strip():
@@ -81,7 +95,7 @@ def _build_mcp_dict(
                 "type": cfg.transport,
                 "command": cfg.command,
                 "args": cfg.args,
-                "env": _interpolate_env(cfg.env),
+                "env": {**_interpolate_env(cfg.env), **policy_env},
             }
     return result
 
@@ -210,6 +224,8 @@ def build_sdk_options(
     db_path: str = "data/tasks.db",
     cli_path: str | None = None,
     mcp_servers: dict[str, MCPServerConfig] | None = None,
+    agent_role: str | None = None,
+    agent_instance: str | None = None,
 ) -> Any:
     """Build SDK options for the given provider.
 
@@ -226,6 +242,9 @@ def build_sdk_options(
                 mcp_servers or {},
                 api_url=api_url,
                 db_path=db_path,
+                allowed_tools=allowed_tools,
+                agent_role=agent_role,
+                agent_instance=agent_instance,
             ),
         )
         if model:
@@ -249,6 +268,9 @@ def build_sdk_options(
                 mcp_servers or {},
                 api_url=api_url,
                 db_path=db_path,
+                allowed_tools=allowed_tools,
+                agent_role=agent_role,
+                agent_instance=agent_instance,
             ),
         )
         if model:
@@ -274,6 +296,9 @@ def build_sdk_options(
             mcp_servers or {},
             api_url=api_url,
             db_path=db_path,
+            allowed_tools=allowed_tools,
+            agent_role=agent_role,
+            agent_instance=agent_instance,
         ),
     )
     if model:

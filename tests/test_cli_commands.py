@@ -47,6 +47,18 @@ def test_cmd_init_gemini_provider(tmp_path):
     assert "TASKBREW_API_URL" in env_content
 
 
+def test_cmd_init_codex_provider(tmp_path):
+    """taskbrew init --provider codex should set Codex defaults."""
+    args = argparse.Namespace(name="codex-proj", dir=str(tmp_path), provider="codex")
+    _cmd_init(args)
+
+    team_content = (tmp_path / "config" / "team.yaml").read_text()
+    assert 'cli_provider: "codex"' in team_content
+
+    pm_content = (tmp_path / "config" / "roles" / "pm.yaml").read_text()
+    assert "model: gpt-5.5" in pm_content
+
+
 def test_cmd_init_doesnt_overwrite(tmp_path):
     """taskbrew init should not overwrite existing files."""
     # Create existing team.yaml

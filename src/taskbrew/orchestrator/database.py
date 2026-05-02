@@ -286,6 +286,27 @@ CREATE TABLE IF NOT EXISTS first_run_approvals (
     approved_at TEXT NOT NULL,
     UNIQUE(group_id, agent_role)
 );
+
+CREATE TABLE IF NOT EXISTS merge_queue (
+    id                  TEXT PRIMARY KEY,
+    group_id            TEXT NOT NULL,
+    parent_task_id      TEXT NOT NULL REFERENCES tasks(id),
+    verifier_task_id    TEXT NOT NULL REFERENCES tasks(id),
+    source_branch       TEXT NOT NULL,
+    target_branch       TEXT NOT NULL DEFAULT 'main',
+    status              TEXT NOT NULL DEFAULT 'queued',
+    attempts            INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at     TEXT,
+    leased_by           TEXT,
+    leased_until        TEXT,
+    last_error          TEXT,
+    target_sha_before   TEXT,
+    target_sha_after    TEXT,
+    root_refresh_status TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    completed_at        TEXT
+);
 """
 
 _INDEX_SQL = """
@@ -337,6 +358,15 @@ CREATE INDEX IF NOT EXISTS idx_task_chains_role
 
 CREATE INDEX IF NOT EXISTS idx_first_run_approvals_group
     ON first_run_approvals(group_id, agent_role);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_merge_queue_verifier
+    ON merge_queue(verifier_task_id);
+
+CREATE INDEX IF NOT EXISTS idx_merge_queue_group_status
+    ON merge_queue(group_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_merge_queue_ready
+    ON merge_queue(status, next_attempt_at, created_at);
 
 """
 

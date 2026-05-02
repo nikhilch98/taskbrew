@@ -42,6 +42,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _infer_agent_parent_id(orch, body: CreateTaskBody) -> str | None:
+    """Infer parent_id for agent-created tasks when the agent omitted it.
+
+    MCP agents often create downstream tasks while already working an
+    in-progress task. If they omit ``parent_id``, fanout and verification
+    gates cannot dedupe or attach context, which can multiply tasks. Default
+    to the creator's current task. For verifier-created revisions, attach the
+    revision to the implementation under review when that parent exists.
+    """
+    if body.parent_id or body.assigned_by in ("human", "system"):
+        return body.parent_id
+    row = await orch.task_board._db.execute_fetchone(
+        "SELECT id, parent_id, task_type FROM tasks "
+        "WHERE claimed_by = ? AND status = 'in_progress' "
+        "ORDER BY started_at DESC, created_at DESC LIMIT 1",
+        (body.assigned_by,),
+    )
+    if not row:
+        return body.parent_id
+    if row["task_type"] == "verification" and row.get("parent_id"):
+        return row["parent_id"]
+    return row["id"]
+
+
 # ------------------------------------------------------------------
 # Health
 # ------------------------------------------------------------------
@@ -346,6 +370,15 @@ async def get_group_trace(group_id: str):
     if first_ts and last_ts and last_ts >= first_ts:
         wall_clock_ms = int((last_ts - first_ts).total_seconds() * 1000)
 
+    merge_queue_rows = await db.execute_fetchall(
+        "SELECT status, COUNT(*) AS n FROM merge_queue "
+        "WHERE group_id = ? GROUP BY status",
+        (group_id,),
+    )
+    merge_queue_status_counts = {
+        row["status"]: int(row["n"] or 0) for row in merge_queue_rows
+    }
+
     return {
         "group_id": group["id"],
         "group_title": group["title"],
@@ -360,6 +393,7 @@ async def get_group_trace(group_id: str):
         "total_tasks": len(enriched),
         "status_counts": status_counts,
         "merge_status_counts": merge_status_counts,
+        "merge_queue_status_counts": merge_queue_status_counts,
         "verification_retries_total": verify_retries_total,
         "truncated": truncated,
         "max_tasks": _MAX_TRACE_TASKS,
@@ -399,6 +433,7 @@ async def submit_goal(body: SubmitGoalBody):
 @router.post("/api/tasks")
 async def create_task(body: CreateTaskBody):
     orch = get_orch()
+    parent_id = await _infer_agent_parent_id(orch, body)
 
     # --- C3: Route Validation ---
     # Validate that the creating agent's role is allowed to route to the target.
@@ -454,7 +489,7 @@ async def create_task(body: CreateTaskBody):
         if (
             creator_role == "architect"
             and body.assigned_to == "coder"
-            and not body.parent_id
+            and not parent_id
         ):
             raise HTTPException(
                 400,
@@ -467,18 +502,18 @@ async def create_task(body: CreateTaskBody):
     # --- Stage-1 Fix #12: Reject duplicate verification tasks for the same parent.
     # Two verifier tasks for one CD (e.g. FEAT-002's VR-017 + VR-018) waste tokens
     # and can race on the merge.
-    if body.assigned_to == "verifier" and body.parent_id:
+    if body.assigned_to == "verifier" and parent_id:
         existing_vr = await orch.task_board._db.execute_fetchone(
             "SELECT id FROM tasks "
             "WHERE parent_id = ? AND assigned_to = 'verifier' "
             "AND status != 'cancelled' LIMIT 1",
-            (body.parent_id,),
+            (parent_id,),
         )
         if existing_vr:
             raise HTTPException(
                 409,
                 f"A verification task already exists for parent "
-                f"'{body.parent_id}' ({existing_vr['id']}). "
+                f"'{parent_id}' ({existing_vr['id']}). "
                 f"Cancel it first if you really need to re-verify.",
             )
 
@@ -496,9 +531,9 @@ async def create_task(body: CreateTaskBody):
             )
 
     # G2: Enforce max_task_depth
-    if guardrails and body.parent_id:
+    if guardrails and parent_id:
         depth = 0
-        current_id = body.parent_id
+        current_id = parent_id
         while current_id and depth < 100:
             row = await orch.task_board._db.execute_fetchone(
                 "SELECT parent_id FROM tasks WHERE id = ?", (current_id,)
@@ -514,9 +549,9 @@ async def create_task(body: CreateTaskBody):
 
     # --- C4: Rejection Cycle Limit ---
     # Prevent infinite revision loops by capping at configurable limit
-    if body.parent_id and body.task_type in ("revision", "bug_fix"):
+    if parent_id and body.task_type in ("revision", "bug_fix"):
         cycle_count = 0
-        current_id = body.parent_id
+        current_id = parent_id
         while current_id and cycle_count < 10:  # safety cap on walk depth
             row = await orch.task_board._db.execute_fetchone(
                 "SELECT parent_id, task_type FROM tasks WHERE id = ?",
@@ -543,7 +578,7 @@ async def create_task(body: CreateTaskBody):
         created_by=body.assigned_by,
         description=body.description,
         priority=body.priority,
-        parent_id=body.parent_id,
+        parent_id=parent_id,
         blocked_by=body.blocked_by,
         requires_fanout=body.requires_fanout,
     )

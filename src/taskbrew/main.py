@@ -191,6 +191,8 @@ class Orchestrator:
 
         # Plugin registry (set during build)
         self.plugin_registry = None
+        self.merge_queue = None
+        self.merge_broker = None
 
         # Shutdown state
         self._shutting_down = False
@@ -226,6 +228,8 @@ class Orchestrator:
 
         if hasattr(self, '_escalation_stop'):
             self._escalation_stop.set()
+        if self.merge_broker:
+            self.merge_broker.stop()
 
         # Phase 2 — wait for agent tasks, then force-cancel stragglers
         if self.agent_tasks:
@@ -347,6 +351,17 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
         worktree_manager=worktree_manager,
         memory_manager=memory_manager,
         context_registry=context_registry,
+    )
+
+    from taskbrew.orchestrator.merge_broker import MergeBroker
+    from taskbrew.orchestrator.merge_queue import MergeQueue
+
+    orch.merge_queue = MergeQueue(db)
+    orch.merge_broker = MergeBroker(
+        merge_queue=orch.merge_queue,
+        task_board=task_board,
+        event_bus=event_bus,
+        repo_dir=str(project_dir),
     )
 
     # Instantiate intelligence managers centrally
@@ -555,6 +570,10 @@ async def start_agents(orch: Orchestrator):
         )
         orch.agent_tasks.append(orch._escalation_task)
 
+    if orch.merge_broker:
+        broker_task = asyncio.create_task(orch.merge_broker.run())
+        orch.agent_tasks.append(broker_task)
+
     # Spawn agent loops
     # Map bind host to connect host (0.0.0.0 binds all interfaces but can't be connected to)
     connect_host = "127.0.0.1" if orch.team_config.dashboard_host in ("0.0.0.0", "::") else orch.team_config.dashboard_host
@@ -589,6 +608,7 @@ async def start_agents(orch: Orchestrator):
                 observability_manager=orch.observability_manager,
                 cli_provider=cli_provider,
                 mcp_servers=getattr(orch.team_config, "mcp_servers", None),
+                merge_queue=orch.merge_queue,
             )
             orch._agent_loops.append(loop)
             task = asyncio.create_task(loop.run())
@@ -625,6 +645,7 @@ async def start_agents(orch: Orchestrator):
                 observability_manager=orch.observability_manager,
                 cli_provider=cli_provider,
                 mcp_servers=getattr(orch.team_config, "mcp_servers", None),
+                merge_queue=orch.merge_queue,
             )
             orch._agent_loops.append(loop)
             task = asyncio.create_task(loop.run())
@@ -806,8 +827,11 @@ async def async_main(args):
 
 def _cmd_init(args):
     """Initialize a new taskbrew project."""
+    from taskbrew.project_manager import _model_for_role
+
     project_dir = Path(args.dir).resolve()
     project_name = args.name or project_dir.name
+    pm_model = _model_for_role("pm", args.provider)
 
     print(f"Initializing taskbrew project: {project_name}")
     print(f"Directory: {project_dir}\n")
@@ -862,7 +886,7 @@ def _cmd_init(args):
             'system_prompt: |\n'
             '  You are the Project Manager. Break down user requests into\n'
             '  clear, actionable tasks and delegate to the appropriate agents.\n\n'
-            'model: claude-sonnet-4-6\n'
+            f'model: {pm_model}\n'
             'tools: [Read, Glob, Grep, Bash, mcp__task-tools__create_task]\n\n'
             'produces: [task_group, tech_design, implementation, verification]\n'
             'accepts: [task_group]\n\n'
@@ -1170,7 +1194,7 @@ def cli_main():
     init_parser = sub.add_parser("init", help="Initialize a new project")
     init_parser.add_argument("--name", help="Project name")
     init_parser.add_argument("--dir", default=".", help="Project directory")
-    init_parser.add_argument("--provider", default="claude", choices=["claude", "gemini"],
+    init_parser.add_argument("--provider", default="claude", choices=["claude", "gemini", "codex"],
                              help="CLI provider")
 
     # doctor

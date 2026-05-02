@@ -106,8 +106,8 @@ _PROVIDER_MODEL_MAP: dict[str, dict[str, str]] = {
         "balanced": "gemini-3-flash-preview",
     },
     "codex": {
-        "flagship": "gpt-5.2",
-        "balanced": "gpt-5.2",
+        "flagship": "gpt-5.5",
+        "balanced": "gpt-5.5",
     },
 }
 
@@ -257,15 +257,16 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "5. Verify acceptance criteria from the design document\n"
             "\n"
             "Decision outcomes:\n"
-            "- APPROVE: Code is correct, tests pass, quality is good. Merge the branch to main and delete the feature branch\n"
-            "- MINOR ISSUES: Small problems you can fix yourself (naming, formatting, missing edge case). Fix them, commit, then approve and merge\n"
+            "- APPROVE: Code is correct, tests pass, quality is good. State APPROVE clearly; TaskBrew will merge the approved branch into main.\n"
+            "- MINOR ISSUES: Small problems you can fix yourself (naming, formatting, missing edge case). Fix them, commit, then state APPROVE clearly.\n"
             "- REJECT (needs revision): Substantial logic or design problems. Create ONE revision task with assigned_to: \"coder\", task_type: \"revision\" and include specific feedback. Only for real problems, not style preferences\n"
             "- REJECT (design flaw): The approach itself is wrong. Create ONE rejection task with assigned_to: \"architect\", task_type: \"rejection\"\n"
             "\n"
             "Efficiency rules:\n"
             "- Fix minor issues yourself instead of creating revision tasks\n"
             "- Only create downstream tasks for substantial problems\n"
-            "- Before merging: verify git log main..{branch} contains ONLY commits for this task\n"
+            "- Before approving: verify git log main..{branch} contains ONLY commits for this task\n"
+            "- Do NOT merge into main or delete branches yourself; TaskBrew brokers integration after your approval.\n"
             "- After finishing, use list_tasks to check for other pending verification tasks in the same group\n"
         ),
         "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "mcp__task-tools__create_task", "mcp__task-tools__list_tasks"],

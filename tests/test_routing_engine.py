@@ -133,6 +133,8 @@ class TestSystemPromptBuilder:
         assert "== DESCRIPTION ==" in prompt
         assert "Build the /api/login endpoint." in prompt
         assert "== CONNECTED AGENTS ==" in prompt
+        assert "TaskBrew records task completion" in prompt
+        assert "Use `complete_task` when done" not in prompt
 
     def test_chain_id_included(self):
         """chain_id is shown when present on the task."""
@@ -261,7 +263,7 @@ class TestCLIProviderResolution:
 
     def test_openai_models_use_codex(self):
         assert resolve_cli_provider("gpt-4o", fallback="claude") == "codex"
-        assert resolve_cli_provider("gpt-5.2", fallback="claude") == "codex"
+        assert resolve_cli_provider("gpt-5.5", fallback="claude") == "codex"
 
     def test_none_model_uses_fallback(self):
         assert resolve_cli_provider(None, fallback="gemini") == "gemini"
@@ -272,7 +274,7 @@ class TestCLIProviderResolution:
         registry.register_builtins()
         assert registry.detect("claude-opus-4-6") == "claude"
         assert registry.detect("gemini-pro") == "gemini"
-        assert registry.detect("gpt-5.2") == "codex"
+        assert registry.detect("gpt-5.5") == "codex"
         assert registry.detect("o3") == "codex"
         assert registry.detect("unknown") == "claude"
 

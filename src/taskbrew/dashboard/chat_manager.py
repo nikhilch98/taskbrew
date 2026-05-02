@@ -6,17 +6,9 @@ import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
-from claude_agent_sdk import (
-    ClaudeSDKClient,
-    ClaudeAgentOptions,
-    AssistantMessage,
-    ResultMessage,
-    TextBlock,
-)
-from claude_agent_sdk._errors import MessageParseError
-
+from taskbrew.agents.provider import build_sdk_options, detect_provider, get_message_types, sdk_query
 from taskbrew.config import AgentConfig
 
 
@@ -37,7 +29,7 @@ class ChatSession:
     session_id: str
     agent_name: str
     agent_config: AgentConfig
-    client: ClaudeSDKClient | None = None
+    client: Any | None = None
     history: list[ChatMessage] = field(default_factory=list)
     is_connected: bool = False
     is_responding: bool = False
@@ -57,8 +49,6 @@ class ChatManager:
         self.project_dir = project_dir
         self.sessions: dict[str, ChatSession] = {}
         self._semaphore = asyncio.Semaphore(max_concurrent_chats)
-        # audit 10 F#25: per-agent lock so two ``start_session`` calls
-        # racing for the same agent_name cannot both spawn a subprocess.
         self._start_locks: dict[str, asyncio.Lock] = {}
         self._start_locks_mutex = asyncio.Lock()
 
@@ -71,62 +61,25 @@ class ChatManager:
             return lock
 
     async def start_session(self, agent_name: str, agent_config: AgentConfig) -> ChatSession:
-        """Start a (or attach to an existing) chat session for an agent.
+        """Start or attach to a chat session for an agent.
 
-        Idempotent: if a healthy session for ``agent_name`` already
-        exists, return it. The WS handler relies on this so that a
-        second tab / page refresh / reconnect after disconnect can
-        attach to a session another connection started, rather than
-        the user seeing "already exists" errors.
-
-        Stale sessions (``client is None`` or ``is_connected = False``)
-        are torn down and recreated. This catches the case where a
-        prior SDK process died but the dict entry survived.
-
-        audit 10 F#25: take a per-agent lock around the
-        check-then-spawn window so two concurrent callers for the same
-        agent_name cannot both pass the ``if agent_name in self.sessions``
-        check and then both spawn an SDK client (leaking the first one).
+        Chat execution uses the same provider abstraction as background agents,
+        so the selected role model determines Claude/Gemini/Codex behavior.
         """
         lock = await self._get_start_lock(agent_name)
         async with lock:
             existing = self.sessions.get(agent_name)
             if existing is not None:
-                # Healthy: hand back the same object. The WS handler
-                # uses identity to decide ownership.
-                if existing.is_connected and existing.client is not None:
+                if existing.is_connected:
                     return existing
-                # Stale entry from a crashed prior client. Best-effort
-                # disconnect, then drop it and fall through to create
-                # a fresh one.
-                if existing.client is not None:
-                    try:
-                        await existing.client.disconnect()
-                    except Exception:
-                        pass
                 existing.is_connected = False
                 self.sessions.pop(agent_name, None)
 
-            session_id = str(uuid.uuid4())[:8]
-            opts = ClaudeAgentOptions(
-                system_prompt=agent_config.system_prompt,
-                allowed_tools=agent_config.allowed_tools,
-                permission_mode=agent_config.permission_mode,
-                env={"CLAUDECODE": ""},
-            )
-            if self.cli_path:
-                opts.cli_path = self.cli_path
-            if self.project_dir:
-                opts.cwd = self.project_dir
-
-            client = ClaudeSDKClient(options=opts)
-            await client.connect()
-
             session = ChatSession(
-                session_id=session_id,
+                session_id=str(uuid.uuid4())[:8],
                 agent_name=agent_name,
                 agent_config=agent_config,
-                client=client,
+                client=None,
                 is_connected=True,
             )
             self.sessions[agent_name] = session
@@ -142,18 +95,11 @@ class ChatManager:
         """Send a message and stream the response."""
         async with self._semaphore:
             session = self.sessions.get(agent_name)
-            if not session or not session.client:
+            if not session:
                 raise ValueError(f"No active chat session for '{agent_name}'")
             if session.is_responding:
                 raise ValueError(f"Agent '{agent_name}' is currently responding")
 
-            # audit 10 F#26: append the user turn *before* attempting
-            # the stream so the contextual-prompt builder can see it,
-            # but on timeout / exception also record a paired error
-            # assistant turn. Otherwise the history ends with an
-            # orphan user message and every subsequent send replays
-            # that unanswered turn in the context block, which the
-            # model then tries to answer a second time.
             user_msg = ChatMessage(
                 id=str(uuid.uuid4())[:8],
                 role="user",
@@ -167,7 +113,7 @@ class ChatManager:
                 try:
                     full_text = await asyncio.wait_for(
                         self._process_stream(session, on_token, on_tool_use),
-                        timeout=300,  # 5 min
+                        timeout=300,
                     )
                 except asyncio.TimeoutError:
                     session.history.append(ChatMessage(
@@ -186,42 +132,28 @@ class ChatManager:
                     ))
                     raise
 
-                # Record assistant message
-                assistant_msg = ChatMessage(
+                session.history.append(ChatMessage(
                     id=str(uuid.uuid4())[:8],
                     role="assistant",
                     content=full_text,
                     timestamp=datetime.now(timezone.utc).isoformat(),
-                )
-                session.history.append(assistant_msg)
+                ))
                 return full_text
             finally:
                 session.is_responding = False
 
     @staticmethod
     def _build_contextual_prompt(session: ChatSession) -> str:
-        """Build a prompt that includes conversation history for context.
-
-        The ClaudeSDKClient uses a persistent subprocess that maintains its own
-        conversation state across ``query()`` calls.  However, that internal
-        context can be lost (e.g. auto-compaction on long conversations).  To
-        be defensive we prepend a concise summary of the prior conversation
-        turns so the model always has context, even if the subprocess state
-        has been truncated.
-        """
+        """Build a prompt that includes conversation history for context."""
         history = session.history
         latest_message = history[-1].content
 
-        # Only the latest message — no prior history to include.
         if len(history) <= 1:
             return latest_message
 
-        # Build a brief conversation context from prior turns (skip the
-        # latest message which we append verbatim at the end).
         prior_turns: list[str] = []
         for msg in history[:-1]:
             prefix = "User" if msg.role == "user" else "Assistant"
-            # Truncate long messages to keep the context prompt reasonable.
             content = msg.content
             if len(content) > 300:
                 content = content[:300] + "..."
@@ -233,65 +165,72 @@ class ChatManager:
             f"[End context]\n\n{latest_message}"
         )
 
+    def _build_options(self, session: ChatSession) -> Any:
+        config = session.agent_config
+        provider = detect_provider(model=config.model, cli_provider=config.cli_provider)
+        cwd = str(config.cwd or self.project_dir) if (config.cwd or self.project_dir) else None
+        return build_sdk_options(
+            provider=provider,
+            system_prompt=config.system_prompt,
+            model=config.model,
+            max_turns=config.max_turns,
+            cwd=cwd,
+            allowed_tools=config.allowed_tools,
+            permission_mode=config.permission_mode,
+            api_url=config.api_url,
+            db_path=config.db_path,
+            cli_path=self.cli_path,
+            mcp_servers=config.mcp_servers,
+            agent_role=config.role,
+            agent_instance=config.name,
+        )
+
     async def _process_stream(
         self,
         session: ChatSession,
         on_token: Callable[[str], Awaitable[None]] | None = None,
         on_tool_use: Callable[[str, dict], Awaitable[None]] | None = None,
     ) -> str:
-        """Process the SDK stream, returning the full response text."""
+        """Process the provider stream, returning the full response text."""
+        config = session.agent_config
+        provider = detect_provider(model=config.model, cli_provider=config.cli_provider)
+        mtypes = get_message_types(provider)
+        AssistantMessage = mtypes["AssistantMessage"]
+        ResultMessage = mtypes["ResultMessage"]
+        TextBlock = mtypes["TextBlock"]
+        ToolUseBlock = mtypes["ToolUseBlock"]
+
         full_text = ""
         prompt = self._build_contextual_prompt(session)
-        await session.client.query(prompt)
+        options = self._build_options(session)
 
-        async for message in self._receive_safe(session.client):
-            if isinstance(message, AssistantMessage):
+        async for message in sdk_query(prompt=prompt, options=options, provider=provider):
+            message_type = getattr(message, "type", "")
+            if isinstance(message, AssistantMessage) or message_type == "assistant":
                 for block in message.content:
-                    if isinstance(block, TextBlock):
+                    block_type = getattr(block, "type", "")
+                    if isinstance(block, TextBlock) or block_type == "text":
                         full_text += block.text
                         if on_token:
                             await on_token(block.text)
-            elif isinstance(message, ResultMessage):
-                if hasattr(message, "result") and message.result:
+                    elif (isinstance(block, ToolUseBlock) or block_type == "tool_use") and on_tool_use:
+                        await on_tool_use(block.name, block.input)
+            elif isinstance(message, ResultMessage) or message_type == "result":
+                if getattr(message, "result", None):
                     full_text = message.result
 
         return full_text
-
-    @staticmethod
-    async def _receive_safe(client: ClaudeSDKClient):
-        """Iterate receive_response(), skipping unknown message types like rate_limit_event.
-
-        When MessageParseError is raised mid-stream (e.g. for rate_limit_event),
-        the generator is dead. We restart iteration which picks up the next messages
-        from the underlying transport until we get a ResultMessage.
-        """
-        while True:
-            try:
-                async for message in client.receive_response():
-                    yield message
-                    if isinstance(message, ResultMessage):
-                        return
-                # Generator exhausted normally
-                return
-            except MessageParseError:
-                # Unknown message type encountered — restart iteration
-                continue
 
     async def stop_session(self, agent_name: str) -> None:
         """Stop and remove a chat session."""
         session = self.sessions.get(agent_name)
         if not session:
             return
-        if session.client:
-            try:
-                await session.client.disconnect()
-            except Exception:
-                pass
         session.is_connected = False
         del self.sessions[agent_name]
 
     def get_session(self, agent_name: str) -> ChatSession | None:
-        """Get a session by agent name."""
+        """Get a session by name."""
         return self.sessions.get(agent_name)
 
     def get_history(self, agent_name: str) -> list[ChatMessage] | None:

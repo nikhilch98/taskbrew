@@ -73,6 +73,8 @@ class AgentRunner:
             db_path=self.config.db_path,
             cli_path=self.cli_path,
             mcp_servers=self.config.mcp_servers,
+            agent_role=self.config.role,
+            agent_instance=self.config.name,
         )
 
     async def _on_pre_tool_use(

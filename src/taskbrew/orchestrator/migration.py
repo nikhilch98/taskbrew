@@ -1435,6 +1435,42 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         -- so overnight pipelines aren't killed by the idle timeout.
         ALTER TABLE tasks ADD COLUMN awaiting_input_since TEXT;
     """),
+    (33, "add_durable_merge_queue", """
+        -- Durable provider-neutral integration queue.
+        -- Verifier agents enqueue approved task branches; a single
+        -- orchestrator broker serializes merges and refreshes the
+        -- visible checkout.
+        --
+        -- Design:
+        -- docs/superpowers/specs/2026-05-02-durable-merge-queue-design.md
+        CREATE TABLE IF NOT EXISTS merge_queue (
+            id                  TEXT PRIMARY KEY,
+            group_id            TEXT NOT NULL,
+            parent_task_id      TEXT NOT NULL REFERENCES tasks(id),
+            verifier_task_id    TEXT NOT NULL REFERENCES tasks(id),
+            source_branch       TEXT NOT NULL,
+            target_branch       TEXT NOT NULL DEFAULT 'main',
+            status              TEXT NOT NULL DEFAULT 'queued',
+            attempts            INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at     TEXT,
+            leased_by           TEXT,
+            leased_until        TEXT,
+            last_error          TEXT,
+            target_sha_before   TEXT,
+            target_sha_after    TEXT,
+            root_refresh_status TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            completed_at        TEXT
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_merge_queue_verifier
+            ON merge_queue(verifier_task_id);
+        CREATE INDEX IF NOT EXISTS idx_merge_queue_group_status
+            ON merge_queue(group_id, status);
+        CREATE INDEX IF NOT EXISTS idx_merge_queue_ready
+            ON merge_queue(status, next_attempt_at, created_at);
+    """),
 ]
 
 

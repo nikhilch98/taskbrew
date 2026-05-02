@@ -287,6 +287,21 @@ class TestScaffolding:
             for field in required_fields:
                 assert field in data, f"Missing '{field}' in {role_file.name}"
 
+    def test_default_roles_use_selected_provider_models(
+        self, pm: ProjectManager, tmp_path: Path
+    ):
+        gemini_dir = tmp_path / "gemini-defaults"
+        pm.create_project("Gemini Defaults", str(gemini_dir), cli_provider="gemini")
+        with open(gemini_dir / "config" / "roles" / "coder.yaml") as f:
+            gemini_coder = yaml.safe_load(f)
+        assert gemini_coder["model"] == "gemini-3-flash-preview"
+
+        codex_dir = tmp_path / "codex-defaults"
+        pm.create_project("Codex Defaults", str(codex_dir), cli_provider="codex")
+        with open(codex_dir / "config" / "roles" / "coder.yaml") as f:
+            codex_coder = yaml.safe_load(f)
+        assert codex_coder["model"] == "gpt-5.5"
+
     def test_pm_routes_to_architect(
         self, pm: ProjectManager, tmp_path: Path
     ):

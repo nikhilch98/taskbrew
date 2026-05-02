@@ -333,6 +333,7 @@ function closeTaskDetail() { const o = document.getElementById('taskDetailOverla
 // ================================================================
 let settingsData = { team: null, roles: {} };
 let settingsActiveTab = 'team';
+let settingsModels = [];
 
 function toggleSettingsModal() {
     const o = document.getElementById('settingsOverlay');
@@ -344,13 +345,78 @@ function closeSettings() { const o = document.getElementById('settingsOverlay');
 
 async function loadSettings() {
     try {
-        const [teamRes, rolesRes] = await Promise.all([fetch('/api/settings/team'), fetch('/api/settings/roles')]);
+        const [teamRes, rolesRes, modelsRes] = await Promise.all([
+            fetch('/api/settings/team'),
+            fetch('/api/settings/roles'),
+            fetch('/api/settings/models').catch(function() { return null; }),
+        ]);
         settingsData.team = await teamRes.json();
         settingsData.roles = {};
         const arr = await rolesRes.json();
         for (const r of arr) settingsData.roles[r.role] = r;
+        if (modelsRes && modelsRes.ok) {
+            const md = await modelsRes.json();
+            settingsModels = Array.isArray(md) ? md : (md.models || []);
+        }
         renderSettingsTabs(); switchSettingsTab(settingsActiveTab);
     } catch (e) { document.getElementById('settingsContent').innerHTML = '<div style="color:var(--accent-rose)">Failed to load settings</div>'; }
+}
+
+function providerForModel(model) {
+    model = model || '';
+    if (model.indexOf('gemini') === 0) return 'gemini';
+    if (model.indexOf('gpt-') === 0 || /^o\d/.test(model) || model.indexOf('codex') === 0) return 'codex';
+    return 'claude';
+}
+
+function modelOptionsForProvider(provider, currentModel) {
+    let filtered = settingsModels.filter(function(m) {
+        return (m.provider || providerForModel(m.id || m)) === provider;
+    });
+    if (filtered.length === 0) {
+        const fallback = {
+            claude: [
+                { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
+                { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+                { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
+            ],
+            gemini: [
+                { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro' },
+                { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash' },
+            ],
+            codex: [
+                { id: 'gpt-5.5', name: 'GPT-5.5' },
+                { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
+                { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark' },
+                { id: 'gpt-4o', name: 'GPT-4o' },
+                { id: 'o3', name: 'o3' },
+            ],
+        };
+        filtered = fallback[provider] || fallback.claude;
+    }
+    if (currentModel && !filtered.some(function(m) { return (m.id || m) === currentModel; })) {
+        filtered = [{ id: currentModel, name: currentModel + ' (custom)' }].concat(filtered);
+    }
+    return filtered;
+}
+
+function defaultModelForProvider(provider) {
+    const models = modelOptionsForProvider(provider, '');
+    return models.length ? (models[0].id || models[0]) : '';
+}
+
+function updateSettingsProvider(role, provider) {
+    const model = defaultModelForProvider(provider);
+    const modelSelect = document.getElementById('s_model');
+    const customInput = document.getElementById('s_model_custom');
+    if (modelSelect) {
+        modelSelect.innerHTML = modelOptionsForProvider(provider, model).map(function(m) {
+            const mid = m.id || m;
+            const name = m.name || m.label || mid;
+            return '<option value="' + escapeHtml(mid) + '"' + (mid === model ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+        }).join('');
+    }
+    if (customInput) customInput.value = model;
 }
 
 function renderSettingsTabs() {
@@ -380,11 +446,22 @@ function renderTeamSettings(c) {
 
 function renderRoleSettings(c, role) {
     const r = settingsData.roles[role] || {};
+    const provider = providerForModel(r.model);
+    const models = modelOptionsForProvider(provider, r.model);
     let html = '<div class="settings-field"><label>Display Name</label><input id="s_display_name" value="' + escapeHtml(r.display_name||'') + '" readonly style="opacity:0.6"></div>';
-    html += '<div class="settings-field"><label>Model</label><select id="s_model" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">';
-    const models = ['claude-opus-4-6','claude-sonnet-4-6','claude-haiku-4-5-20251001'];
-    for (const m of models) { html += '<option value="' + m + '"' + (r.model===m?' selected':'') + '>' + m + '</option>'; }
+    html += '<div class="settings-field"><label>Provider</label><select id="s_provider" onchange="updateSettingsProvider(\'' + escapeHtml(role) + '\', this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">' +
+        '<option value="claude"' + (provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
+        '<option value="gemini"' + (provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
+        '<option value="codex"' + (provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
+        '</select></div>';
+    html += '<div class="settings-field"><label>Model Version</label><select id="s_model" onchange="document.getElementById(\'s_model_custom\').value=this.value" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">';
+    for (const m of models) {
+        const mid = m.id || m;
+        const name = m.name || m.label || mid;
+        html += '<option value="' + escapeHtml(mid) + '"' + (r.model===mid?' selected':'') + '>' + escapeHtml(name) + '</option>';
+    }
     html += '</select></div>';
+    html += '<div class="settings-field"><label>Model ID</label><input id="s_model_custom" value="' + escapeHtml(r.model||'') + '"></div>';
     html += '<div class="settings-field"><label>System Prompt</label><textarea id="s_system_prompt" rows="6">' + escapeHtml(r.system_prompt||'') + '</textarea></div>';
     html += '<div class="settings-field"><label>Tools (comma-separated)</label><input id="s_tools" value="' + escapeHtml((r.tools||[]).join(', ')) + '"></div>';
     html += '<div class="settings-field"><label>Max Instances <span class="restart-badge">Requires restart</span></label><input id="s_max_instances" type="number" value="' + (r.max_instances||1) + '" readonly style="opacity:0.6"></div>';
@@ -399,7 +476,7 @@ async function saveTeamSettings() {
 
 async function saveRoleSettings(role) {
     const tools = document.getElementById('s_tools').value.split(',').map(s=>s.trim()).filter(Boolean);
-    const model = document.getElementById('s_model').value;
+    const model = document.getElementById('s_model_custom').value || document.getElementById('s_model').value;
     await fetch('/api/settings/roles/' + role, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ system_prompt:document.getElementById('s_system_prompt').value, model:model, tools:tools }) });
     const m = document.getElementById('roleSavedMsg'); m.classList.add('show'); setTimeout(() => m.classList.remove('show'), 2000);
     await loadSettings();
@@ -633,7 +710,7 @@ async function browseForDirectory() {
 
 function openCreateProjectWizard() {
     projectWizardStep = 1;
-    projectWizardData = { name: '', directory: '', with_defaults: true };
+    projectWizardData = { name: '', directory: '', with_defaults: true, cli_provider: 'claude' };
     document.getElementById('createProjectOverlay').style.display = 'flex';
     renderWizardStep();
 }
@@ -673,6 +750,38 @@ function renderWizardStep() {
             '<span class="field-hint">Absolute path. Will be created if it doesn\'t exist.</span>' +
             '</div>' +
             '</div>';
+    } else if (projectWizardStep === 2) {
+        prevBtn.style.display = 'inline-flex';
+        nextBtn.textContent = 'Next';
+        nextBtn.disabled = false;
+        const activeProvider = projectWizardData.cli_provider;
+        const isClaude = activeProvider === 'claude';
+        const isGemini = activeProvider === 'gemini';
+        const isCodex = activeProvider === 'codex';
+        content.innerHTML =
+            '<div class="wizard-step">' +
+            '<h3>CLI Provider</h3>' +
+            '<p class="wizard-desc">Choose which AI CLI your agents will use.</p>' +
+            '<div class="wizard-options">' +
+            '<label class="wizard-option ' + (isClaude ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'claude\'; renderWizardStep();" style="border-color:' + (isClaude ? '#a855f7' : '') + '">' +
+            '<div class="option-radio ' + (isClaude ? 'checked' : '') + '" style="' + (isClaude ? 'border-color:#a855f7;background:#a855f7' : '') + '"></div>' +
+            '<div class="option-content">' +
+            '<strong>Claude Code</strong>' +
+            '<p>Opus for planning, Sonnet for implementation and verification. MCP tool servers included.</p>' +
+            '</div></label>' +
+            '<label class="wizard-option ' + (isGemini ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'gemini\'; renderWizardStep();" style="border-color:' + (isGemini ? '#4285f4' : '') + '">' +
+            '<div class="option-radio ' + (isGemini ? 'checked' : '') + '" style="' + (isGemini ? 'border-color:#4285f4;background:#4285f4' : '') + '"></div>' +
+            '<div class="option-content">' +
+            '<strong>Gemini CLI</strong>' +
+            '<p>Gemini models for every default agent. MCP tool servers included.</p>' +
+            '</div></label>' +
+            '<label class="wizard-option ' + (isCodex ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'codex\'; renderWizardStep();" style="border-color:' + (isCodex ? '#10a37f' : '') + '">' +
+            '<div class="option-radio ' + (isCodex ? 'checked' : '') + '" style="' + (isCodex ? 'border-color:#10a37f;background:#10a37f' : '') + '"></div>' +
+            '<div class="option-content">' +
+            '<strong>Codex CLI</strong>' +
+            '<p>OpenAI GPT models via codex exec. MCP tool servers included.</p>' +
+            '</div></label>' +
+            '</div></div>';
     } else {
         prevBtn.style.display = 'inline-flex';
         nextBtn.textContent = 'Create Project';
@@ -721,6 +830,9 @@ async function wizardNextStep() {
             return;
         }
         projectWizardStep = 2;
+        renderWizardStep();
+    } else if (projectWizardStep === 2) {
+        projectWizardStep = 3;
         renderWizardStep();
     } else {
         // Create project
@@ -1673,4 +1785,3 @@ function showOnboarding() {
     renderStep();
     document.body.appendChild(overlay);
 }
-

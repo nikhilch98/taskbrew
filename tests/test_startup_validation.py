@@ -118,7 +118,7 @@ def test_validate_startup_checks_role_model_provider():
     def fake_which(name):
         return "/usr/bin/claude" if name == "claude" else None
 
-    roles = {"coder": SimpleNamespace(model="gpt-5.2")}
+    roles = {"coder": SimpleNamespace(model="gpt-5.5")}
     with patch.dict(os.environ, {}, clear=True):
         with patch("shutil.which", side_effect=fake_which):
             with pytest.raises(StartupValidationError, match="Codex CLI not found"):
@@ -137,7 +137,7 @@ def test_validate_startup_does_not_require_unused_default_provider():
     def fake_which(name):
         return "/usr/bin/codex" if name == "codex" else None
 
-    roles = {"coder": SimpleNamespace(model="gpt-5.2")}
+    roles = {"coder": SimpleNamespace(model="gpt-5.5")}
     with patch.dict(os.environ, {}, clear=True):
         with patch("shutil.which", side_effect=fake_which):
             _validate_startup(

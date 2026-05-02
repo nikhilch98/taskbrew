@@ -1480,6 +1480,94 @@ async def test_fix3_human_created_coder_task_exempt(stage1_client):
     assert resp.status_code == 200
 
 
+async def test_agent_created_task_infers_current_parent(stage1_client):
+    """Agent-created downstream tasks attach to the creator's in-progress task."""
+    c = stage1_client["client"]
+    board = stage1_client["board"]
+    group = await board.create_group(
+        title="Simple feature", origin="pm", created_by="human",
+    )
+    pm_goal = await board.create_task(
+        group_id=group["id"], title="PRD", task_type="goal",
+        assigned_to="pm", created_by="human",
+    )
+    claimed = await board.claim_task("pm", "pm-1")
+    assert claimed["id"] == pm_goal["id"]
+
+    resp = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Design the script",
+        "assigned_to": "architect",
+        "assigned_by": "pm-1",
+        "task_type": "tech_design",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["parent_id"] == pm_goal["id"]
+
+
+async def test_duplicate_verifier_rejected_when_parent_inferred(stage1_client):
+    """Verifier de-dupe also applies when the coder omits parent_id."""
+    c = stage1_client["client"]
+    board = stage1_client["board"]
+    group = await board.create_group(
+        title="Feature", origin="pm", created_by="human",
+    )
+    impl = await board.create_task(
+        group_id=group["id"], title="Implement", task_type="implementation",
+        assigned_to="coder", created_by="human",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == impl["id"]
+
+    first = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Verify implementation",
+        "assigned_to": "verifier",
+        "assigned_by": "coder-1",
+        "task_type": "verification",
+    })
+    assert first.status_code == 200
+    assert first.json()["parent_id"] == impl["id"]
+
+    second = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Verify implementation again",
+        "assigned_to": "verifier",
+        "assigned_by": "coder-1",
+        "task_type": "verification",
+    })
+    assert second.status_code == 409
+
+
+async def test_verifier_revision_infers_implementation_parent(stage1_client):
+    """Verifier-created revisions attach to the implementation under review."""
+    c = stage1_client["client"]
+    board = stage1_client["board"]
+    group = await board.create_group(
+        title="Feature", origin="pm", created_by="human",
+    )
+    impl = await board.create_task(
+        group_id=group["id"], title="Implement", task_type="implementation",
+        assigned_to="coder", created_by="human",
+    )
+    verification = await board.create_task(
+        group_id=group["id"], title="Verify", task_type="verification",
+        assigned_to="verifier", created_by="coder-1", parent_id=impl["id"],
+    )
+    claimed = await board.claim_task("verifier", "verifier-1")
+    assert claimed["id"] == verification["id"]
+
+    resp = await c.post("/api/tasks", json={
+        "group_id": group["id"],
+        "title": "Revise implementation",
+        "assigned_to": "coder",
+        "assigned_by": "verifier-1",
+        "task_type": "revision",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["parent_id"] == impl["id"]
+
+
 async def test_fix12_duplicate_verifier_task_rejected(stage1_client):
     """Fix #12: second VR for the same parent -> 409."""
     c = stage1_client["client"]

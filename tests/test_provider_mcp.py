@@ -17,6 +17,43 @@ def test_build_mcp_dict_builtin():
     assert "taskbrew.tools.task_tools" in result["task-tools"]["args"]
 
 
+def test_build_mcp_dict_builtin_threads_tool_policy():
+    """Built-in MCP tools should enforce the role's declared allowlist."""
+    from taskbrew.agents.provider import _build_mcp_dict
+
+    servers = {
+        "task-tools": MCPServerConfig(builtin=True),
+    }
+    result = _build_mcp_dict(
+        servers,
+        api_url="http://localhost:8420",
+        db_path="data/test.db",
+        allowed_tools=["create_task", "list_tasks"],
+        agent_role="pm",
+        agent_instance="pm-1",
+    )
+
+    env = result["task-tools"]["env"]
+    assert env["TASKBREW_ALLOWED_TOOLS"] == "create_task,list_tasks"
+    assert env["TASKBREW_TOOL_ENFORCEMENT"] == "deny"
+    assert env["TASKBREW_AGENT_ROLE"] == "pm"
+    assert env["TASKBREW_AGENT_INSTANCE"] == "pm-1"
+
+
+def test_tool_router_allows_client_style_mcp_tool_names():
+    """MCP dispatch gates local names against client-style role allowlists."""
+    from taskbrew.intelligence.tool_router import ToolRouter
+
+    assert ToolRouter.is_tool_allowed(
+        ["Read", "mcp__task-tools__create_task"],
+        "create_task",
+    )
+    assert not ToolRouter.is_tool_allowed(
+        ["Read", "mcp__task-tools__create_task"],
+        "complete_task",
+    )
+
+
 def test_build_mcp_dict_custom():
     """Custom MCP servers should use command/args/env from config."""
     from taskbrew.agents.provider import _build_mcp_dict

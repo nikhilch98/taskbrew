@@ -371,22 +371,37 @@ class TaskBoard:
         return rows[0]
 
     async def complete_task_with_output(self, task_id: str, output: str) -> dict:
-        """Mark task as completed and store the agent output."""
+        """Mark task as completed and store the agent output.
+
+        Agents may call the MCP ``complete_task`` tool before the
+        orchestrator's own completion path runs. In that case the row is
+        already ``completed`` by the time this method is called, but the
+        final output still needs to be persisted for the dashboard artifact
+        viewer. Treat completion as idempotent and attach output to completed
+        rows instead of dropping it.
+        """
         now = _utcnow()
-        # Truncate output for storage (keep first 2000 chars)
-        truncated = output[:2000] if output else ""
+        persisted_output = output or ""
         rows = await self._db.execute_returning(
             "UPDATE tasks SET status = 'completed', completed_at = ?, "
             "output_text = ? "
             "WHERE id = ? AND status = 'in_progress' RETURNING *",
-            (now, truncated, task_id),
+            (now, persisted_output, task_id),
         )
         if not rows:
             existing = await self._db.execute_fetchone(
-                "SELECT id, status FROM tasks WHERE id = ?", (task_id,)
+                "SELECT id, status, output_text FROM tasks WHERE id = ?", (task_id,)
             )
             if existing is None:
                 raise ValueError(f"Task not found: {task_id}")
+            if existing["status"] == "completed":
+                next_output = persisted_output or existing.get("output_text") or ""
+                completed_rows = await self._db.execute_returning(
+                    "UPDATE tasks SET output_text = ? "
+                    "WHERE id = ? RETURNING *",
+                    (next_output, task_id),
+                )
+                return completed_rows[0] if completed_rows else existing
             logger.warning(
                 "complete_task_with_output(%s) skipped: task is in status '%s', "
                 "expected 'in_progress'",
@@ -496,6 +511,21 @@ class TaskBoard:
             (group_id,),
         )
         if non_terminal:
+            return
+
+        # Durable merge queue gate. A task can be terminal while its
+        # approved branch is still waiting to land on the target branch
+        # or waiting for the visible checkout to refresh. Do not seal
+        # the group until integration is resolved.
+        open_merge = await self._db.execute_fetchone(
+            "SELECT 1 FROM merge_queue WHERE group_id = ? "
+            "AND status IN ("
+            "'queued', 'running', 'retry_pending', 'blocked', "
+            "'conflict', 'root_refresh_blocked', 'failed'"
+            ") LIMIT 1",
+            (group_id,),
+        )
+        if open_merge:
             return
 
         # --- Stage-1 Fix #4: PM goal-verification trigger ---

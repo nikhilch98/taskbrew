@@ -10,7 +10,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
@@ -142,20 +144,35 @@ def _toml_value(value: Any) -> str:
     return _toml_string(str(value))
 
 
+def _codex_config_key_part(value: str) -> str:
+    """Return a Codex ``-c`` dotted-key segment for config overrides.
+
+    Codex CLI accepts hyphens in dotted config keys. Quoting a key segment is
+    parsed as part of the MCP server name by current Codex builds, so
+    ``mcp_servers."task-tools"`` registers a server literally named
+    ``"task-tools"``. Keep common TaskBrew names bare.
+    """
+    if re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        return value
+    return value.replace(".", "_").replace('"', "").strip() or "server"
+
+
 def _codex_mcp_config_args(mcp_servers: dict[str, dict[str, Any]]) -> list[str]:
     """Return repeated ``-c`` overrides for Codex MCP server config."""
     args: list[str] = []
     for name, cfg in sorted((mcp_servers or {}).items()):
+        server_name = _codex_config_key_part(str(name))
+        prefix = f"mcp_servers.{server_name}"
+        args.extend(["-c", f'{prefix}.default_tools_approval_mode="approve"'])
         if cfg.get("type", "stdio") != "stdio":
             url = cfg.get("url") or cfg.get("httpUrl")
             if url:
-                args.extend(["-c", f'mcp_servers.{_toml_string(name)}.url={_toml_value(url)}'])
+                args.extend(["-c", f"{prefix}.url={_toml_value(url)}"])
             continue
         command = cfg.get("command")
         if not command:
             logger.warning("Codex MCP server '%s' has no command -- skipping", name)
             continue
-        prefix = f"mcp_servers.{_toml_string(name)}"
         args.extend(["-c", f"{prefix}.command={_toml_value(command)}"])
         if cfg.get("args"):
             args.extend(["-c", f"{prefix}.args={_toml_value(cfg['args'])}"])
@@ -164,10 +181,54 @@ def _codex_mcp_config_args(mcp_servers: dict[str, dict[str, Any]]) -> list[str]:
     return args
 
 
-def _sandbox_for_permission_mode(permission_mode: str) -> str:
-    if permission_mode in {"acceptEdits", "bypassPermissions"}:
-        return "workspace-write"
-    return "workspace-write"
+def _automation_args_for_permission_mode(permission_mode: str) -> list[str]:
+    """Map Claude-style permission modes to current Codex CLI flags."""
+    if permission_mode == "bypassPermissions":
+        return ["--dangerously-bypass-approvals-and-sandbox"]
+    return ["--full-auto"]
+
+
+def _is_within(path: str, root: str) -> bool:
+    try:
+        candidate = os.path.realpath(path)
+        base = os.path.realpath(root)
+    except OSError:
+        return False
+    return candidate == base or candidate.startswith(base + os.sep)
+
+
+def _git_metadata_writable_roots(cwd: str | None) -> list[str]:
+    """Return Git metadata dirs Codex must write for a worktree checkout.
+
+    A linked Git worktree has a tiny ``.git`` file inside the worktree that
+    points back to ``<primary-repo>/.git/worktrees/<name>``. Codex
+    ``--full-auto`` sandboxes writes to the ``-C`` workspace, so plain
+    ``git add`` / ``git commit`` can fail with ``index.lock: Operation not
+    permitted`` unless the parent repo metadata is also writable.
+    """
+    if not cwd or not os.path.isdir(cwd):
+        return []
+    try:
+        git_common = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if git_common.returncode != 0:
+        return []
+
+    roots: list[str] = []
+    for raw in git_common.stdout.splitlines():
+        path = raw.strip()
+        if path and os.path.isdir(path) and not _is_within(path, cwd):
+            roots.append(os.path.realpath(path))
+    return sorted(set(roots))
 
 
 def _build_command(
@@ -183,15 +244,15 @@ def _build_command(
         "--color",
         "never",
         "--skip-git-repo-check",
-        "--sandbox",
-        _sandbox_for_permission_mode(options.permission_mode),
-        "--ask-for-approval",
-        "never",
     ]
+    cmd.extend(_automation_args_for_permission_mode(options.permission_mode))
     if options.model:
         cmd.extend(["-m", options.model])
     if options.cwd:
         cmd.extend(["-C", options.cwd])
+        if options.permission_mode != "bypassPermissions":
+            for root in _git_metadata_writable_roots(options.cwd):
+                cmd.extend(["--add-dir", root])
     cmd.extend(_codex_mcp_config_args(options.mcp_servers))
     cmd.append(prompt)
     return cmd
@@ -269,6 +330,7 @@ async def _query_impl(
 
     session_id: str | None = None
     accumulated_text = ""
+    last_message_text = ""
     got_result = False
     start_time = time.monotonic()
     stderr_sink: list[bytes] = []
@@ -301,6 +363,7 @@ async def _query_impl(
                 text = _extract_text(event)
                 if text:
                     accumulated_text += text
+                    last_message_text = text
                     yield AssistantMessage([TextBlock(text=text)], session_id=session_id)
                 continue
 
@@ -311,7 +374,10 @@ async def _query_impl(
                     text = _extract_text(event)
                     if text:
                         accumulated_text += text
+                        last_message_text = text
                         yield AssistantMessage([TextBlock(text=text)], session_id=session_id)
+                    continue
+                if event_type == "item.completed" and "tool" in item_type:
                     continue
                 tool = _extract_tool(event)
                 if tool:
@@ -323,7 +389,7 @@ async def _query_impl(
                 elapsed = int((time.monotonic() - start_time) * 1000)
                 usage = event.get("usage") or (event.get("data") or {}).get("usage") or {}
                 yield ResultMessage(
-                    result=accumulated_text,
+                    result=last_message_text or accumulated_text,
                     session_id=session_id or "",
                     usage=usage,
                     duration_ms=elapsed,
@@ -337,7 +403,7 @@ async def _query_impl(
                 elapsed = int((time.monotonic() - start_time) * 1000)
                 message = _extract_text(event) or str(event.get("error") or "Codex CLI failed")
                 yield ResultMessage(
-                    result=accumulated_text or message,
+                    result=last_message_text or accumulated_text or message,
                     subtype="error",
                     is_error=True,
                     session_id=session_id or "",
@@ -361,7 +427,7 @@ async def _query_impl(
                 )
             if accumulated_text:
                 yield ResultMessage(
-                    result=accumulated_text,
+                    result=last_message_text or accumulated_text,
                     session_id=session_id or "",
                     duration_api_ms=int((time.monotonic() - start_time) * 1000),
                 )
