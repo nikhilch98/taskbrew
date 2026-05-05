@@ -182,3 +182,35 @@ async def test_apply_backlog_intake_decision_runs_once(board: TaskBoard):
     assert second["status"] == "pending"
     assert second["needs_review"] == 0
     assert second["needs_review_reason"] == "Small docs-only change."
+
+
+async def test_apply_backlog_intake_decision_does_not_emit_when_update_loses_race(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    original_execute_returning = board._db.execute_returning
+
+    async def execute_returning_lost_race(sql: str, params: tuple = ()) -> list[dict]:
+        rows = await original_execute_returning(sql, params)
+        if "WHERE id = ? AND status = 'backlog'" in sql:
+            return []
+        return rows
+
+    monkeypatch.setattr(board._db, "execute_returning", execute_returning_lost_race)
+
+    updated = await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Small docs-only change.",
+    )
+
+    assert updated["status"] == "pending"
+    assert event_bus.events == []

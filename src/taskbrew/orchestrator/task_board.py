@@ -358,7 +358,8 @@ class TaskBoard:
         )
         updated = rows[0] if rows else await self.get_task(task_id)
         if (
-            updated
+            rows
+            and updated
             and self._event_bus is not None
             and updated["status"] == CLAIMABLE_STATUS
         ):
