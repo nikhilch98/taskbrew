@@ -261,7 +261,7 @@ class TaskBoard:
                     (task_id, dep_id, dep_resolved, dep_resolved_at),
                 )
 
-        return {
+        task = {
             "id": task_id,
             "group_id": group_id,
             "parent_id": parent_id,
@@ -293,6 +293,11 @@ class TaskBoard:
             "requires_fanout": rf_stored,
             "fanout_retries": 0,
         }
+        if blocked_by:
+            reconciled = await self._reconcile_dependencies_after_create(task_id)
+            if reconciled:
+                task.update(reconciled)
+        return task
 
     def _json_list(self, value) -> list:
         if value in (None, ""):
@@ -328,6 +333,43 @@ class TaskBoard:
         if intended_status == "blocked" and not await self._has_dependency_rows(task_id):
             return "blocked"
         return "pending" if intended_status in ("pending", "blocked") else intended_status
+
+    async def _reconcile_dependencies_after_create(self, task_id: str) -> dict | None:
+        failed_blocker = await self._db.execute_fetchone(
+            "SELECT 1 FROM task_dependencies d "
+            "JOIN tasks blocker ON blocker.id = d.blocked_by "
+            "WHERE d.task_id = ? AND d.resolved = 0 "
+            "AND blocker.status = 'failed' LIMIT 1",
+            (task_id,),
+        )
+        if failed_blocker:
+            failed_rows = await self._db.execute_returning(
+                "UPDATE tasks SET status = 'failed' "
+                "WHERE id = ? AND status IN ('backlog', 'blocked', 'pending') "
+                "RETURNING *",
+                (task_id,),
+            )
+            return failed_rows[0] if failed_rows else await self.get_task(task_id)
+
+        if not await self._has_unresolved_dependencies(task_id):
+            pending_rows = await self._db.execute_returning(
+                "UPDATE tasks SET status = 'pending' "
+                "WHERE id = ? AND status = 'blocked' RETURNING *",
+                (task_id,),
+            )
+            if pending_rows:
+                task = pending_rows[0]
+                if self._event_bus is not None:
+                    await self._event_bus.emit(
+                        "task.available",
+                        {
+                            "task_id": task["id"],
+                            "role": task["assigned_to"],
+                            "group_id": task["group_id"],
+                        },
+                    )
+                return task
+        return None
 
     async def apply_backlog_intake_decision(
         self,

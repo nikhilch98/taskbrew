@@ -456,3 +456,84 @@ async def test_resolve_dependencies_does_not_emit_when_update_loses_race(
     await board._resolve_dependencies(blocker["id"])
 
     assert event_bus.events == []
+
+
+async def test_create_task_reconciles_intake_before_resolved_dependency_rows(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Already completed work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready to run.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    await board.complete_task(blocker["id"])
+    event_bus.events.clear()
+    original_execute = board._db.execute
+
+    async def execute_with_gap_intake(sql: str, params: tuple = ()) -> None:
+        await original_execute(sql, params)
+        if sql.startswith("INSERT INTO tasks ") and len(params) >= 4:
+            if params[3] == "Gap dependent":
+                await board.apply_backlog_intake_decision(
+                    params[0],
+                    needs_review=False,
+                    reason="Intake observed dependency creation gap.",
+                )
+
+    monkeypatch.setattr(board._db, "execute", execute_with_gap_intake)
+
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Gap dependent",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+
+    assert dependent["status"] == "pending"
+    assert event_bus.events == [
+        (
+            "task.available",
+            {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
+        )
+    ]
+
+
+async def test_dependent_created_after_blocker_failed_is_failed(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Failed blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready to run.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    await board.fail_task(blocker["id"])
+
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Depends on failed work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+
+    assert dependent["status"] == "failed"
+    assert await board.claim_task("tester", "tester-1") is None
