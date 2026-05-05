@@ -337,25 +337,33 @@ class SystemGateManager:
         if self._batch_size <= 0:
             return counts
 
-        candidate_limit = self._candidate_limit()
         backlog_rows = await self._board._db.execute_fetchall(
             "SELECT id, backlog_intake_status, system_gate_runs "
             "FROM tasks WHERE status = 'backlog' "
-            "AND COALESCE(backlog_intake_status, 'pending') "
-            "IN ('pending', 'failed', 'running') "
+            "AND COALESCE(backlog_intake_status, 'pending') IN ('pending', 'failed') "
             "ORDER BY created_at LIMIT ?",
-            (candidate_limit,),
+            (self._batch_size,),
         )
         for row in backlog_rows:
-            if (
-                row.get("backlog_intake_status") == "running"
-                and not self._is_running_stale(row, "backlog")
-            ):
-                continue
             if await self.process_backlog_task(row["id"]):
                 counts["backlog"] += 1
             if counts["backlog"] >= self._batch_size:
                 break
+
+        if counts["backlog"] < self._batch_size:
+            backlog_running_rows = await self._board._db.execute_fetchall(
+                "SELECT id, backlog_intake_status, system_gate_runs "
+                "FROM tasks WHERE status = 'backlog' "
+                "AND backlog_intake_status = 'running' "
+                "ORDER BY created_at",
+            )
+            for row in backlog_running_rows:
+                if not self._is_running_stale(row, "backlog"):
+                    continue
+                if await self.process_backlog_task(row["id"]):
+                    counts["backlog"] += 1
+                if counts["backlog"] >= self._batch_size:
+                    break
 
         remaining = self._batch_size - counts["backlog"]
         if remaining <= 0:
@@ -364,25 +372,38 @@ class SystemGateManager:
         review_rows = await self._board._db.execute_fetchall(
             "SELECT id, review_status, system_gate_runs "
             "FROM tasks WHERE status = 'review' "
-            "AND COALESCE(review_status, 'pending') "
-            "IN ('pending', 'failed', 'running') "
+            "AND COALESCE(review_status, 'pending') IN ('pending', 'failed') "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM task_dependencies "
             "  WHERE task_id = tasks.id AND resolved = 0"
             ") "
             "ORDER BY created_at LIMIT ?",
-            (self._candidate_limit(remaining),),
+            (remaining,),
         )
         for row in review_rows:
-            if (
-                row.get("review_status") == "running"
-                and not self._is_running_stale(row, "review")
-            ):
-                continue
             if await self.process_review_task(row["id"]):
                 counts["review"] += 1
             if counts["review"] >= remaining:
                 break
+
+        if counts["review"] < remaining:
+            review_running_rows = await self._board._db.execute_fetchall(
+                "SELECT id, review_status, system_gate_runs "
+                "FROM tasks WHERE status = 'review' "
+                "AND review_status = 'running' "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM task_dependencies "
+                "  WHERE task_id = tasks.id AND resolved = 0"
+                ") "
+                "ORDER BY created_at",
+            )
+            for row in review_running_rows:
+                if not self._is_running_stale(row, "review"):
+                    continue
+                if await self.process_review_task(row["id"]):
+                    counts["review"] += 1
+                if counts["review"] >= remaining:
+                    break
 
         return counts
 
@@ -463,10 +484,6 @@ class SystemGateManager:
         return (
             datetime.now(timezone.utc) - started_at
         ).total_seconds() >= self._running_timeout_seconds
-
-    def _candidate_limit(self, batch_size: int | None = None) -> int:
-        size = self._batch_size if batch_size is None else batch_size
-        return max(size * 3, size + 20)
 
     def _latest_running_started_at(self, task: dict, gate: str) -> datetime | None:
         runs = self._board._json_list(task.get("system_gate_runs"))

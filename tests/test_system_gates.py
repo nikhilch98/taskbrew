@@ -407,6 +407,45 @@ async def test_active_running_backlog_does_not_starve_pending_backlog(
     assert pending_updated["status"] == "pending"
 
 
+async def test_many_active_running_backlog_rows_do_not_starve_pending_backlog(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    active_tasks = [
+        await board.create_task(
+            group_id=group["id"],
+            title=f"Active running backlog {index}",
+            task_type="implementation",
+            assigned_to="coder",
+        )
+        for index in range(30)
+    ]
+    pending = await board.create_task(
+        group_id=group["id"],
+        title="Pending backlog after active rows",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    for active in active_tasks:
+        await board._db.execute(
+            "UPDATE tasks SET backlog_intake_status = 'running', system_gate_runs = ? "
+            "WHERE id = ?",
+            (_running_gate_runs("backlog"), active["id"]),
+        )
+    analyzer = FakeAnalyzer(
+        backlog_results=[BacklogIntakeResult(needs_review=False, reason="Pending.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer, batch_size=1)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 1, "review": 0}
+    pending_updated = await board.get_task(pending["id"])
+    assert pending_updated["status"] == "pending"
+    assert len(analyzer.backlog_contexts) == 1
+    assert analyzer.backlog_contexts[0]["task"]["id"] == pending["id"]
+
+
 async def test_process_pending_once_retries_stale_running_backlog_task(
     board: TaskBoard,
 ):
@@ -509,6 +548,32 @@ async def test_active_running_review_does_not_starve_pending_review(
     assert active_updated["review_status"] == "running"
     assert pending_updated["status"] == "completed"
     assert pending_updated["review_status"] == "approved"
+
+
+async def test_many_active_running_review_rows_do_not_starve_pending_review(
+    board: TaskBoard,
+):
+    active_tasks = [await _create_review_task(board) for _ in range(30)]
+    pending = await _create_review_task(board)
+    for active in active_tasks:
+        await board._db.execute(
+            "UPDATE tasks SET review_status = 'running', system_gate_runs = ? "
+            "WHERE id = ?",
+            (_running_gate_runs("review"), active["id"]),
+        )
+    analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Pending.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer, batch_size=1)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 1}
+    pending_updated = await board.get_task(pending["id"])
+    assert pending_updated["status"] == "completed"
+    assert pending_updated["review_status"] == "approved"
+    assert len(analyzer.review_contexts) == 1
+    assert analyzer.review_contexts[0]["task"]["id"] == pending["id"]
 
 
 async def test_process_pending_once_retries_stale_running_review_task(
