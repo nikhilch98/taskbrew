@@ -812,6 +812,36 @@ class TaskBoard:
         )
         return rows[0] if rows else await self.get_task(task_id)
 
+    async def mark_review_failed(self, task_id: str, reason: str) -> dict:
+        """Mark a review gate attempt as failed without rejecting the task."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != REVIEW_STATUS:
+            return task
+
+        now = _utcnow()
+        runs = self._json_list(task.get("system_gate_runs"))
+        runs.append(
+            {
+                "gate": "review",
+                "outcome": "failed_review",
+                "reason": reason[:1000],
+                "finished_at": now,
+            }
+        )
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET review_status = 'failed', system_gate_runs = ? "
+            "WHERE id = ? AND status = 'review' RETURNING *",
+            (json.dumps(runs), task_id),
+        )
+        if not rows:
+            fresh = await self.get_task(task_id)
+            if fresh is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return fresh
+        return rows[0]
+
     async def _append_system_gate_run(self, task_id: str, entry: dict) -> None:
         task = await self.get_task(task_id)
         if task is None:
