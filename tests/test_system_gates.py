@@ -1138,6 +1138,32 @@ def test_extract_json_object_accepts_embedded_json() -> None:
     }
 
 
+def test_extract_json_object_returns_last_parseable_object() -> None:
+    text = (
+        'Example schema: {"needs_review": true, "reason": "example"}\n'
+        'Final answer: {"needs_review": false, "reason": "small task"}'
+    )
+
+    assert _extract_json_object(text) == {
+        "needs_review": False,
+        "reason": "small task",
+    }
+
+
+def test_extract_json_object_prefers_fenced_json_object() -> None:
+    text = (
+        'Loose example: {"needs_review": true, "reason": "example"}\n'
+        "```json\n"
+        '{"needs_review": false, "reason": "final fenced"}\n'
+        "```"
+    )
+
+    assert _extract_json_object(text) == {
+        "needs_review": False,
+        "reason": "final fenced",
+    }
+
+
 def test_extract_json_object_rejects_missing_json() -> None:
     with pytest.raises(SystemGateAnalysisError, match="did not contain"):
         _extract_json_object("no structured output")

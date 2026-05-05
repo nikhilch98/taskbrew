@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from time import monotonic
@@ -71,25 +72,42 @@ class SystemGateAnalyzer:
 
 def _extract_json_object(text: str) -> dict[str, Any]:
     """Extract and parse the JSON object embedded in an agent response."""
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        stripped = text.strip()
+    for match in re.finditer(r"```json\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL):
         try:
-            parsed = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            raise SystemGateAnalysisError(
-                "Agent response did not contain a JSON object"
-            ) from exc
-        if not isinstance(parsed, dict):
-            raise SystemGateAnalysisError("Agent response JSON must be an object")
-        return parsed
+            parsed = json.loads(match.group(1).strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
 
-    raw = text[start : end + 1]
+    decoder = json.JSONDecoder()
+    last_object: dict[str, Any] | None = None
+    saw_object_start = False
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        saw_object_start = True
+        try:
+            parsed, _ = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            last_object = parsed
+
+    if last_object is not None:
+        return last_object
+
+    stripped = text.strip()
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(stripped)
     except json.JSONDecodeError as exc:
-        raise SystemGateAnalysisError(f"Agent response JSON was invalid: {exc}") from exc
+        if saw_object_start:
+            raise SystemGateAnalysisError(
+                f"Agent response JSON was invalid: {exc}"
+            ) from exc
+        raise SystemGateAnalysisError(
+            "Agent response did not contain a JSON object"
+        ) from exc
     if not isinstance(parsed, dict):
         raise SystemGateAnalysisError("Agent response JSON must be an object")
     return parsed
