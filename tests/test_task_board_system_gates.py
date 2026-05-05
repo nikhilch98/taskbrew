@@ -1207,3 +1207,145 @@ async def test_add_dependency_fails_target_for_rejected_blocker(
     assert deps == [{"resolved": 0}]
     stored_target = await board.get_task(target["id"])
     assert stored_target["status"] == "failed"
+
+
+async def test_failed_revision_rejects_waiting_review_parent(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[original["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for approved implementation.",
+    )
+    claimed_original = await board.claim_task("coder", "coder-1")
+    assert claimed_original["id"] == original["id"]
+    await board.complete_task_with_output(original["id"], "Ready.")
+    revisions = await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    revision = revisions[0]
+    await board.apply_backlog_intake_decision(
+        revision["id"],
+        needs_review=False,
+        reason="Revision children complete directly.",
+    )
+    claimed_revision = await board.claim_task("coder", "coder-1")
+    assert claimed_revision["id"] == revision["id"]
+    event_bus.events.clear()
+
+    await board.fail_task(revision["id"])
+
+    parent = await board.get_task(original["id"])
+    assert parent["status"] == "rejected"
+    assert parent["review_status"] == "rejected"
+    assert "required revision" in parent["rejection_reason"].lower()
+    assert revision["id"] in parent["rejection_reason"]
+    gate_runs = json.loads(parent["system_gate_runs"])
+    assert gate_runs[-1]["gate"] == "review"
+    assert gate_runs[-1]["outcome"] == "rejected"
+    assert gate_runs[-1]["failed_revision_task_id"] == revision["id"]
+    assert gate_runs[-1]["finished_at"]
+
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "failed"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (dependent["id"],),
+    )
+    assert deps == [{"resolved": 0}]
+    assert event_bus.events == []
+
+
+async def test_rejected_revision_rejects_waiting_review_parent(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build reviewed widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    claimed_original = await board.claim_task("coder", "coder-1")
+    assert claimed_original["id"] == original["id"]
+    await board.complete_task_with_output(original["id"], "Ready.")
+    revisions = await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    revision = revisions[0]
+
+    await board.reject_task(revision["id"], "Revision work was rejected.")
+
+    parent = await board.get_task(original["id"])
+    assert parent["status"] == "rejected"
+    assert parent["review_status"] == "rejected"
+    assert "required revision" in parent["rejection_reason"].lower()
+    assert revision["id"] in parent["rejection_reason"]
+    gate_runs = json.loads(parent["system_gate_runs"])
+    assert gate_runs[-1]["outcome"] == "rejected"
+    assert gate_runs[-1]["failed_revision_task_id"] == revision["id"]
+
+
+async def test_add_dependency_fails_target_for_failed_blocker(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Failed blocker",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    target = await board.create_task(
+        group_id=group["id"],
+        title="Blocked target",
+        task_type="qa_verification",
+        assigned_to="tester",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    await board.fail_task(blocker["id"])
+    await board._db.execute(
+        "UPDATE tasks SET status = 'blocked' WHERE id = ?",
+        (target["id"],),
+    )
+
+    await board.add_dependency(target["id"], blocker["id"])
+
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (target["id"],),
+    )
+    assert deps == [{"resolved": 0}]
+    stored_target = await board.get_task(target["id"])
+    assert stored_target["status"] == "failed"

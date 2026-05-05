@@ -824,6 +824,8 @@ class TaskBoard:
         )
         if not rows:
             raise ValueError(f"Task not found: {task_id}")
+        await self._cascade_failure(task_id)
+        await self._check_group_completion(task_id)
         return rows[0]
 
     async def fail_task(self, task_id: str) -> dict:
@@ -874,6 +876,20 @@ class TaskBoard:
                 (current,),
             )
             for dep in dependents:
+                review_parent = await self._db.execute_fetchone(
+                    "SELECT * FROM tasks "
+                    "WHERE id = ? AND status = 'review' "
+                    "AND review_status = 'waiting_revision'",
+                    (dep["task_id"],),
+                )
+                if review_parent:
+                    rejected = await self._reject_waiting_revision_parent(
+                        review_parent["id"], current
+                    )
+                    if rejected:
+                        queue.append(review_parent["id"])
+                    continue
+
                 dep_task = await self._db.execute_fetchone(
                     "SELECT * FROM tasks "
                     "WHERE id = ? AND status IN ('backlog', 'pending', 'blocked')",
@@ -885,6 +901,36 @@ class TaskBoard:
                         (dep_task["id"],),
                     )
                     queue.append(dep_task["id"])
+
+    async def _reject_waiting_revision_parent(
+        self, parent_task_id: str, failed_revision_task_id: str
+    ) -> dict | None:
+        """Reject a review parent whose required revision failed or was rejected."""
+        now = _utcnow()
+        reason = (
+            f"Required revision task {failed_revision_task_id} failed or was rejected; "
+            "the review cannot continue."
+        )
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = 'rejected', review_status = 'rejected', "
+            "rejection_reason = ? "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status = 'waiting_revision' RETURNING *",
+            (reason, parent_task_id),
+        )
+        if not rows:
+            return None
+        await self._append_system_gate_run(
+            parent_task_id,
+            {
+                "gate": "review",
+                "outcome": "rejected",
+                "reason": reason,
+                "failed_revision_task_id": failed_revision_task_id,
+                "finished_at": now,
+            },
+        )
+        return rows[0]
 
     # ------------------------------------------------------------------
     # Group completion check
