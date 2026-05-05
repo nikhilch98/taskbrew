@@ -81,21 +81,25 @@ def _extract_json_object(text: str) -> dict[str, Any]:
             return parsed
 
     decoder = json.JSONDecoder()
-    last_object: dict[str, Any] | None = None
+    object_spans: list[tuple[int, int, dict[str, Any]]] = []
     saw_object_start = False
     for index, char in enumerate(text):
         if char != "{":
             continue
         saw_object_start = True
         try:
-            parsed, _ = decoder.raw_decode(text, index)
+            parsed, end = decoder.raw_decode(text, index)
         except json.JSONDecodeError:
             continue
         if isinstance(parsed, dict):
-            last_object = parsed
+            object_spans.append((index, end, parsed))
 
-    if last_object is not None:
-        return last_object
+    for index, end, parsed in reversed(object_spans):
+        if not any(
+            outer_index < index and end <= outer_end
+            for outer_index, outer_end, _ in object_spans
+        ):
+            return parsed
 
     stripped = text.strip()
     try:

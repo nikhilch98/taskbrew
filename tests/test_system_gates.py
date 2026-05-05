@@ -1164,6 +1164,19 @@ def test_extract_json_object_prefers_fenced_json_object() -> None:
     }
 
 
+def test_extract_json_object_keeps_nested_review_response_toplevel() -> None:
+    text = (
+        '{"outcome":"needs_revision","reason":"x",'
+        '"revisions":[{"title":"t","description":"d"}]}'
+    )
+
+    assert _extract_json_object(text) == {
+        "outcome": "needs_revision",
+        "reason": "x",
+        "revisions": [{"title": "t", "description": "d"}],
+    }
+
+
 def test_extract_json_object_rejects_missing_json() -> None:
     with pytest.raises(SystemGateAnalysisError, match="did not contain"):
         _extract_json_object("no structured output")
