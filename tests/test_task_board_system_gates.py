@@ -1030,3 +1030,180 @@ async def test_mark_review_ready_if_unblocked_waits_for_revision_dependencies(
 
     assert ready["status"] == "review"
     assert ready["review_status"] == "pending"
+
+
+async def test_approve_review_gate_waits_for_revision_dependencies(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[original["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for approved implementation.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == original["id"]
+    await board.complete_task_with_output(original["id"], "Ready.")
+    await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    event_bus.events.clear()
+
+    approved = await board.approve_review_gate(
+        original["id"],
+        reason="Must not approve while revisions are open.",
+    )
+
+    assert approved["status"] == "review"
+    assert approved["review_status"] == "waiting_revision"
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "blocked"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (dependent["id"],),
+    )
+    assert deps == [{"resolved": 0}]
+    assert event_bus.events == []
+
+
+async def test_create_review_revision_tasks_rejects_empty_revisions(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build reviewed widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == original["id"]
+    before = await board.complete_task_with_output(original["id"], "Ready.")
+
+    with pytest.raises(ValueError):
+        await board.create_review_revision_tasks(original["id"], [])
+
+    after = await board.get_task(original["id"])
+    assert after["status"] == before["status"]
+    assert after["review_status"] == before["review_status"]
+    assert json.loads(after["revision_task_ids"]) == []
+    assert json.loads(after["system_gate_runs"]) == []
+
+
+async def test_add_dependency_marks_completed_blocker_resolved(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Completed blocker",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    target = await board.create_task(
+        group_id=group["id"],
+        title="Blocked target",
+        task_type="qa_verification",
+        assigned_to="tester",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    await board.complete_task(blocker["id"])
+    await board._db.execute(
+        "UPDATE tasks SET status = 'blocked' WHERE id = ?",
+        (target["id"],),
+    )
+    event_bus.events.clear()
+
+    await board.add_dependency(target["id"], blocker["id"])
+
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved, resolved_at FROM task_dependencies WHERE task_id = ?",
+        (target["id"],),
+    )
+    assert len(deps) == 1
+    assert deps[0]["resolved"] == 1
+    assert deps[0]["resolved_at"]
+    stored_target = await board.get_task(target["id"])
+    assert stored_target["status"] == "pending"
+    assert event_bus.events == [
+        (
+            "task.available",
+            {"task_id": target["id"], "role": "tester", "group_id": group["id"]},
+        )
+    ]
+
+
+async def test_add_dependency_fails_target_for_rejected_blocker(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Rejected blocker",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    target = await board.create_task(
+        group_id=group["id"],
+        title="Blocked target",
+        task_type="qa_verification",
+        assigned_to="tester",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    await board.complete_task(blocker["id"])
+    await board.reject_review_gate(
+        blocker["id"],
+        reason="Review rejected the implementation.",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'blocked' WHERE id = ?",
+        (target["id"],),
+    )
+
+    await board.add_dependency(target["id"], blocker["id"])
+
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (target["id"],),
+    )
+    assert deps == [{"resolved": 0}]
+    stored_target = await board.get_task(target["id"])
+    assert stored_target["status"] == "failed"

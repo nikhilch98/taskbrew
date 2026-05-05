@@ -660,12 +660,26 @@ class TaskBoard:
 
     async def approve_review_gate(self, task_id: str, *, reason: str) -> dict:
         """Approve a task waiting at the system review gate."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != REVIEW_STATUS:
+            return task
+        if task.get("review_status") != "pending":
+            return task
+        if await self._has_unresolved_dependencies(task_id):
+            return task
+
         now = _utcnow()
         rows = await self._db.execute_returning(
             "UPDATE tasks SET status = 'completed', review_status = 'approved', "
             "rejection_reason = NULL "
-            "WHERE id = ? AND status = 'review' RETURNING *",
-            (task_id,),
+            "WHERE id = ? AND status = 'review' AND review_status = 'pending' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") RETURNING *",
+            (task_id, task_id),
         )
         if not rows:
             task = await self.get_task(task_id)
@@ -729,6 +743,8 @@ class TaskBoard:
                 f"Task {original_task_id} is in status '{original['status']}', "
                 f"expected '{REVIEW_STATUS}'"
             )
+        if not revisions:
+            raise ValueError("At least one revision is required")
 
         created: list[dict] = []
         for index, revision in enumerate(revisions, start=1):
@@ -1135,11 +1151,26 @@ class TaskBoard:
             raise ValueError(
                 f"Dependency {task_id} -> {blocked_by_id} would create a cycle"
             )
-        await self._db.execute(
-            "INSERT OR IGNORE INTO task_dependencies (task_id, blocked_by) "
-            "VALUES (?, ?)",
-            (task_id, blocked_by_id),
+        now = _utcnow()
+        blocker = await self._db.execute_fetchone(
+            "SELECT status FROM tasks WHERE id = ?",
+            (blocked_by_id,),
         )
+        dep_resolved = 1 if blocker and blocker["status"] == "completed" else 0
+        dep_resolved_at = now if dep_resolved else None
+        await self._db.execute(
+            "INSERT OR IGNORE INTO task_dependencies "
+            "(task_id, blocked_by, resolved, resolved_at) VALUES (?, ?, ?, ?)",
+            (task_id, blocked_by_id, dep_resolved, dep_resolved_at),
+        )
+        if dep_resolved:
+            await self._db.execute(
+                "UPDATE task_dependencies SET resolved = 1, "
+                "resolved_at = COALESCE(resolved_at, ?) "
+                "WHERE task_id = ? AND blocked_by = ?",
+                (now, task_id, blocked_by_id),
+            )
+        await self._reconcile_dependencies_after_create(task_id)
 
     # ------------------------------------------------------------------
     # Resilience / Recovery
