@@ -767,16 +767,31 @@ class TaskBoard:
         if not revisions:
             raise ValueError("At least one revision is required")
         original_review_status = original.get("review_status") or "pending"
+        original_review_round = int(original.get("review_round") or 0)
+        max_review_rounds = int(
+            original.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+        )
+        if max_review_rounds > 0 and original_review_round >= max_review_rounds:
+            return []
 
         rows = await self._db.execute_returning(
-            "UPDATE tasks SET review_status = 'waiting_revision' "
+            "UPDATE tasks SET review_status = 'waiting_revision', "
+            "review_round = COALESCE(review_round, 0) + 1 "
             "WHERE id = ? AND status = 'review' "
             "AND review_status IN ('pending', 'running') "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM task_dependencies "
             "  WHERE task_id = ? AND resolved = 0"
-            ") RETURNING *",
-            (original_task_id, original_task_id),
+            ") "
+            "AND (COALESCE(max_review_rounds, ?) <= 0 "
+            "OR COALESCE(review_round, 0) < COALESCE(max_review_rounds, ?)) "
+            "RETURNING *",
+            (
+                original_task_id,
+                original_task_id,
+                DEFAULT_MAX_REVIEW_ROUNDS,
+                DEFAULT_MAX_REVIEW_ROUNDS,
+            ),
         )
         if not rows:
             return []
@@ -809,6 +824,7 @@ class TaskBoard:
             await self._rollback_empty_revision_transition(
                 original_task_id,
                 original_review_status,
+                original_review_round,
             )
             raise
 
@@ -824,13 +840,14 @@ class TaskBoard:
                 "gate": "review",
                 "outcome": "needs_revision",
                 "revision_task_ids": [task["id"] for task in created],
+                "review_round": original["review_round"],
                 "finished_at": _utcnow(),
             },
         )
         return created
 
     async def _rollback_empty_revision_transition(
-        self, original_task_id: str, review_status: str
+        self, original_task_id: str, review_status: str, review_round: int
     ) -> None:
         task = await self.get_task(original_task_id)
         if task is None or task["status"] != REVIEW_STATUS:
@@ -846,9 +863,9 @@ class TaskBoard:
         if dep is not None:
             return
         await self._db.execute(
-            "UPDATE tasks SET review_status = ? "
+            "UPDATE tasks SET review_status = ?, review_round = ? "
             "WHERE id = ? AND status = 'review' AND review_status = 'waiting_revision'",
-            (review_status, original_task_id),
+            (review_status, review_round, original_task_id),
         )
 
     async def mark_review_ready_if_unblocked(self, task_id: str) -> dict:

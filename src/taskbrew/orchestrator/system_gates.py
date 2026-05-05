@@ -13,7 +13,12 @@ from typing import Any
 
 from taskbrew.agents.base import AgentRunner
 from taskbrew.config import AgentConfig
-from taskbrew.orchestrator.task_board import BACKLOG_STATUS, REVIEW_STATUS, TaskBoard
+from taskbrew.orchestrator.task_board import (
+    BACKLOG_STATUS,
+    DEFAULT_MAX_REVIEW_ROUNDS,
+    REVIEW_STATUS,
+    TaskBoard,
+)
 
 logger = logging.getLogger(__name__)
 _GATE_LOCKS: dict[tuple[str, str], tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
@@ -479,6 +484,12 @@ class SystemGateManager:
         elif outcome == "needs_revision":
             if not await self._review_gate_still_running(task_id):
                 return False
+            if await self._review_round_limit_reached(task_id):
+                await self._board.reject_review_gate(
+                    task_id,
+                    reason=await self._review_round_limit_reason(task_id, result),
+                )
+                return True
             revisions = result.revisions or [
                 RevisionRequest(description=result.reason)
             ]
@@ -492,6 +503,28 @@ class SystemGateManager:
             return True
         else:
             raise SystemGateAnalysisError(f"Unsupported review outcome: {outcome}")
+
+    async def _review_round_limit_reached(self, task_id: str) -> bool:
+        task = await self._board.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        review_round = int(task.get("review_round") or 0)
+        max_rounds = int(task.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS)
+        return max_rounds > 0 and review_round >= max_rounds
+
+    async def _review_round_limit_reason(
+        self,
+        task_id: str,
+        result: ReviewResult,
+    ) -> str:
+        task = await self._board.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        max_rounds = int(task.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS)
+        return (
+            f"Task failed to pass review after {max_rounds} review rounds. "
+            f"Last review finding: {result.reason}"
+        )
 
     async def _restore_pending_review_status(self, task_id: str) -> None:
         await self._board._db.execute(

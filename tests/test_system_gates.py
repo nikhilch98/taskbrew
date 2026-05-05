@@ -323,6 +323,7 @@ async def test_process_pending_once_creates_revision_tasks_for_needs_revision(
     assert revision["title"] == "Add regression tests"
     assert revision["description"] == "Cover the review finding."
     assert revision["assigned_to"] == "tester"
+    assert updated["review_round"] == 1
 
 
 async def test_process_pending_once_defaults_revision_task_when_missing(
@@ -343,6 +344,35 @@ async def test_process_pending_once_defaults_revision_task_when_missing(
     revision = await board.get_task(revision_ids[0])
     assert revision["title"] == f"Revision 1 for {review_task['id']}"
     assert revision["description"] == "Fix the gap."
+
+
+async def test_process_pending_once_rejects_when_review_round_limit_reached(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_round = 3, max_review_rounds = 3 WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(
+                outcome="needs_revision",
+                reason="Still missing required tests.",
+                revisions=[RevisionRequest(title="Add tests")],
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 1}
+    updated = await board.get_task(review_task["id"])
+    assert updated["status"] == "rejected"
+    assert updated["review_status"] == "rejected"
+    assert json.loads(updated["revision_task_ids"]) == []
+    assert "failed to pass review after 3 review rounds" in updated["rejection_reason"]
 
 
 async def test_process_pending_once_skips_active_running_backlog_task(
