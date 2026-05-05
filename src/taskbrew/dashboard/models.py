@@ -47,11 +47,24 @@ class PauseResumeBody(BaseModel):
     role: Optional[str] = None
 
 
+class ProjectRoleModelSetting(BaseModel):
+    model: Optional[str] = Field(default=None, max_length=128)
+    reasoning_effort: Optional[str] = Field(default=None, max_length=32)
+
+
+class SystemAgentProfile(BaseModel):
+    provider: Optional[str] = Field(default=None, max_length=32)
+    model: Optional[str] = Field(default=None, max_length=128)
+    reasoning_effort: Optional[str] = Field(default=None, max_length=32)
+
+
 class CreateProjectBody(BaseModel):
     name: str = Field(max_length=128)
     directory: str = Field(max_length=2048)
     with_defaults: bool = True
     cli_provider: str = Field(default="claude", max_length=32)
+    role_model_settings: dict[str, ProjectRoleModelSetting] = Field(default_factory=dict)
+    system_agent: Optional[SystemAgentProfile] = None
 
 
 class UpdateTeamSettingsBody(BaseModel):
@@ -63,6 +76,7 @@ class UpdateTeamSettingsBody(BaseModel):
     default_idle_timeout: Optional[int] = None
     default_max_instances: Optional[int] = None
     group_prefixes: Optional[dict[str, str]] = None
+    system_agent: Optional[SystemAgentProfile] = None
 
 
 class UpdateRoleSettingsBody(BaseModel):
@@ -72,6 +86,7 @@ class UpdateRoleSettingsBody(BaseModel):
     emoji: Optional[str] = None
     system_prompt: Optional[str] = None
     model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     tools: Optional[list[str]] = None
     max_instances: Optional[int] = None
     max_turns: Optional[int] = None
@@ -101,6 +116,7 @@ class CreateRoleBody(BaseModel):
     system_prompt: Optional[str] = None
     tools: Optional[list[str]] = None
     model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     produces: Optional[list[str]] = None
     accepts: Optional[list[str]] = None
     routes_to: Optional[list[dict[str, Any]]] = None

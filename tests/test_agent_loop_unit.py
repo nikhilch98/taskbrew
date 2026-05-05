@@ -369,17 +369,17 @@ def test_provider_model_mapping():
     """_model_for_role should return correct models per provider."""
     from taskbrew.project_manager import _model_for_role
 
-    assert _model_for_role("pm", "claude") == "claude-opus-4-6"
-    assert _model_for_role("architect", "claude") == "claude-opus-4-6"
+    assert _model_for_role("pm", "claude") == "claude-opus-4-7"
+    assert _model_for_role("architect", "claude") == "claude-opus-4-7"
     assert _model_for_role("coder", "claude") == "claude-sonnet-4-6"
     assert _model_for_role("verifier", "claude") == "claude-sonnet-4-6"
 
-    assert _model_for_role("pm", "gemini") == "gemini-3.1-pro-preview"
-    assert _model_for_role("architect", "gemini") == "gemini-3.1-pro-preview"
+    assert _model_for_role("pm", "gemini") == "gemini-3-pro-preview"
+    assert _model_for_role("architect", "gemini") == "gemini-3-pro-preview"
     assert _model_for_role("coder", "gemini") == "gemini-3-flash-preview"
     assert _model_for_role("verifier", "gemini") == "gemini-3-flash-preview"
 
     assert _model_for_role("pm", "codex") == "gpt-5.5"
     assert _model_for_role("architect", "codex") == "gpt-5.5"
-    assert _model_for_role("coder", "codex") == "gpt-5.5"
-    assert _model_for_role("verifier", "codex") == "gpt-5.5"
+    assert _model_for_role("coder", "codex") == "gpt-5.4"
+    assert _model_for_role("verifier", "codex") == "gpt-5.4"

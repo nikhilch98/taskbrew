@@ -216,6 +216,7 @@ def build_sdk_options(
     provider: str,
     system_prompt: str,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     max_turns: int | None = None,
     cwd: str | None = None,
     allowed_tools: list[str] | None = None,
@@ -246,6 +247,7 @@ def build_sdk_options(
                 agent_role=agent_role,
                 agent_instance=agent_instance,
             ),
+            reasoning_effort=reasoning_effort,
         )
         if model:
             opts.model = model
@@ -272,6 +274,7 @@ def build_sdk_options(
                 agent_role=agent_role,
                 agent_instance=agent_instance,
             ),
+            reasoning_effort=reasoning_effort,
         )
         if model:
             opts.model = model
@@ -309,6 +312,8 @@ def build_sdk_options(
         opts.cwd = cwd
     if cli_path:
         opts.cli_path = cli_path
+    if reasoning_effort:
+        opts.extra_args["effort"] = reasoning_effort
     return opts
 
 

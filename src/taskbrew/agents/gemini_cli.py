@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
+from taskbrew.model_catalog import model_entry
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,6 +83,7 @@ class ResultMessage:
 class GeminiOptions:
     system_prompt: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
     max_turns: int | None = None
     cwd: str | None = None
     cli_path: str | None = None
@@ -168,7 +171,48 @@ def _build_command(
     return cmd
 
 
-def _gemini_settings_from_mcp(mcp_servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _gemini_thinking_config(model: str | None, reasoning_effort: str | None) -> dict[str, Any] | None:
+    """Build a Gemini thinkingConfig payload for a catalog reasoning value."""
+    if not model or not reasoning_effort:
+        return None
+    effort = reasoning_effort.strip().lower()
+    entry = model_entry(model) or {}
+    config_type = entry.get("thinking_config_type")
+    if not config_type and model.startswith("gemini-3"):
+        config_type = "level"
+    if not config_type and model.startswith("gemini-2.5"):
+        config_type = "budget"
+
+    if config_type == "level":
+        return {"includeThoughts": True, "thinkingLevel": effort.upper()}
+
+    if config_type == "budget":
+        budgets = {
+            "off": 0,
+            "minimal": 512,
+            "low": 2048,
+            "medium": 8192,
+            "high": 16384,
+            "dynamic": -1,
+        }
+        return {"includeThoughts": True, "thinkingBudget": budgets.get(effort, -1)}
+
+    return None
+
+
+def _gemini_alias_base(model: str) -> str:
+    if model.startswith("gemini-3"):
+        return "chat-base-3"
+    if model.startswith("gemini-2.5"):
+        return "chat-base-2.5"
+    return "chat-base"
+
+
+def _gemini_settings_from_mcp(
+    mcp_servers: dict[str, dict[str, Any]],
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
     """Build a Gemini settings payload with MCP servers enabled."""
     settings: dict[str, Any] = {}
     server_settings: dict[str, dict[str, Any]] = {}
@@ -194,6 +238,22 @@ def _gemini_settings_from_mcp(mcp_servers: dict[str, dict[str, Any]]) -> dict[st
         }
     if server_settings:
         settings["mcpServers"] = server_settings
+
+    thinking_config = _gemini_thinking_config(model, reasoning_effort)
+    if model and thinking_config:
+        settings["modelConfigs"] = {
+            "aliases": {
+                model: {
+                    "extends": _gemini_alias_base(model),
+                    "modelConfig": {
+                        "model": model,
+                        "generateContentConfig": {
+                            "thinkingConfig": thinking_config,
+                        },
+                    },
+                },
+            },
+        }
     return settings
 
 
@@ -236,7 +296,11 @@ async def _query_impl(
     cwd = opts.cwd or None
     env = os.environ.copy()
     settings_tmp: tempfile.TemporaryDirectory[str] | None = None
-    settings = _gemini_settings_from_mcp(opts.mcp_servers)
+    settings = _gemini_settings_from_mcp(
+        opts.mcp_servers,
+        model=opts.model,
+        reasoning_effort=opts.reasoning_effort,
+    )
     if settings:
         settings_tmp = tempfile.TemporaryDirectory(prefix="taskbrew-gemini-")
         settings_path = os.path.join(settings_tmp.name, "settings.json")

@@ -65,6 +65,7 @@ class AgentRunner:
             provider=self.provider,
             system_prompt=self.config.system_prompt,
             model=self.config.model,
+            reasoning_effort=self.config.reasoning_effort,
             max_turns=self.config.max_turns,
             cwd=effective_cwd,
             allowed_tools=self.config.allowed_tools,

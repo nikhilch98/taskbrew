@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from taskbrew.model_catalog import system_agent_setting
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,6 +91,15 @@ class ExecutionConfig:
 
 
 @dataclass
+class SystemAgentConfig:
+    """Per-project profile for TaskBrew-owned AI features."""
+
+    provider: str = "claude"
+    model: str = "claude-sonnet-4-6"
+    reasoning_effort: str | None = "high"
+
+
+@dataclass
 class TeamConfig:
     """Top-level team settings loaded from config/team.yaml."""
 
@@ -103,6 +114,7 @@ class TeamConfig:
     default_auto_scale: AutoScaleDefaults
     group_prefixes: dict[str, str] = field(default_factory=dict)
     cli_provider: str = "claude"
+    system_agent: SystemAgentConfig = field(default_factory=SystemAgentConfig)
     auth_enabled: bool = False
     auth_tokens: list[str] = field(default_factory=list)
     cost_budgets_enabled: bool = False
@@ -185,6 +197,9 @@ def load_team_config(path: Path) -> TeamConfig:
         ),
     )
 
+    cli_provider = data.get("cli_provider", "claude")
+    system_agent_raw = system_agent_setting(cli_provider, data.get("system_agent", {}))
+
     team_config = TeamConfig(
         team_name=_get_required(data, "team_name", "team.yaml"),
         db_path=str(Path(_get_required(data, "database.path", "team.yaml")).expanduser()),
@@ -200,7 +215,12 @@ def load_team_config(path: Path) -> TeamConfig:
             scale_down_idle=auto_scale_raw.get("scale_down_idle", 15),
         ),
         group_prefixes=data.get("group_prefixes", {}),
-        cli_provider=data.get("cli_provider", "claude"),
+        cli_provider=cli_provider,
+        system_agent=SystemAgentConfig(
+            provider=system_agent_raw["provider"],
+            model=system_agent_raw["model"],
+            reasoning_effort=system_agent_raw.get("reasoning_effort"),
+        ),
         auth_enabled=auth_raw.get("enabled", False),
         auth_tokens=auth_raw.get("tokens", []),
         cost_budgets_enabled=data.get("cost_budgets", {}).get("enabled", False),
@@ -440,7 +460,8 @@ class RoleConfig:
     emoji: str
     system_prompt: str
     tools: list[str] = field(default_factory=list)
-    model: str = "claude-opus-4-6"
+    model: str = "claude-opus-4-7"
+    reasoning_effort: str | None = None
     produces: list[str] = field(default_factory=list)
     accepts: list[str] = field(default_factory=list)
     routes_to: list[RouteTarget] = field(default_factory=list)
@@ -517,7 +538,8 @@ def _parse_role(data: dict) -> RoleConfig:
         emoji=data["emoji"],
         system_prompt=data["system_prompt"],
         tools=data.get("tools", []),
-        model=data.get("model", "claude-opus-4-6"),
+        model=data.get("model", "claude-opus-4-7"),
+        reasoning_effort=data.get("reasoning_effort"),
         produces=data.get("produces", []),
         accepts=data.get("accepts", []),
         routes_to=routes_to,

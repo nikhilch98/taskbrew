@@ -88,6 +88,28 @@ class TestMCPSettings:
         })
         assert settings["mcpServers"]["remote"]["httpUrl"] == "http://127.0.0.1:9999/mcp"
 
+    def test_reasoning_effort_becomes_gemini_3_thinking_level(self):
+        settings = _gemini_settings_from_mcp(
+            {},
+            model="gemini-3-flash-preview",
+            reasoning_effort="high",
+        )
+        alias = settings["modelConfigs"]["aliases"]["gemini-3-flash-preview"]
+        thinking = alias["modelConfig"]["generateContentConfig"]["thinkingConfig"]
+        assert alias["extends"] == "chat-base-3"
+        assert thinking == {"includeThoughts": True, "thinkingLevel": "HIGH"}
+
+    def test_reasoning_effort_becomes_gemini_25_thinking_budget(self):
+        settings = _gemini_settings_from_mcp(
+            {},
+            model="gemini-2.5-flash",
+            reasoning_effort="off",
+        )
+        alias = settings["modelConfigs"]["aliases"]["gemini-2.5-flash"]
+        thinking = alias["modelConfig"]["generateContentConfig"]["thinkingConfig"]
+        assert alias["extends"] == "chat-base-2.5"
+        assert thinking == {"includeThoughts": True, "thinkingBudget": 0}
+
 
 class TestFindCli:
     def test_explicit_path(self, tmp_path):
@@ -181,11 +203,13 @@ class TestProviderIntegration:
             provider="gemini",
             system_prompt="You are a PM.",
             model="gemini-3.1-pro-preview",
+            reasoning_effort="high",
             cwd="/tmp",
         )
         assert isinstance(opts, GeminiOptions)
         assert opts.system_prompt == "You are a PM."
         assert opts.model == "gemini-3.1-pro-preview"
+        assert opts.reasoning_effort == "high"
         assert opts.cwd == "/tmp"
 
     def test_get_message_types_gemini(self):

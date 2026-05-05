@@ -482,6 +482,7 @@ class AgentLoop:
             system_prompt=self.role_config.system_prompt,
             allowed_tools=self.role_config.tools,
             model=self.role_config.model,
+            reasoning_effort=self.role_config.reasoning_effort,
             max_turns=self.role_config.max_turns,
             cwd=cwd,
             api_url=self.api_url,

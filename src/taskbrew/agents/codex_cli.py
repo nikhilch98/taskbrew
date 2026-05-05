@@ -67,6 +67,7 @@ class ResultMessage:
 class CodexOptions:
     system_prompt: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
     max_turns: int | None = None
     cwd: str | None = None
     cli_path: str | None = None
@@ -248,6 +249,11 @@ def _build_command(
     cmd.extend(_automation_args_for_permission_mode(options.permission_mode))
     if options.model:
         cmd.extend(["-m", options.model])
+    if options.reasoning_effort:
+        cmd.extend([
+            "-c",
+            f"model_reasoning_effort={_toml_value(options.reasoning_effort)}",
+        ])
     if options.cwd:
         cmd.extend(["-C", options.cwd])
         if options.permission_mode != "bypassPermissions":

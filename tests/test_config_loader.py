@@ -179,6 +179,7 @@ class TestLoadRoles:
         assert pm.color == "#3b82f6"
         assert pm.system_prompt == "You are a PM."
         assert pm.tools == ["Read", "Glob"]
+        assert pm.reasoning_effort is None
         assert pm.produces == ["prd"]
         assert pm.accepts == ["goal"]
         assert len(pm.routes_to) == 1
@@ -226,6 +227,18 @@ class TestLoadRoles:
 
         assert len(roles) == 3
         assert set(roles.keys()) == {"pm", "architect", "coder"}
+
+    def test_load_role_with_reasoning_effort(self, tmp_path: Path) -> None:
+        roles_dir = tmp_path / "roles"
+        roles_dir.mkdir()
+        (roles_dir / "pm.yaml").write_text(
+            PM_YAML + "\nmodel: claude-opus-4-7\nreasoning_effort: xhigh\n"
+        )
+
+        roles = load_roles(roles_dir)
+
+        assert roles["pm"].model == "claude-opus-4-7"
+        assert roles["pm"].reasoning_effort == "xhigh"
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +367,92 @@ class TestCliProvider:
         cfg_file.write_text(TEAM_YAML)
         cfg = load_team_config(cfg_file)
         assert cfg.cli_provider == "claude"
+
+
+class TestSystemAgentConfig:
+    """Tests for per-project system agent settings in TeamConfig."""
+
+    TEAM_YAML_WITH_SYSTEM_AGENT = dedent("""\
+        team_name: "System AI Team"
+        cli_provider: "codex"
+
+        database:
+          path: "data/system.db"
+
+        dashboard:
+          host: "0.0.0.0"
+          port: 8420
+
+        artifacts:
+          base_dir: "artifacts"
+
+        defaults:
+          max_instances: 1
+          poll_interval_seconds: 5
+          idle_timeout_minutes: 30
+          auto_scale:
+            enabled: false
+
+        system_agent:
+          provider: "gemini"
+          model: "gemini-3-pro-preview"
+          reasoning_effort: "high"
+    """)
+
+    TEAM_YAML_WITH_CODEX_DEFAULT = dedent("""\
+        team_name: "Codex System AI Team"
+        cli_provider: "codex"
+
+        database:
+          path: "data/system.db"
+
+        dashboard:
+          host: "0.0.0.0"
+          port: 8420
+
+        artifacts:
+          base_dir: "artifacts"
+
+        defaults:
+          max_instances: 1
+          poll_interval_seconds: 5
+          idle_timeout_minutes: 30
+          auto_scale:
+            enabled: false
+    """)
+
+    def test_system_agent_profile_parsed(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "team.yaml"
+        cfg_file.write_text(self.TEAM_YAML_WITH_SYSTEM_AGENT)
+        cfg = load_team_config(cfg_file)
+
+        assert cfg.system_agent.provider == "gemini"
+        assert cfg.system_agent.model == "gemini-3-pro-preview"
+        assert cfg.system_agent.reasoning_effort == "high"
+
+    def test_system_agent_defaults_to_cli_provider_balanced_model(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        cfg_file = tmp_path / "team.yaml"
+        cfg_file.write_text(self.TEAM_YAML_WITH_CODEX_DEFAULT)
+        cfg = load_team_config(cfg_file)
+
+        assert cfg.system_agent.provider == "codex"
+        assert cfg.system_agent.model == "gpt-5.4"
+        assert cfg.system_agent.reasoning_effort == "medium"
+
+    def test_system_agent_defaults_to_claude_when_cli_provider_missing(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        cfg_file = tmp_path / "team.yaml"
+        cfg_file.write_text(TEAM_YAML)
+        cfg = load_team_config(cfg_file)
+
+        assert cfg.system_agent.provider == "claude"
+        assert cfg.system_agent.model == "claude-sonnet-4-6"
+        assert cfg.system_agent.reasoning_effort == "high"
 
 
 # ---------------------------------------------------------------------------

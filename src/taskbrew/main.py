@@ -104,6 +104,14 @@ def _validate_startup(project_dir: Path, team_config, roles: dict, cli_provider:
         )
         for role_config in (roles or {}).values()
     }
+    system_agent = getattr(team_config, "system_agent", None) if team_config else None
+    if system_agent:
+        required_providers.add(
+            detect_provider(
+                model=getattr(system_agent, "model", None),
+                cli_provider=getattr(system_agent, "provider", cli_provider) or cli_provider,
+            )
+        )
     if not required_providers:
         required_providers.add(cli_provider or "claude")
 

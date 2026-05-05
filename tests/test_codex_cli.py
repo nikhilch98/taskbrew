@@ -48,6 +48,12 @@ class TestBuildCommand:
         assert cmd[cmd.index("-C") + 1] == "/tmp/project"
         assert cmd[-1] == "hello"
 
+    def test_reasoning_effort_becomes_config_override(self):
+        opts = CodexOptions(model="gpt-5.4", reasoning_effort="xhigh")
+        cmd = _build_command("/usr/bin/codex", "hello", opts)
+        joined = "\n".join(cmd)
+        assert 'model_reasoning_effort="xhigh"' in joined
+
     def test_bypass_permissions_uses_codex_bypass_flag(self):
         opts = CodexOptions(permission_mode="bypassPermissions")
         cmd = _build_command("/usr/bin/codex", "hello", opts)
@@ -132,11 +138,13 @@ class TestProviderIntegration:
             provider="codex",
             system_prompt="You are a coder.",
             model="gpt-5.5",
+            reasoning_effort="high",
             cwd="/tmp",
         )
         assert isinstance(opts, CodexOptions)
         assert opts.system_prompt == "You are a coder."
         assert opts.model == "gpt-5.5"
+        assert opts.reasoning_effort == "high"
         assert opts.cwd == "/tmp"
 
     def test_get_message_types_codex(self):
