@@ -248,9 +248,17 @@ class TaskBoard:
                     raise ValueError(
                         f"Dependency {task_id} -> {dep_id} would create a cycle"
                     )
+                blocker = await self._db.execute_fetchone(
+                    "SELECT status FROM tasks WHERE id = ?",
+                    (dep_id,),
+                )
+                dep_resolved = 1 if blocker and blocker["status"] == "completed" else 0
+                dep_resolved_at = now if dep_resolved else None
                 await self._db.execute(
-                    "INSERT INTO task_dependencies (task_id, blocked_by) VALUES (?, ?)",
-                    (task_id, dep_id),
+                    "INSERT INTO task_dependencies "
+                    "(task_id, blocked_by, resolved, resolved_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (task_id, dep_id, dep_resolved, dep_resolved_at),
                 )
 
         return {
@@ -790,20 +798,22 @@ class TaskBoard:
             "  )",
         )
         for row in newly_free:
-            await self._db.execute(
-                "UPDATE tasks SET status = 'pending' WHERE id = ?",
+            transitioned = await self._db.execute_returning(
+                "UPDATE tasks SET status = 'pending' "
+                "WHERE id = ? AND status = 'blocked' RETURNING *",
                 (row["id"],),
             )
             # Wake any idle agent for this role so it doesn't wait
             # out the poll_interval before picking up work that is
             # now claimable.
-            if self._event_bus is not None:
+            if transitioned and self._event_bus is not None:
+                task = transitioned[0]
                 await self._event_bus.emit(
                     "task.available",
                     {
-                        "task_id": row["id"],
-                        "role": row["assigned_to"],
-                        "group_id": row["group_id"],
+                        "task_id": task["id"],
+                        "role": task["assigned_to"],
+                        "group_id": task["group_id"],
                     },
                 )
 

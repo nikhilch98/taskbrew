@@ -363,3 +363,96 @@ async def test_apply_backlog_intake_decision_refreshes_after_promotion_race(
 
     assert updated["status"] == "pending"
     assert event_bus.events == []
+
+
+async def test_dependent_created_after_blocker_completed_intakes_to_pending(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Already completed work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready to run.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    await board.complete_task(blocker["id"])
+    event_bus.events.clear()
+
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Depends on completed work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    updated = await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Dependency already completed.",
+    )
+
+    deps = await board._db.execute_fetchall(
+        "SELECT blocked_by, resolved FROM task_dependencies WHERE task_id = ?",
+        (dependent["id"],),
+    )
+    assert updated["status"] == "pending"
+    assert deps == [{"blocked_by": blocker["id"], "resolved": 1}]
+    assert event_bus.events == [
+        (
+            "task.available",
+            {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
+        )
+    ]
+
+
+async def test_resolve_dependencies_does_not_emit_when_update_loses_race(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Blocked work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waiting on blocker.",
+    )
+    event_bus.events.clear()
+    original_execute_fetchall = board._db.execute_fetchall
+
+    async def execute_fetchall_promoted_elsewhere(
+        sql: str, params: tuple = ()
+    ) -> list[dict]:
+        rows = await original_execute_fetchall(sql, params)
+        if "SELECT t.id, t.assigned_to, t.group_id FROM tasks t" in sql:
+            await board._db.execute(
+                "UPDATE tasks SET status = 'pending' WHERE id = ?",
+                (dependent["id"],),
+            )
+        return rows
+
+    monkeypatch.setattr(board._db, "execute_fetchall", execute_fetchall_promoted_elsewhere)
+
+    await board._resolve_dependencies(blocker["id"])
+
+    assert event_bus.events == []
