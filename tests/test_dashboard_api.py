@@ -105,6 +105,14 @@ async def test_task_detail_exposes_system_gate_fields(app_client):
         needs_review=True,
         reason="Touches shared orchestration logic.",
     )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == task["id"]
+    completed = await board.complete_task_with_output(task["id"], "Ready for review.")
+    assert completed["status"] == "review"
+    revisions = await board.create_review_revision_tasks(
+        task["id"],
+        [{"title": "Revise risky task"}],
+    )
 
     resp = await app_client["client"].get(f"/api/tasks/{task['id']}")
 
@@ -113,6 +121,9 @@ async def test_task_detail_exposes_system_gate_fields(app_client):
     assert data["needs_review"] == 1
     assert data["needs_review_reason"] == "Touches shared orchestration logic."
     assert "revision_tasks" in data
+    assert {revision["id"] for revision in data["revision_tasks"]} == {
+        revisions[0]["id"],
+    }
 
 
 async def test_get_board_filtered(app_client):
@@ -980,6 +991,34 @@ async def test_patch_task_valid_field(app_client):
     )
     assert resp.status_code == 200
     assert resp.json()["priority"] == "high"
+
+
+@pytest.mark.parametrize("status", ["backlog", "review"])
+async def test_patch_task_rejects_gate_only_statuses(app_client, status: str):
+    """PATCH should not bypass system gate workflow state transitions."""
+    board = app_client["board"]
+    group = await board.create_group(title="Gate patch test", origin="pm", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Do not gate patch",
+        task_type="implement",
+        assigned_to="coder",
+        created_by="pm",
+    )
+    released = await _release_task(board, task)
+    assert released["status"] == "pending"
+
+    resp = await app_client["client"].patch(
+        f"/api/tasks/{task['id']}",
+        json={"status": status},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == (
+        f"Status '{status}' is managed by the system gate workflow"
+    )
+    stored = await board.get_task(task["id"])
+    assert stored["status"] == "pending"
 
 
 # ---------------------------------------------------------------------------
