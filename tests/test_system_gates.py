@@ -1232,3 +1232,11 @@ async def test_agent_analyzer_rejects_invalid_review_outcome() -> None:
 
     with pytest.raises(SystemGateAnalysisError, match="outcome"):
         await analyzer.review_completed_task({"task": {"id": "CD-001"}})
+
+
+async def test_system_gate_manager_exposes_stop_method(board: TaskBoard):
+    manager = SystemGateManager(board=board, analyzer=FakeAnalyzer())
+
+    manager.stop()
+
+    assert manager._stop_requested is True
