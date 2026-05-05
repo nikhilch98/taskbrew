@@ -29,6 +29,7 @@ async def test_settings_models_returns_all_provider_families():
     ]
     assert "reasoning_efforts" not in by_id["claude-haiku-4-5"]
     assert by_id["gemini-3-flash-preview"]["reasoning_label"] == "Thinking"
+    assert by_id["gpt-5.5"]["default_reasoning_effort"] == "xhigh"
     assert by_id["gpt-5.4"]["reasoning_efforts"] == ["low", "medium", "high", "xhigh"]
 
 

@@ -23,7 +23,8 @@ system_prompt: |
   - Set priority: "high" for core features, "medium" for enhancements
 
 tools: [Read, Glob, Grep, WebSearch, mcp__task-tools__create_task]
-model: claude-opus-4-6
+model: gpt-5.5
+reasoning_effort: xhigh
 produces: [prd, goal_decomposition, requirement]
 accepts: [goal, revision]
 routes_to:

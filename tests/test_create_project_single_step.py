@@ -60,6 +60,20 @@ def test_create_project_wizard_tracks_system_agent_profile():
         assert "setProjectWizardSystemProvider" in source
 
 
+def test_create_project_wizard_defaults_to_codex_gpt55_without_verifier():
+    for path in (TEMPLATE, STATIC_JS):
+        source = _read(path)
+        render_block = _function_block(source, "renderWizardStep")
+        open_block = _function_block(source, "openCreateProjectWizard")
+
+        assert "const DEFAULT_PROJECT_ROLES = ['pm', 'architect', 'coder'];" in source
+        assert "verifier" not in render_block.lower()
+        assert "cli_provider: 'codex'" in open_block
+        assert "initializeProjectWizardRoleModels('codex')" in open_block
+        assert "initializeProjectWizardSystemAgent('codex')" in open_block
+        assert "Scaffolds PM, Architect, and Coder" in render_block
+
+
 def test_settings_page_contains_system_agent_controls():
     source = _read(SETTINGS_TEMPLATE)
 

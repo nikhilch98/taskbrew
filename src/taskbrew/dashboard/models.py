@@ -62,7 +62,7 @@ class CreateProjectBody(BaseModel):
     name: str = Field(max_length=128)
     directory: str = Field(max_length=2048)
     with_defaults: bool = True
-    cli_provider: str = Field(default="claude", max_length=32)
+    cli_provider: str = Field(default="codex", max_length=32)
     role_model_settings: dict[str, ProjectRoleModelSetting] = Field(default_factory=dict)
     system_agent: Optional[SystemAgentProfile] = None
 

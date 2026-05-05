@@ -229,7 +229,7 @@ def register_chat_routes(app, chat_manager):
                                 role_lookup = base
                         config = get_agent_config(role_lookup, config_roles=config_roles)
                         if orch:
-                            config.cli_provider = getattr(orch.team_config, "cli_provider", "claude") or "claude"
+                            config.cli_provider = getattr(orch.team_config, "cli_provider", "codex") or "codex"
                             config.mcp_servers = getattr(orch.team_config, "mcp_servers", None)
                             config.cwd = getattr(orch, "project_dir", None)
                             config.api_url = (

@@ -6,6 +6,7 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
+import yaml
 
 from taskbrew.config_loader import (
     AutoScaleConfig,
@@ -362,11 +363,11 @@ class TestCliProvider:
         cfg = load_team_config(cfg_file)
         assert cfg.cli_provider == "gemini"
 
-    def test_cli_provider_defaults_to_claude(self, tmp_path: Path) -> None:
+    def test_cli_provider_defaults_to_codex(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "team.yaml"
         cfg_file.write_text(TEAM_YAML)
         cfg = load_team_config(cfg_file)
-        assert cfg.cli_provider == "claude"
+        assert cfg.cli_provider == "codex"
 
 
 class TestSystemAgentConfig:
@@ -439,10 +440,10 @@ class TestSystemAgentConfig:
         cfg = load_team_config(cfg_file)
 
         assert cfg.system_agent.provider == "codex"
-        assert cfg.system_agent.model == "gpt-5.4"
-        assert cfg.system_agent.reasoning_effort == "medium"
+        assert cfg.system_agent.model == "gpt-5.5"
+        assert cfg.system_agent.reasoning_effort == "xhigh"
 
-    def test_system_agent_defaults_to_claude_when_cli_provider_missing(
+    def test_system_agent_defaults_to_codex_when_cli_provider_missing(
         self,
         tmp_path: Path,
     ) -> None:
@@ -450,9 +451,9 @@ class TestSystemAgentConfig:
         cfg_file.write_text(TEAM_YAML)
         cfg = load_team_config(cfg_file)
 
-        assert cfg.system_agent.provider == "claude"
-        assert cfg.system_agent.model == "claude-sonnet-4-6"
-        assert cfg.system_agent.reasoning_effort == "high"
+        assert cfg.system_agent.provider == "codex"
+        assert cfg.system_agent.model == "gpt-5.5"
+        assert cfg.system_agent.reasoning_effort == "xhigh"
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +512,29 @@ def test_repository_default_roles_exclude_verifier() -> None:
     assert (roles_dir / "pm.yaml").exists()
     assert (roles_dir / "architect.yaml").exists()
     assert (roles_dir / "coder.yaml").exists()
+
+
+def test_repository_default_team_uses_codex_gpt55_without_verifier_pipeline() -> None:
+    root = Path(__file__).resolve().parents[1]
+    team_path = root / "config" / "team.yaml"
+    roles_dir = root / "config" / "roles"
+    team_data = yaml.safe_load(team_path.read_text())
+
+    assert team_data["cli_provider"] == "codex"
+    assert team_data["system_agent"] == {
+        "provider": "codex",
+        "model": "gpt-5.5",
+        "reasoning_effort": "xhigh",
+    }
+
+    pipeline_edges = team_data.get("pipeline", {}).get("edges", [])
+    assert all(edge.get("from") != "verifier" for edge in pipeline_edges)
+    assert all(edge.get("to") != "verifier" for edge in pipeline_edges)
+
+    for role in ("pm", "architect", "coder"):
+        role_data = yaml.safe_load((roles_dir / f"{role}.yaml").read_text())
+        assert role_data["model"] == "gpt-5.5"
+        assert role_data["reasoning_effort"] == "xhigh"
 
 
 def test_load_team_config_expands_tilde(tmp_path):

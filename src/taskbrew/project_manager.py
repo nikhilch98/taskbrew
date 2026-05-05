@@ -49,7 +49,7 @@ def _slugify(name: str) -> str:
 def _default_team_yaml(
     project_name: str,
     project_id: str | None = None,
-    cli_provider: str = "claude",
+    cli_provider: str = "codex",
     system_agent_settings: dict | None = None,
 ) -> str:
     """Return the default team.yaml content for a new project."""
@@ -298,7 +298,7 @@ class ProjectManager:
         directory: str,
         *,
         with_defaults: bool = True,
-        cli_provider: str = "claude",
+        cli_provider: str = "codex",
         role_model_settings: dict | None = None,
         system_agent_settings: dict | None = None,
     ) -> dict:
@@ -454,7 +454,7 @@ class ProjectManager:
         *,
         project_id: str | None = None,
         with_defaults: bool = True,
-        cli_provider: str = "claude",
+        cli_provider: str = "codex",
         role_model_settings: dict | None = None,
         system_agent_settings: dict | None = None,
     ) -> None:

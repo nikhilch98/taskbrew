@@ -104,7 +104,7 @@ MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             "name": "GPT-5.5",
             "reasoning_label": "Reasoning",
             "reasoning_efforts": _COMMON_CODEX_REASONING,
-            "default_reasoning_effort": "medium",
+            "default_reasoning_effort": "xhigh",
         },
         {
             "id": "gpt-5.4",
@@ -170,7 +170,7 @@ _PROVIDER_ROLE_DEFAULTS: dict[str, dict[str, str]] = {
     },
     "codex": {
         "flagship": "gpt-5.5",
-        "balanced": "gpt-5.4",
+        "balanced": "gpt-5.5",
         "fast": "gpt-5.4-mini",
     },
 }
@@ -271,9 +271,9 @@ def system_agent_setting(
     raw = system_agent_settings or {}
     if isinstance(raw, str):
         raw = {"provider": raw}
-    provider = str(raw.get("provider") or cli_provider or "claude").strip().lower()
+    provider = str(raw.get("provider") or cli_provider or "codex").strip().lower()
     if provider not in MODEL_CATALOG:
-        provider = "claude"
+        provider = "codex"
     model = str(raw.get("model") or model_for_system_agent(provider))
     effort = normalize_reasoning_effort(model, raw.get("reasoning_effort"))
     result = {"provider": provider, "model": model}

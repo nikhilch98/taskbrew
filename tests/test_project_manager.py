@@ -316,14 +316,35 @@ class TestScaffolding:
         pm.create_project("Codex Defaults", str(codex_dir), cli_provider="codex")
         with open(codex_dir / "config" / "roles" / "coder.yaml") as f:
             codex_coder = yaml.safe_load(f)
-        assert codex_coder["model"] == "gpt-5.4"
-        assert codex_coder["reasoning_effort"] == "medium"
+        assert codex_coder["model"] == "gpt-5.5"
+        assert codex_coder["reasoning_effort"] == "xhigh"
         with open(codex_dir / "config" / "team.yaml") as f:
             codex_team = yaml.safe_load(f)
         assert codex_team["system_agent"] == {
             "provider": "codex",
-            "model": "gpt-5.4",
-            "reasoning_effort": "medium",
+            "model": "gpt-5.5",
+            "reasoning_effort": "xhigh",
+        }
+
+    def test_create_project_defaults_to_codex_gpt55_for_all_default_agents(
+        self, pm: ProjectManager, tmp_path: Path
+    ):
+        d = tmp_path / "implicit-codex-defaults"
+        pm.create_project("Implicit Codex Defaults", str(d))
+
+        for role in ("pm", "architect", "coder"):
+            with open(d / "config" / "roles" / f"{role}.yaml") as f:
+                role_data = yaml.safe_load(f)
+            assert role_data["model"] == "gpt-5.5"
+            assert role_data["reasoning_effort"] == "xhigh"
+
+        with open(d / "config" / "team.yaml") as f:
+            team_data = yaml.safe_load(f)
+        assert team_data["cli_provider"] == "codex"
+        assert team_data["system_agent"] == {
+            "provider": "codex",
+            "model": "gpt-5.5",
+            "reasoning_effort": "xhigh",
         }
 
     def test_role_model_settings_override_scaffold_defaults(

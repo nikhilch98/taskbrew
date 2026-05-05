@@ -351,7 +351,7 @@ const FALLBACK_MODEL_CATALOG = {
         { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', label: 'Previous Flash', reasoning_efforts: ['off', 'dynamic', 'low', 'medium', 'high'], default_reasoning_effort: 'dynamic', reasoning_label: 'Thinking' },
     ],
     codex: [
-        { id: 'gpt-5.5', name: 'GPT-5.5', label: 'Flagship', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
+        { id: 'gpt-5.5', name: 'GPT-5.5', label: 'Flagship', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'xhigh', reasoning_label: 'Reasoning' },
         { id: 'gpt-5.4', name: 'GPT-5.4', label: 'Balanced', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
         { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', label: 'Fast', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
         { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', label: 'Codex', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
@@ -364,9 +364,9 @@ const DEFAULT_ROLE_MODEL_TIERS = { pm: 'flagship', architect: 'flagship', coder:
 const PROVIDER_DEFAULT_MODELS = {
     claude: { flagship: 'claude-opus-4-7', balanced: 'claude-sonnet-4-6', fast: 'claude-haiku-4-5' },
     gemini: { flagship: 'gemini-3-pro-preview', balanced: 'gemini-3-flash-preview', fast: 'gemini-3-flash-preview' },
-    codex: { flagship: 'gpt-5.5', balanced: 'gpt-5.4', fast: 'gpt-5.4-mini' },
+    codex: { flagship: 'gpt-5.5', balanced: 'gpt-5.5', fast: 'gpt-5.4-mini' },
 };
-const DEFAULT_PROJECT_ROLES = ['pm', 'architect', 'coder', 'verifier'];
+const DEFAULT_PROJECT_ROLES = ['pm', 'architect', 'coder'];
 
 function toggleSettingsModal() {
     const o = document.getElementById('settingsOverlay');
@@ -448,7 +448,7 @@ function modelOptionsForProvider(provider, currentModel) {
         return (m.provider || providerForModel(m.id || m)) === provider;
     });
     if (filtered.length === 0) {
-        filtered = FALLBACK_MODEL_CATALOG[provider] || FALLBACK_MODEL_CATALOG.claude;
+        filtered = FALLBACK_MODEL_CATALOG[provider] || FALLBACK_MODEL_CATALOG.codex;
     }
     if (currentModel && !filtered.some(function(m) { return (m.id || m) === currentModel; })) {
         filtered = [{ id: currentModel, name: currentModel + ' (custom)' }].concat(filtered);
@@ -458,12 +458,12 @@ function modelOptionsForProvider(provider, currentModel) {
 
 function defaultModelForRole(provider, role) {
     const tier = DEFAULT_ROLE_MODEL_TIERS[role] || 'balanced';
-    const defaults = PROVIDER_DEFAULT_MODELS[provider] || PROVIDER_DEFAULT_MODELS.claude;
+    const defaults = PROVIDER_DEFAULT_MODELS[provider] || PROVIDER_DEFAULT_MODELS.codex;
     return defaults[tier] || defaults.balanced;
 }
 
 function defaultSystemModelForProvider(provider) {
-    const defaults = PROVIDER_DEFAULT_MODELS[provider] || PROVIDER_DEFAULT_MODELS.claude;
+    const defaults = PROVIDER_DEFAULT_MODELS[provider] || PROVIDER_DEFAULT_MODELS.codex;
     return defaults.balanced;
 }
 
@@ -546,7 +546,7 @@ function renderTeamSettings(c) {
 function ensureSystemAgentProfile() {
     const t = settingsData.team || {};
     const profile = t.system_agent || {};
-    const provider = profile.provider || t.cli_provider || 'claude';
+    const provider = profile.provider || t.cli_provider || 'codex';
     const model = profile.model || defaultSystemModelForProvider(provider);
     settingsData.team.system_agent = {
         provider: provider,
@@ -730,7 +730,7 @@ let projectWizardData = {
     name: '',
     directory: '',
     with_defaults: true,
-    cli_provider: 'claude',
+    cli_provider: 'codex',
     role_model_settings: {},
     system_agent: {},
 };
@@ -832,7 +832,7 @@ function renderProjectRoleModelRows() {
 
 function renderProjectSystemAgentSection() {
     const profile = projectWizardData.system_agent || {};
-    const provider = profile.provider || projectWizardData.cli_provider || 'claude';
+    const provider = profile.provider || projectWizardData.cli_provider || 'codex';
     const model = profile.model || defaultSystemModelForProvider(provider);
     const reasoning = profile.reasoning_effort || defaultReasoningForModel(model);
     const models = modelOptionsForProvider(provider, model);
@@ -1015,12 +1015,12 @@ function openCreateProjectWizard() {
         name: '',
         directory: '',
         with_defaults: true,
-        cli_provider: 'claude',
+        cli_provider: 'codex',
         role_model_settings: {},
         system_agent: {},
     };
-    initializeProjectWizardRoleModels('claude');
-    initializeProjectWizardSystemAgent('claude');
+    initializeProjectWizardRoleModels('codex');
+    initializeProjectWizardSystemAgent('codex');
     document.getElementById('createProjectOverlay').style.display = 'flex';
     renderWizardStep();
     if (!projectWizardModels.length) {
@@ -1120,7 +1120,7 @@ function renderWizardStep() {
         '<div class="option-radio ' + (projectWizardData.with_defaults ? 'checked' : '') + '"></div>' +
         '<div class="option-content">' +
         '<strong>Start with default agents</strong>' +
-        '<p>Scaffolds PM, Architect, Coder, and Verifier with a standard pipeline.</p>' +
+        '<p>Scaffolds PM, Architect, and Coder with the standard system review pipeline.</p>' +
         '</div></label>' +
         '<label class="wizard-option ' + (!projectWizardData.with_defaults ? 'selected' : '') + '" onclick="projectWizardData.with_defaults = false; renderWizardStep();">' +
         '<div class="option-radio ' + (!projectWizardData.with_defaults ? 'checked' : '') + '"></div>' +

@@ -1,4 +1,9 @@
 team_name: AI Development Team
+cli_provider: codex
+system_agent:
+  provider: codex
+  model: gpt-5.5
+  reasoning_effort: xhigh
 database:
   path: ~/.taskbrew/data/taskbrew.db
 dashboard:
@@ -36,29 +41,10 @@ pipeline:
     - architecture_review
     on_failure: block
   - id: migrated-edge-3
-    from: coder
-    to: verifier
-    task_types:
-    - verification
-    on_failure: block
-  - id: migrated-edge-4
     from: pm
     to: architect
     task_types:
     - tech_design
     - architecture_review
-    on_failure: block
-  - id: migrated-edge-5
-    from: verifier
-    to: coder
-    task_types:
-    - revision
-    - bug_fix
-    on_failure: block
-  - id: migrated-edge-6
-    from: verifier
-    to: architect
-    task_types:
-    - rejection
     on_failure: block
   node_config: {}

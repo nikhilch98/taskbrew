@@ -113,7 +113,7 @@ def _validate_startup(project_dir: Path, team_config, roles: dict, cli_provider:
             )
         )
     if not required_providers:
-        required_providers.add(cli_provider or "claude")
+        required_providers.add(cli_provider or "codex")
 
     # Check CLI binary exists
     if "claude" in required_providers and not shutil.which("claude"):
@@ -298,7 +298,7 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
         raise SystemExit(1)
 
     # Fail-fast startup validation
-    cli_provider = getattr(team_config, "cli_provider", "claude") or "claude"
+    cli_provider = getattr(team_config, "cli_provider", "codex") or "codex"
     _validate_startup(
         project_dir=project_dir,
         team_config=team_config,
@@ -632,7 +632,7 @@ async def start_agents(orch: Orchestrator):
     # (used by the auto-scaler stopper callback to cancel running agents)
     if not hasattr(orch, '_agent_tasks_by_id'):
         orch._agent_tasks_by_id = {}
-    cli_provider = getattr(orch.team_config, "cli_provider", "claude") or "claude"
+    cli_provider = getattr(orch.team_config, "cli_provider", "codex") or "codex"
     for role_name, role_config in orch.roles.items():
         # uses_worktree three-state wiring:
         #   True  -> force worktree on
@@ -877,11 +877,15 @@ async def async_main(args):
 
 def _cmd_init(args):
     """Initialize a new taskbrew project."""
-    from taskbrew.project_manager import _model_for_role
+    from taskbrew.model_catalog import role_model_setting, system_agent_setting
 
     project_dir = Path(args.dir).resolve()
     project_name = args.name or project_dir.name
-    pm_model = _model_for_role("pm", args.provider)
+    provider = getattr(args, "provider", None) or "codex"
+    pm_model_settings = role_model_setting("pm", provider)
+    pm_model = pm_model_settings["model"]
+    pm_reasoning = pm_model_settings.get("reasoning_effort")
+    system_agent = system_agent_setting(provider)
 
     print(f"Initializing taskbrew project: {project_name}")
     print(f"Directory: {project_dir}\n")
@@ -908,7 +912,11 @@ def _cmd_init(args):
             f'  max_instances: 1\n'
             f'  poll_interval_seconds: 5\n'
             f'  idle_timeout_minutes: 30\n\n'
-            f'cli_provider: "{args.provider}"\n\n'
+            f'cli_provider: "{provider}"\n\n'
+            f'system_agent:\n'
+            f'  provider: "{system_agent["provider"]}"\n'
+            f'  model: "{system_agent["model"]}"\n'
+            f'  reasoning_effort: "{system_agent["reasoning_effort"]}"\n\n'
             f'# Uncomment to add MCP tool servers:\n'
             f'# mcp_servers:\n'
             f'#   my-tool:\n'
@@ -937,6 +945,7 @@ def _cmd_init(args):
             '  You are the Project Manager. Break down user requests into\n'
             '  clear, actionable tasks and delegate to the appropriate agents.\n\n'
             f'model: {pm_model}\n'
+            f'reasoning_effort: {pm_reasoning}\n'
             'tools: [Read, Glob, Grep, Bash, mcp__task-tools__create_task]\n\n'
             'produces: [task_group, tech_design, implementation]\n'
             'accepts: [task_group]\n\n'
@@ -1244,7 +1253,7 @@ def cli_main():
     init_parser = sub.add_parser("init", help="Initialize a new project")
     init_parser.add_argument("--name", help="Project name")
     init_parser.add_argument("--dir", default=".", help="Project directory")
-    init_parser.add_argument("--provider", default="claude", choices=["claude", "gemini", "codex"],
+    init_parser.add_argument("--provider", default="codex", choices=["claude", "gemini", "codex"],
                              help="CLI provider")
 
     # doctor

@@ -31,7 +31,8 @@ system_prompt: |
     a budget per task.
 
 tools: [Read, Glob, Grep, Write, WebSearch, mcp__task-tools__create_task, mcp__task-tools__ask_question]
-model: claude-opus-4-6
+model: gpt-5.5
+reasoning_effort: xhigh
 produces: [tech_design, tech_debt, architecture_review]
 accepts: [tech_design, architecture_review, rejection]
 routes_to:

@@ -94,9 +94,9 @@ class ExecutionConfig:
 class SystemAgentConfig:
     """Per-project profile for TaskBrew-owned AI features."""
 
-    provider: str = "claude"
-    model: str = "claude-sonnet-4-6"
-    reasoning_effort: str | None = "high"
+    provider: str = "codex"
+    model: str = "gpt-5.5"
+    reasoning_effort: str | None = "xhigh"
 
 
 @dataclass
@@ -113,7 +113,7 @@ class TeamConfig:
     default_idle_timeout: int
     default_auto_scale: AutoScaleDefaults
     group_prefixes: dict[str, str] = field(default_factory=dict)
-    cli_provider: str = "claude"
+    cli_provider: str = "codex"
     system_agent: SystemAgentConfig = field(default_factory=SystemAgentConfig)
     auth_enabled: bool = False
     auth_tokens: list[str] = field(default_factory=list)
@@ -197,7 +197,7 @@ def load_team_config(path: Path) -> TeamConfig:
         ),
     )
 
-    cli_provider = data.get("cli_provider", "claude")
+    cli_provider = data.get("cli_provider", "codex")
     system_agent_raw = system_agent_setting(cli_provider, data.get("system_agent", {}))
 
     team_config = TeamConfig(

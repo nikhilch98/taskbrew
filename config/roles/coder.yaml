@@ -58,7 +58,8 @@ system_prompt: |
     a budget per task.
 
 tools: [Read, Write, Edit, Bash, Glob, Grep, mcp__task-tools__create_task, mcp__task-tools__ask_question]
-model: claude-sonnet-4-6
+model: gpt-5.5
+reasoning_effort: xhigh
 produces: [implementation, bug_fix, revision]
 accepts: [implementation, bug_fix, revision]
 routes_to: []

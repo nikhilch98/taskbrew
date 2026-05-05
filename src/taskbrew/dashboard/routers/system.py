@@ -162,7 +162,7 @@ async def create_project(body: CreateProjectBody):
         raise HTTPException(400, "Project name is required")
     if not directory:
         raise HTTPException(400, "Project directory is required")
-    cli_provider = getattr(body, "cli_provider", "claude") or "claude"
+    cli_provider = getattr(body, "cli_provider", "codex") or "codex"
     role_model_settings = {
         role: setting.model_dump(exclude_none=True)
         for role, setting in body.role_model_settings.items()
@@ -304,14 +304,14 @@ async def get_team_settings():
         }
     else:
         system_agent_profile = system_agent_setting(
-            getattr(tc, "cli_provider", "claude") or "claude",
+            getattr(tc, "cli_provider", "codex") or "codex",
             {},
         )
     return {
         "name": tc.team_name,
         "project_dir": pd,
         "db_path": "<redacted>" if redact_secrets else tc.db_path,
-        "cli_provider": getattr(tc, "cli_provider", "claude") or "claude",
+        "cli_provider": getattr(tc, "cli_provider", "codex") or "codex",
         "system_agent": system_agent_profile,
         "dashboard_host": tc.dashboard_host,
         "dashboard_port": tc.dashboard_port,
@@ -353,7 +353,7 @@ async def update_team_settings(body: UpdateTeamSettingsBody):
         tc_s.group_prefixes = body["group_prefixes"]
     if "system_agent" in body:
         resolved_system_agent = system_agent_setting(
-            getattr(tc_s, "cli_provider", "claude") or "claude",
+            getattr(tc_s, "cli_provider", "codex") or "codex",
             body["system_agent"],
         )
         tc_s.system_agent = SystemAgentConfig(

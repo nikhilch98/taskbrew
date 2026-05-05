@@ -46,7 +46,7 @@ def build_system_agent_config(
     api_url: str = "http://127.0.0.1:8420",
 ) -> AgentConfig:
     """Build the immutable admin agent config for project-wide AI features."""
-    cli_provider = getattr(team_config, "cli_provider", "claude") or "claude"
+    cli_provider = getattr(team_config, "cli_provider", "codex") or "codex"
     profile = system_agent_setting(
         cli_provider,
         _profile_dict(getattr(team_config, "system_agent", None)),
