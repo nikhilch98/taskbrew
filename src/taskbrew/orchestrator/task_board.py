@@ -1101,6 +1101,17 @@ class TaskBoard:
             (now, completed_task_id),
         )
 
+        review_dependents = await self._db.execute_fetchall(
+            "SELECT DISTINCT t.id FROM tasks t "
+            "JOIN task_dependencies d ON d.task_id = t.id "
+            "WHERE d.blocked_by = ? "
+            "AND t.status = 'review' "
+            "AND t.review_status = 'waiting_revision'",
+            (completed_task_id,),
+        )
+        for row in review_dependents:
+            await self.mark_review_ready_if_unblocked(row["id"])
+
         # Find tasks that were blocked and now have no remaining unresolved deps.
         newly_free = await self._db.execute_fetchall(
             "SELECT t.id, t.assigned_to, t.group_id FROM tasks t "

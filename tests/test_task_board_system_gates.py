@@ -1476,3 +1476,74 @@ async def test_add_dependency_rejects_waiting_review_target_for_rejected_blocker
     )
     assert deps == [{"resolved": 0}]
     assert event_bus.events == []
+
+
+async def test_completed_revision_makes_parent_review_approvable(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[original["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for approved implementation.",
+    )
+    claimed_original = await board.claim_task("coder", "coder-1")
+    assert claimed_original["id"] == original["id"]
+    await board.complete_task_with_output(original["id"], "Ready.")
+    revisions = await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    revision = revisions[0]
+    await board.apply_backlog_intake_decision(
+        revision["id"],
+        needs_review=False,
+        reason="Revision children complete directly.",
+    )
+    claimed_revision = await board.claim_task("coder", "coder-1")
+    assert claimed_revision["id"] == revision["id"]
+    event_bus.events.clear()
+
+    await board.complete_task(revision["id"])
+
+    parent_after_revision = await board.get_task(original["id"])
+    assert parent_after_revision["status"] == "review"
+    assert parent_after_revision["review_status"] == "pending"
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "blocked"
+    assert event_bus.events == []
+
+    approved = await board.approve_review_gate(
+        original["id"],
+        reason="Revision satisfies the review request.",
+    )
+
+    assert approved["status"] == "completed"
+    assert approved["review_status"] == "approved"
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "pending"
+    assert event_bus.events == [
+        (
+            "task.available",
+            {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
+        )
+    ]
