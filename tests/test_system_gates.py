@@ -99,6 +99,31 @@ class TwoCallerReviewAnalyzer(SystemGateAnalyzer):
         return ReviewResult(outcome="needs_revision", reason="Add the missing test.")
 
 
+class SuccessThenFailureReviewAnalyzer(SystemGateAnalyzer):
+    def __init__(self) -> None:
+        self.entered = 0
+        self.first_entered = asyncio.Event()
+        self.both_entered = asyncio.Event()
+        self.release_success = asyncio.Event()
+        self.release_failure = asyncio.Event()
+
+    async def decide_needs_review(self, context: dict) -> BacklogIntakeResult:
+        raise AssertionError("backlog analysis should not run")
+
+    async def review_completed_task(self, context: dict) -> ReviewResult:
+        self.entered += 1
+        call_number = self.entered
+        if call_number == 1:
+            self.first_entered.set()
+        if self.entered == 2:
+            self.both_entered.set()
+        if call_number == 1:
+            await self.release_success.wait()
+            return ReviewResult(outcome="needs_revision", reason="Add the missing test.")
+        await self.release_failure.wait()
+        raise RuntimeError("late review failure")
+
+
 def _agent_analyzer(text: str) -> AgentRunnerSystemGateAnalyzer:
     analyzer = AgentRunnerSystemGateAnalyzer.__new__(AgentRunnerSystemGateAnalyzer)
     analyzer._runner = FakeRunner(text)
@@ -445,6 +470,52 @@ async def test_overlapping_stale_review_retries_create_one_revision(
     assert analyzer.entered == 2
     assert len(revision_ids) == 1
     assert len(needs_revision_runs) == 1
+
+
+async def test_late_failing_stale_review_retry_does_not_override_revision(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = SuccessThenFailureReviewAnalyzer()
+    manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+
+    first = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    await analyzer.first_entered.wait()
+    second = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    await analyzer.both_entered.wait()
+    analyzer.release_success.set()
+
+    for _ in range(50):
+        updated = await board.get_task(review_task["id"])
+        if updated["review_status"] == "waiting_revision":
+            break
+        await asyncio.sleep(0.01)
+    analyzer.release_failure.set()
+
+    results = await asyncio.gather(first, second)
+
+    updated = await board.get_task(review_task["id"])
+    revision_ids = json.loads(updated["revision_task_ids"])
+    gate_runs = json.loads(updated["system_gate_runs"])
+    needs_revision_runs = [
+        run for run in gate_runs if run.get("outcome") == "needs_revision"
+    ]
+    failed_review_runs = [
+        run for run in gate_runs if run.get("outcome") == "failed_review"
+    ]
+    assert results == [True, False]
+    assert updated["review_status"] == "waiting_revision"
+    assert len(revision_ids) == 1
+    assert len(needs_revision_runs) == 1
+    assert failed_review_runs == []
 
 
 async def test_backlog_analyzer_exception_marks_intake_failed(board: TaskBoard):

@@ -845,6 +845,10 @@ class TaskBoard:
             raise ValueError(f"Task not found: {task_id}")
         if task["status"] != REVIEW_STATUS:
             return task
+        if task.get("review_status") not in ("pending", "running", "failed"):
+            return task
+        if await self._has_unresolved_dependencies(task_id):
+            return task
 
         now = _utcnow()
         runs = self._json_list(task.get("system_gate_runs"))
@@ -858,8 +862,13 @@ class TaskBoard:
         )
         rows = await self._db.execute_returning(
             "UPDATE tasks SET review_status = 'failed', system_gate_runs = ? "
-            "WHERE id = ? AND status = 'review' RETURNING *",
-            (json.dumps(runs), task_id),
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status IN ('pending', 'running', 'failed') "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") RETURNING *",
+            (json.dumps(runs), task_id, task_id),
         )
         if not rows:
             fresh = await self.get_task(task_id)
