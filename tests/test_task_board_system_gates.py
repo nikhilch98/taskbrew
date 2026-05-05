@@ -241,6 +241,114 @@ async def test_complete_task_routes_non_review_task_directly_to_completed(
     assert completed["review_status"] is None
 
 
+async def test_review_entry_does_not_release_dependents_until_approved(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=True,
+        reason="Touches shared state transitions.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for reviewed implementation.",
+    )
+    event_bus.events.clear()
+
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    completed = await board.complete_task_with_output(blocker["id"], "Ready.")
+
+    assert completed["status"] == "review"
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "blocked"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (dependent["id"],),
+    )
+    assert deps == [{"resolved": 0}]
+    assert event_bus.events == []
+
+    await board.approve_review_gate(blocker["id"], reason="Implementation passes review.")
+
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "pending"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (dependent["id"],),
+    )
+    assert deps == [{"resolved": 1}]
+    assert event_bus.events == [
+        (
+            "task.available",
+            {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
+        )
+    ]
+
+
+async def test_review_rejection_cascades_to_blocked_dependent(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=True,
+        reason="Touches shared state transitions.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for reviewed implementation.",
+    )
+    event_bus.events.clear()
+
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    completed = await board.complete_task(blocker["id"])
+    assert completed["status"] == "review"
+
+    rejected = await board.reject_review_gate(
+        blocker["id"],
+        reason="Review found the foundation unsafe.",
+    )
+
+    assert rejected["status"] == "rejected"
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "failed"
+    assert stored_dependent["status"] != "pending"
+    assert event_bus.events == []
+
+
 async def test_approve_review_gate_completes_review_task(board: TaskBoard):
     group = await board.create_group(title="Feature", created_by="pm")
     task = await board.create_task(

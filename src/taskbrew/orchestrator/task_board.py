@@ -603,8 +603,9 @@ class TaskBoard:
                 existing["status"],
             )
             return existing
-        await self._resolve_dependencies(task_id)
-        await self._check_group_completion(task_id)
+        if target_status == "completed":
+            await self._resolve_dependencies(task_id)
+            await self._check_group_completion(task_id)
         logger.info("Task %s completed", task_id)
         return rows[0]
 
@@ -649,8 +650,9 @@ class TaskBoard:
                 existing["status"],
             )
             return existing
-        await self._resolve_dependencies(task_id)
-        await self._check_group_completion(task_id)
+        if target_status == "completed":
+            await self._resolve_dependencies(task_id)
+            await self._check_group_completion(task_id)
         return rows[0]
 
     async def approve_review_gate(self, task_id: str, *, reason: str) -> dict:
