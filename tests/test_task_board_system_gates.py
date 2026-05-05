@@ -118,6 +118,8 @@ async def test_create_blocked_task_starts_in_backlog_with_blocked_intent(
 
     assert blocked["status"] == "backlog"
     assert blocked["intended_status"] == "blocked"
+    assert blocked["revision_task_ids"] == []
+    assert blocked["system_gate_runs"] == []
     deps = await board._db.execute_fetchall(
         "SELECT blocked_by, resolved FROM task_dependencies WHERE task_id = ?",
         (blocked["id"],),
@@ -578,3 +580,62 @@ async def test_create_task_returns_blocked_after_gap_intake_with_unresolved_depe
 
     assert dependent["status"] == "blocked"
     assert stored["status"] == "blocked"
+
+
+async def test_create_task_reconciles_blocker_completed_during_dependency_insert(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Completes during insert",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    event_bus.events.clear()
+    original_execute = board._db.execute
+    completed_blocker = False
+
+    async def execute_with_completion_race(sql: str, params: tuple = ()) -> None:
+        nonlocal completed_blocker
+        if sql.startswith("INSERT INTO task_dependencies") and not completed_blocker:
+            completed_blocker = True
+            await board.complete_task(blocker["id"])
+        await original_execute(sql, params)
+
+    monkeypatch.setattr(board._db, "execute", execute_with_completion_race)
+
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Dependent after completion race",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    updated = await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Dependency completed during creation.",
+    )
+
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (dependent["id"],),
+    )
+    assert deps == [{"resolved": 1}]
+    assert updated["status"] == "pending"
+    assert event_bus.events == [
+        (
+            "task.available",
+            {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
+        )
+    ]

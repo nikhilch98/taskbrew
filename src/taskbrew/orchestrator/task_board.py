@@ -298,6 +298,11 @@ class TaskBoard:
             fresh = reconciled or await self.get_task(task_id)
             if fresh:
                 task.update(fresh)
+        return self._normalize_task_return(task)
+
+    def _normalize_task_return(self, task: dict) -> dict:
+        task["revision_task_ids"] = self._json_list(task.get("revision_task_ids"))
+        task["system_gate_runs"] = self._json_list(task.get("system_gate_runs"))
         return task
 
     def _json_list(self, value) -> list:
@@ -336,6 +341,14 @@ class TaskBoard:
         return "pending" if intended_status in ("pending", "blocked") else intended_status
 
     async def _reconcile_dependencies_after_create(self, task_id: str) -> dict | None:
+        now = _utcnow()
+        await self._db.execute(
+            "UPDATE task_dependencies SET resolved = 1, resolved_at = ? "
+            "WHERE task_id = ? AND resolved = 0 "
+            "AND blocked_by IN (SELECT id FROM tasks WHERE status = 'completed')",
+            (now, task_id),
+        )
+
         failed_blocker = await self._db.execute_fetchone(
             "SELECT 1 FROM task_dependencies d "
             "JOIN tasks blocker ON blocker.id = d.blocked_by "
