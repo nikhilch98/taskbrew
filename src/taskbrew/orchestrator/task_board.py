@@ -25,6 +25,8 @@ _PRIORITY_ORDER = {
     "low": 3,
 }
 
+# Visible Kanban column order. Existing cancelled tasks remain terminal,
+# but are not represented as a separate visible board column.
 BOARD_STATUSES = (
     "backlog",
     "pending",
