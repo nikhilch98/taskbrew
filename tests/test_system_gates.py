@@ -126,6 +126,27 @@ class SuccessThenFailureReviewAnalyzer(SystemGateAnalyzer):
         raise RuntimeError("late review failure")
 
 
+class BlockingFailureAnalyzer(SystemGateAnalyzer):
+    def __init__(self) -> None:
+        self.backlog_entered = 0
+        self.review_entered = 0
+        self.first_backlog_entered = asyncio.Event()
+        self.first_review_entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def decide_needs_review(self, context: dict) -> BacklogIntakeResult:
+        self.backlog_entered += 1
+        self.first_backlog_entered.set()
+        await self.release.wait()
+        raise RuntimeError("backlog crashed")
+
+    async def review_completed_task(self, context: dict) -> ReviewResult:
+        self.review_entered += 1
+        self.first_review_entered.set()
+        await self.release.wait()
+        raise RuntimeError("review crashed")
+
+
 def _agent_analyzer(text: str) -> AgentRunnerSystemGateAnalyzer:
     analyzer = AgentRunnerSystemGateAnalyzer.__new__(AgentRunnerSystemGateAnalyzer)
     analyzer._runner = FakeRunner(text)
@@ -843,6 +864,104 @@ async def test_two_managers_share_review_gate_lock(board: TaskBoard):
     assert analyzer.entered == 1
     assert len(revision_ids) == 1
     assert len(needs_revision_runs) == 1
+
+
+async def test_queued_review_retry_after_failure_does_not_reenter_analyzer(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = BlockingFailureAnalyzer()
+    first_manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+    second_manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+
+    first = asyncio.create_task(first_manager.process_review_task(review_task["id"]))
+    await analyzer.first_review_entered.wait()
+    second = asyncio.create_task(second_manager.process_review_task(review_task["id"]))
+    await asyncio.sleep(0)
+    analyzer.release.set()
+
+    results = await asyncio.gather(first, second)
+
+    updated = await board.get_task(review_task["id"])
+    assert results == [False, False]
+    assert analyzer.review_entered == 1
+    assert updated["review_status"] == "failed"
+
+    retry_analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Retry later.")]
+    )
+    retry_manager = SystemGateManager(
+        board=board,
+        analyzer=retry_analyzer,
+        retry_cooldown_seconds=0,
+    )
+
+    assert await retry_manager.process_review_task(review_task["id"]) is True
+    assert len(retry_analyzer.review_contexts) == 1
+
+
+async def test_queued_backlog_retry_after_failure_does_not_reenter_analyzer(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Fail backlog once",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET backlog_intake_status = 'running' WHERE id = ?",
+        (task["id"],),
+    )
+    analyzer = BlockingFailureAnalyzer()
+    first_manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+    second_manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+
+    first = asyncio.create_task(first_manager.process_backlog_task(task["id"]))
+    await analyzer.first_backlog_entered.wait()
+    second = asyncio.create_task(second_manager.process_backlog_task(task["id"]))
+    await asyncio.sleep(0)
+    analyzer.release.set()
+
+    results = await asyncio.gather(first, second)
+
+    updated = await board.get_task(task["id"])
+    assert results == [False, False]
+    assert analyzer.backlog_entered == 1
+    assert updated["backlog_intake_status"] == "failed"
+
+    retry_analyzer = FakeAnalyzer(
+        backlog_results=[BacklogIntakeResult(needs_review=False, reason="Retry later.")]
+    )
+    retry_manager = SystemGateManager(
+        board=board,
+        analyzer=retry_analyzer,
+        retry_cooldown_seconds=0,
+    )
+
+    assert await retry_manager.process_backlog_task(task["id"]) is True
+    assert len(retry_analyzer.backlog_contexts) == 1
 
 
 async def test_create_review_revision_tasks_rolls_back_empty_transition(

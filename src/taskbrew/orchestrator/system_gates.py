@@ -7,6 +7,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any
 
 from taskbrew.agents.base import AgentRunner
@@ -15,6 +16,9 @@ from taskbrew.orchestrator.task_board import BACKLOG_STATUS, REVIEW_STATUS, Task
 
 logger = logging.getLogger(__name__)
 _GATE_LOCKS: dict[tuple[str, str], tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+_GATE_RECENT_ATTEMPTS: dict[
+    tuple[str, str], tuple[asyncio.AbstractEventLoop, float]
+] = {}
 
 
 def _utcnow() -> str:
@@ -214,12 +218,14 @@ class SystemGateManager:
         interval_seconds: float = 5.0,
         batch_size: int = 10,
         running_timeout_seconds: float = 300.0,
+        retry_cooldown_seconds: float = 1.0,
     ) -> None:
         self._board = board
         self._analyzer = analyzer
         self._interval_seconds = interval_seconds
         self._batch_size = batch_size
         self._running_timeout_seconds = running_timeout_seconds
+        self._retry_cooldown_seconds = retry_cooldown_seconds
         self._stop_requested = False
 
     async def _backlog_context(self, task: dict) -> dict:
@@ -247,6 +253,10 @@ class SystemGateManager:
         if task is None or task["status"] != BACKLOG_STATUS:
             return False
         backlog_status = task.get("backlog_intake_status") or "pending"
+        if backlog_status == "failed" and self._recent_attempt_blocks_retry(
+            "backlog", task_id
+        ):
+            return False
         include_running = (
             backlog_status == "running" and self._is_running_stale(task, "backlog")
         )
@@ -268,6 +278,7 @@ class SystemGateManager:
         if not rows:
             return False
 
+        self._mark_gate_attempt("backlog", task_id)
         await self._append_running_gate_run(task_id, "backlog")
         running_task = rows[0]
         try:
@@ -288,6 +299,8 @@ class SystemGateManager:
             logger.exception("Backlog intake failed for task %s", task_id)
             await self._board.mark_backlog_intake_failed(task_id, str(exc))
             return False
+        finally:
+            self._mark_gate_attempt("backlog", task_id)
         return True
 
     async def process_review_task(self, task_id: str) -> bool:
@@ -301,6 +314,10 @@ class SystemGateManager:
         if await self._board._has_unresolved_dependencies(task_id):
             return False
         review_status = task.get("review_status") or "pending"
+        if review_status == "failed" and self._recent_attempt_blocks_retry(
+            "review", task_id
+        ):
+            return False
         include_running = (
             review_status == "running" and self._is_running_stale(task, "review")
         )
@@ -325,6 +342,7 @@ class SystemGateManager:
         if not rows:
             return False
 
+        self._mark_gate_attempt("review", task_id)
         await self._append_running_gate_run(task_id, "review")
         running_task = rows[0]
         try:
@@ -339,6 +357,8 @@ class SystemGateManager:
             logger.exception("Review gate failed for task %s", task_id)
             await self._board.mark_review_failed(task_id, str(exc))
             return False
+        finally:
+            self._mark_gate_attempt("review", task_id)
         return True
 
     async def process_pending_once(self) -> dict[str, int]:
@@ -493,6 +513,23 @@ class SystemGateManager:
             _GATE_LOCKS[key] = (loop, lock)
             return lock
         return entry[1]
+
+    def _mark_gate_attempt(self, gate: str, task_id: str) -> None:
+        _GATE_RECENT_ATTEMPTS[(gate, task_id)] = (
+            asyncio.get_running_loop(),
+            monotonic(),
+        )
+
+    def _recent_attempt_blocks_retry(self, gate: str, task_id: str) -> bool:
+        if self._retry_cooldown_seconds <= 0:
+            return False
+        entry = _GATE_RECENT_ATTEMPTS.get((gate, task_id))
+        if entry is None:
+            return False
+        loop, attempted_at = entry
+        if loop is not asyncio.get_running_loop():
+            return False
+        return monotonic() - attempted_at < self._retry_cooldown_seconds
 
     def _is_running_stale(self, task: dict, gate: str) -> bool:
         if self._running_timeout_seconds <= 0:
