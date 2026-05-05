@@ -1,3 +1,6 @@
+# Optional role. Copy this file to `verifier.yaml` to add a dedicated
+# verifier back to a project that wants human-like QA outside the default
+# system review gate.
 role: verifier
 max_turns: 50
 display_name: "Verifier"

@@ -938,7 +938,7 @@ def _cmd_init(args):
             '  clear, actionable tasks and delegate to the appropriate agents.\n\n'
             f'model: {pm_model}\n'
             'tools: [Read, Glob, Grep, Bash, mcp__task-tools__create_task]\n\n'
-            'produces: [task_group, tech_design, implementation, verification]\n'
+            'produces: [task_group, tech_design, implementation]\n'
             'accepts: [task_group]\n\n'
             'routing_mode: open\n'
             'can_create_groups: true\n'

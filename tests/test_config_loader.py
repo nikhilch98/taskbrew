@@ -504,6 +504,15 @@ def test_load_team_config_default_mcp_servers(tmp_path):
     assert cfg.mcp_servers["intelligence-tools"].builtin is True
 
 
+def test_repository_default_roles_exclude_verifier() -> None:
+    roles_dir = Path(__file__).resolve().parents[1] / "config" / "roles"
+
+    assert not (roles_dir / "verifier.yaml").exists()
+    assert (roles_dir / "pm.yaml").exists()
+    assert (roles_dir / "architect.yaml").exists()
+    assert (roles_dir / "coder.yaml").exists()
+
+
 def test_load_team_config_expands_tilde(tmp_path):
     """DB path with ~ should be expanded to full home directory."""
     team_yaml = tmp_path / "team.yaml"

@@ -236,14 +236,14 @@ class TestScaffolding:
             data = yaml.safe_load(f)
         assert data["team_name"] == "Named Project"
 
-    def test_with_defaults_creates_four_role_files(
+    def test_with_defaults_creates_core_role_files_without_verifier(
         self, pm: ProjectManager, tmp_path: Path
     ):
         d = tmp_path / "defaults"
         pm.create_project("Defaults", str(d), with_defaults=True)
         roles_dir = d / "config" / "roles"
         role_files = sorted(p.stem for p in roles_dir.glob("*.yaml"))
-        assert role_files == ["architect", "coder", "pm", "verifier"]
+        assert role_files == ["architect", "coder", "pm"]
 
     def test_without_defaults_leaves_roles_empty(
         self, pm: ProjectManager, tmp_path: Path
@@ -384,15 +384,28 @@ class TestScaffolding:
         targets = [r["role"] for r in data["routes_to"]]
         assert "architect" in targets
 
-    def test_coder_routes_to_verifier(
+    def test_coder_has_no_default_downstream_routes(
         self, pm: ProjectManager, tmp_path: Path
     ):
         d = tmp_path / "routing2"
         pm.create_project("Routing2", str(d))
         with open(d / "config" / "roles" / "coder.yaml") as f:
             data = yaml.safe_load(f)
-        targets = [r["role"] for r in data["routes_to"]]
-        assert "verifier" in targets
+        assert data["routes_to"] == []
+
+    def test_coder_prompt_owns_task_testing_before_system_review(
+        self, pm: ProjectManager, tmp_path: Path
+    ):
+        d = tmp_path / "coder-quality"
+        pm.create_project("Coder Quality", str(d))
+        with open(d / "config" / "roles" / "coder.yaml") as f:
+            data = yaml.safe_load(f)
+
+        prompt = data["system_prompt"]
+        assert "Write or update targeted tests" in prompt
+        assert "Verify the task acceptance criteria" in prompt
+        assert "system review gate" in prompt
+        assert "assigned_to: \"verifier\"" not in prompt
 
 
 # ---------------------------------------------------------------------------

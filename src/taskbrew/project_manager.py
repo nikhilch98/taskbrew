@@ -169,6 +169,7 @@ _DEFAULT_ROLES: dict[str, dict] = {
             '- Set task_type: "implementation" for new code, "bug_fix" for fixes\n'
             "- Use blocked_by for true data dependencies only — do NOT chain tasks just for ordering\n"
             "- Include: technical approach, specific files to modify, acceptance criteria\n"
+            "- Include expected tests or verification commands for each coder task\n"
         ),
         "tools": ["Read", "Glob", "Grep", "Write", "WebSearch", "mcp__task-tools__create_task"],
         "model": "claude-opus-4-6",
@@ -198,17 +199,12 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "2. Write clean, tested code on feature branches\n"
             "3. Make atomic commits with clear messages\n"
             "\n"
-            "After implementing, assess the scope of your changes:\n"
-            "\n"
-            "**Small changes (< 20 lines changed, trivial fixes):**\n"
-            "- Run the existing tests yourself to verify nothing is broken\n"
-            "- If tests pass, your task is DONE. Do NOT create downstream tasks\n"
-            "- Examples: fixing a typo, adjusting a constant, adding a CSS rule\n"
-            "\n"
-            "**Substantial changes (20+ lines, new features, logic changes):**\n"
-            '- Create ONE verification task assigned to "verifier" with task_type "verification"\n'
-            "- Include the branch name, files changed, and a summary of what to verify\n"
-            "- The verifier handles both QA testing AND code review in a single pass\n"
+            "Quality and self-verification responsibilities:\n"
+            "- Write or update targeted tests for the behavior you changed when the project has a test pattern\n"
+            "- Run the relevant build, tests, and lint checks yourself before completing the task\n"
+            "- Verify the task acceptance criteria from the design or parent task before marking work complete\n"
+            "- Summarize the checks you ran and any skipped checks with reasons in your completion output\n"
+            "- Do NOT create verifier tasks in the default pipeline. Completed work is reviewed by the TaskBrew system review gate when the task requires review.\n"
             "\n"
             "Git branching rules:\n"
             "- ALWAYS branch from the latest `main` for new tasks\n"
@@ -219,56 +215,11 @@ _DEFAULT_ROLES: dict[str, dict] = {
         "model": "claude-sonnet-4-6",
         "produces": ["implementation", "bug_fix", "revision"],
         "accepts": ["implementation", "bug_fix", "revision"],
-        "routes_to": [
-            {"role": "verifier", "task_types": ["verification"]},
-        ],
+        "routes_to": [],
         "can_create_groups": False,
         "max_instances": 3,
         "auto_scale": {"enabled": True, "scale_up_threshold": 3, "scale_down_idle": 15},
         "context_includes": ["parent_artifact", "root_artifact", "sibling_summary", "rejection_history"],
-    },
-    "verifier": {
-        "role": "verifier",
-        "max_turns": 50,
-        "display_name": "Verifier",
-        "prefix": "VR",
-        "color": "#06b6d4",
-        "emoji": "\u2705",
-        "system_prompt": (
-            "You are a Verifier on an AI development team. You perform BOTH QA testing AND code review in a single pass.\n"
-            "\n"
-            "Your workflow:\n"
-            "1. Read the implementation diff (git diff main..{branch})\n"
-            "2. Check the code for quality, security, and correctness\n"
-            "3. Run existing tests to verify nothing is broken\n"
-            "4. Write targeted tests for new functionality if needed\n"
-            "5. Verify acceptance criteria from the design document\n"
-            "\n"
-            "Decision outcomes:\n"
-            "- APPROVE: Code is correct, tests pass, quality is good. State APPROVE clearly; TaskBrew will merge the approved branch into main.\n"
-            "- MINOR ISSUES: Small problems you can fix yourself (naming, formatting, missing edge case). Fix them, commit, then state APPROVE clearly.\n"
-            "- REJECT (needs revision): Substantial logic or design problems. Create ONE revision task with assigned_to: \"coder\", task_type: \"revision\" and include specific feedback. Only for real problems, not style preferences\n"
-            "- REJECT (design flaw): The approach itself is wrong. Create ONE rejection task with assigned_to: \"architect\", task_type: \"rejection\"\n"
-            "\n"
-            "Efficiency rules:\n"
-            "- Fix minor issues yourself instead of creating revision tasks\n"
-            "- Only create downstream tasks for substantial problems\n"
-            "- Before approving: verify git log main..{branch} contains ONLY commits for this task\n"
-            "- Do NOT merge into main or delete branches yourself; TaskBrew brokers integration after your approval.\n"
-            "- After finishing, use list_tasks to check for other pending verification tasks in the same group\n"
-        ),
-        "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "mcp__task-tools__create_task", "mcp__task-tools__list_tasks"],
-        "model": "claude-sonnet-4-6",
-        "produces": ["verification", "approval", "rejection"],
-        "accepts": ["verification"],
-        "routes_to": [
-            {"role": "coder", "task_types": ["revision", "bug_fix"]},
-            {"role": "architect", "task_types": ["rejection"]},
-        ],
-        "can_create_groups": False,
-        "max_instances": 2,
-        "auto_scale": {"enabled": True, "scale_up_threshold": 3, "scale_down_idle": 15},
-        "context_includes": ["parent_artifact", "root_artifact", "sibling_summary"],
     },
 }
 
@@ -360,7 +311,7 @@ class ProjectManager:
         directory:
             Absolute path to the project directory.
         with_defaults:
-            If *True* (default), write the four default role YAML files.
+            If *True* (default), write the three default role YAML files.
 
         Returns
         -------
