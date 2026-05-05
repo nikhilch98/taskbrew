@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -185,6 +186,18 @@ async def _create_review_task(board: TaskBoard, output: str = "Ready.") -> dict:
     return await board.complete_task_with_output(task["id"], output)
 
 
+def _running_gate_runs(gate: str) -> str:
+    return json.dumps(
+        [
+            {
+                "gate": gate,
+                "outcome": "running",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
+    )
+
+
 async def test_process_pending_once_processes_one_backlog_task_once(
     board: TaskBoard,
 ):
@@ -311,8 +324,9 @@ async def test_process_pending_once_skips_active_running_backlog_task(
         assigned_to="coder",
     )
     await board._db.execute(
-        "UPDATE tasks SET backlog_intake_status = 'running' WHERE id = ?",
-        (task["id"],),
+        "UPDATE tasks SET backlog_intake_status = 'running', system_gate_runs = ? "
+        "WHERE id = ?",
+        (_running_gate_runs("backlog"), task["id"]),
     )
     analyzer = FakeAnalyzer(
         backlog_results=[
@@ -328,6 +342,69 @@ async def test_process_pending_once_skips_active_running_backlog_task(
     updated = await board.get_task(task["id"])
     assert updated["status"] == "backlog"
     assert updated["backlog_intake_status"] == "running"
+
+
+async def test_process_pending_once_retries_running_backlog_without_audit(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Retry unaudited running backlog",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET backlog_intake_status = 'running' WHERE id = ?",
+        (task["id"],),
+    )
+    analyzer = FakeAnalyzer(
+        backlog_results=[BacklogIntakeResult(needs_review=False, reason="Retry.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 1, "review": 0}
+    updated = await board.get_task(task["id"])
+    assert updated["status"] == "pending"
+    assert updated["backlog_intake_status"] == "completed"
+
+
+async def test_active_running_backlog_does_not_starve_pending_backlog(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    active = await board.create_task(
+        group_id=group["id"],
+        title="Active running backlog",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    pending = await board.create_task(
+        group_id=group["id"],
+        title="Pending backlog",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET backlog_intake_status = 'running', system_gate_runs = ? "
+        "WHERE id = ?",
+        (_running_gate_runs("backlog"), active["id"]),
+    )
+    analyzer = FakeAnalyzer(
+        backlog_results=[BacklogIntakeResult(needs_review=False, reason="Pending.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer, batch_size=1)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 1, "review": 0}
+    active_updated = await board.get_task(active["id"])
+    pending_updated = await board.get_task(pending["id"])
+    assert active_updated["status"] == "backlog"
+    assert active_updated["backlog_intake_status"] == "running"
+    assert pending_updated["status"] == "pending"
 
 
 async def test_process_pending_once_retries_stale_running_backlog_task(
@@ -369,8 +446,9 @@ async def test_process_pending_once_retries_stale_running_backlog_task(
 async def test_process_pending_once_skips_active_running_review_task(board: TaskBoard):
     review_task = await _create_review_task(board)
     await board._db.execute(
-        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
-        (review_task["id"],),
+        "UPDATE tasks SET review_status = 'running', system_gate_runs = ? "
+        "WHERE id = ?",
+        (_running_gate_runs("review"), review_task["id"]),
     )
     analyzer = FakeAnalyzer(
         review_results=[ReviewResult(outcome="approved", reason="Must not be consumed.")]
@@ -384,6 +462,53 @@ async def test_process_pending_once_skips_active_running_review_task(board: Task
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "review"
     assert updated["review_status"] == "running"
+
+
+async def test_process_pending_once_retries_running_review_without_audit(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Retry.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 1}
+    updated = await board.get_task(review_task["id"])
+    assert updated["status"] == "completed"
+    assert updated["review_status"] == "approved"
+
+
+async def test_active_running_review_does_not_starve_pending_review(
+    board: TaskBoard,
+):
+    active = await _create_review_task(board)
+    pending = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running', system_gate_runs = ? "
+        "WHERE id = ?",
+        (_running_gate_runs("review"), active["id"]),
+    )
+    analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Pending.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer, batch_size=1)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 1}
+    active_updated = await board.get_task(active["id"])
+    pending_updated = await board.get_task(pending["id"])
+    assert active_updated["status"] == "review"
+    assert active_updated["review_status"] == "running"
+    assert pending_updated["status"] == "completed"
+    assert pending_updated["review_status"] == "approved"
 
 
 async def test_process_pending_once_retries_stale_running_review_task(

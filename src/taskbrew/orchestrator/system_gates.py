@@ -337,13 +337,14 @@ class SystemGateManager:
         if self._batch_size <= 0:
             return counts
 
+        candidate_limit = self._candidate_limit()
         backlog_rows = await self._board._db.execute_fetchall(
             "SELECT id, backlog_intake_status, system_gate_runs "
             "FROM tasks WHERE status = 'backlog' "
             "AND COALESCE(backlog_intake_status, 'pending') "
             "IN ('pending', 'failed', 'running') "
             "ORDER BY created_at LIMIT ?",
-            (self._batch_size,),
+            (candidate_limit,),
         )
         for row in backlog_rows:
             if (
@@ -353,6 +354,8 @@ class SystemGateManager:
                 continue
             if await self.process_backlog_task(row["id"]):
                 counts["backlog"] += 1
+            if counts["backlog"] >= self._batch_size:
+                break
 
         remaining = self._batch_size - counts["backlog"]
         if remaining <= 0:
@@ -368,7 +371,7 @@ class SystemGateManager:
             "  WHERE task_id = tasks.id AND resolved = 0"
             ") "
             "ORDER BY created_at LIMIT ?",
-            (remaining,),
+            (self._candidate_limit(remaining),),
         )
         for row in review_rows:
             if (
@@ -378,6 +381,8 @@ class SystemGateManager:
                 continue
             if await self.process_review_task(row["id"]):
                 counts["review"] += 1
+            if counts["review"] >= remaining:
+                break
 
         return counts
 
@@ -454,10 +459,14 @@ class SystemGateManager:
             return True
         started_at = self._latest_running_started_at(task, gate)
         if started_at is None:
-            return False
+            return True
         return (
             datetime.now(timezone.utc) - started_at
         ).total_seconds() >= self._running_timeout_seconds
+
+    def _candidate_limit(self, batch_size: int | None = None) -> int:
+        size = self._batch_size if batch_size is None else batch_size
+        return max(size * 3, size + 20)
 
     def _latest_running_started_at(self, task: dict, gate: str) -> datetime | None:
         runs = self._board._json_list(task.get("system_gate_runs"))
