@@ -295,8 +295,9 @@ class TaskBoard:
         }
         if blocked_by:
             reconciled = await self._reconcile_dependencies_after_create(task_id)
-            if reconciled:
-                task.update(reconciled)
+            fresh = reconciled or await self.get_task(task_id)
+            if fresh:
+                task.update(fresh)
         return task
 
     def _json_list(self, value) -> list:

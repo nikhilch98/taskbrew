@@ -537,3 +537,41 @@ async def test_dependent_created_after_blocker_failed_is_failed(board: TaskBoard
 
     assert dependent["status"] == "failed"
     assert await board.claim_task("tester", "tester-1") is None
+
+
+async def test_create_task_returns_blocked_after_gap_intake_with_unresolved_dependency(
+    board: TaskBoard,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Unfinished blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    original_execute = board._db.execute
+
+    async def execute_with_gap_intake(sql: str, params: tuple = ()) -> None:
+        await original_execute(sql, params)
+        if sql.startswith("INSERT INTO tasks ") and len(params) >= 4:
+            if params[3] == "Unresolved gap dependent":
+                await board.apply_backlog_intake_decision(
+                    params[0],
+                    needs_review=False,
+                    reason="Intake observed dependency creation gap.",
+                )
+
+    monkeypatch.setattr(board._db, "execute", execute_with_gap_intake)
+
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Unresolved gap dependent",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    stored = await board.get_task(dependent["id"])
+
+    assert dependent["status"] == "blocked"
+    assert stored["status"] == "blocked"
