@@ -712,16 +712,29 @@ class TaskBoard:
 
     async def reject_review_gate(self, task_id: str, *, reason: str) -> dict:
         """Reject a task waiting at the system review gate."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != REVIEW_STATUS:
+            return task
+        if task.get("review_status") not in ("pending", "running"):
+            return task
+        if await self._has_unresolved_dependencies(task_id):
+            return task
+
         now = _utcnow()
         rows = await self._db.execute_returning(
             "UPDATE tasks SET status = 'rejected', review_status = 'rejected', "
-            "rejection_reason = ? WHERE id = ? AND status = 'review' RETURNING *",
-            (reason, task_id),
+            "rejection_reason = ? WHERE id = ? AND status = 'review' "
+            "AND review_status IN ('pending', 'running') "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") RETURNING *",
+            (reason, task_id, task_id),
         )
         if not rows:
             task = await self.get_task(task_id)
-            if task is None:
-                raise ValueError(f"Task not found: {task_id}")
             return task
         await self._append_system_gate_run(
             task_id,

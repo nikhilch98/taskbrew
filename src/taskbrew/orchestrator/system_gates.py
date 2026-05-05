@@ -64,7 +64,16 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end < start:
-        raise SystemGateAnalysisError("Agent response did not contain a JSON object")
+        stripped = text.strip()
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise SystemGateAnalysisError(
+                "Agent response did not contain a JSON object"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise SystemGateAnalysisError("Agent response JSON must be an object")
+        return parsed
 
     raw = text[start : end + 1]
     try:
@@ -229,7 +238,8 @@ class SystemGateManager:
         rows = await self._board._db.execute_returning(
             "UPDATE tasks SET backlog_intake_status = 'running' "
             "WHERE id = ? AND status = 'backlog' "
-            "AND COALESCE(backlog_intake_status, 'pending') IN ('pending', 'failed') "
+            "AND COALESCE(backlog_intake_status, 'pending') "
+            "IN ('pending', 'failed', 'running') "
             "RETURNING *",
             (task_id,),
         )
@@ -248,6 +258,9 @@ class SystemGateManager:
                 signals=result.signals,
                 confidence=result.confidence,
             )
+        except asyncio.CancelledError as exc:
+            await self._board.mark_backlog_intake_failed(task_id, str(exc))
+            raise
         except Exception as exc:
             logger.exception("Backlog intake failed for task %s", task_id)
             await self._board.mark_backlog_intake_failed(task_id, str(exc))
@@ -264,7 +277,8 @@ class SystemGateManager:
         rows = await self._board._db.execute_returning(
             "UPDATE tasks SET review_status = 'running' "
             "WHERE id = ? AND status = 'review' "
-            "AND COALESCE(review_status, 'pending') IN ('pending', 'failed') "
+            "AND COALESCE(review_status, 'pending') "
+            "IN ('pending', 'failed', 'running') "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM task_dependencies "
             "  WHERE task_id = ? AND resolved = 0"
@@ -280,6 +294,9 @@ class SystemGateManager:
                 await self._review_context(running_task)
             )
             await self._handle_review_result(task_id, result)
+        except asyncio.CancelledError as exc:
+            await self._board.mark_review_failed(task_id, str(exc))
+            raise
         except Exception as exc:
             logger.exception("Review gate failed for task %s", task_id)
             await self._board.mark_review_failed(task_id, str(exc))
@@ -293,7 +310,8 @@ class SystemGateManager:
 
         backlog_rows = await self._board._db.execute_fetchall(
             "SELECT id FROM tasks WHERE status = 'backlog' "
-            "AND COALESCE(backlog_intake_status, 'pending') IN ('pending', 'failed') "
+            "AND COALESCE(backlog_intake_status, 'pending') "
+            "IN ('pending', 'failed', 'running') "
             "ORDER BY created_at LIMIT ?",
             (self._batch_size,),
         )
@@ -307,7 +325,8 @@ class SystemGateManager:
 
         review_rows = await self._board._db.execute_fetchall(
             "SELECT id FROM tasks WHERE status = 'review' "
-            "AND COALESCE(review_status, 'pending') IN ('pending', 'failed') "
+            "AND COALESCE(review_status, 'pending') "
+            "IN ('pending', 'failed', 'running') "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM task_dependencies "
             "  WHERE task_id = tasks.id AND resolved = 0"

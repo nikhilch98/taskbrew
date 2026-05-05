@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
 from taskbrew.orchestrator.database import Database
 from taskbrew.orchestrator.system_gates import (
+    AgentRunnerSystemGateAnalyzer,
     BacklogIntakeResult,
     RevisionRequest,
     ReviewResult,
+    SystemGateAnalysisError,
     SystemGateAnalyzer,
     SystemGateManager,
+    _extract_json_object,
 )
 from taskbrew.orchestrator.task_board import TaskBoard
 
@@ -39,11 +43,34 @@ class FakeAnalyzer(SystemGateAnalyzer):
 
     async def decide_needs_review(self, context: dict) -> BacklogIntakeResult:
         self.backlog_contexts.append(context)
-        return self.backlog_results.pop(0)
+        result = self.backlog_results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
     async def review_completed_task(self, context: dict) -> ReviewResult:
         self.review_contexts.append(context)
-        return self.review_results.pop(0)
+        result = self.review_results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+
+class FakeRunner:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.calls: list[dict] = []
+
+    async def run(self, *, prompt: str, cwd: str | None = None) -> str:
+        self.calls.append({"prompt": prompt, "cwd": cwd})
+        return self.text
+
+
+def _agent_analyzer(text: str) -> AgentRunnerSystemGateAnalyzer:
+    analyzer = AgentRunnerSystemGateAnalyzer.__new__(AgentRunnerSystemGateAnalyzer)
+    analyzer._runner = FakeRunner(text)
+    analyzer._project_dir = "/tmp/project"
+    return analyzer
 
 
 @pytest.fixture
@@ -213,3 +240,228 @@ async def test_process_pending_once_defaults_revision_task_when_missing(
     revision = await board.get_task(revision_ids[0])
     assert revision["title"] == f"Revision 1 for {review_task['id']}"
     assert revision["description"] == "Fix the gap."
+
+
+async def test_process_pending_once_retries_running_backlog_task(board: TaskBoard):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Retry stranded backlog",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET backlog_intake_status = 'running' WHERE id = ?",
+        (task["id"],),
+    )
+    analyzer = FakeAnalyzer(
+        backlog_results=[
+            BacklogIntakeResult(
+                needs_review=False,
+                reason="Small isolated task.",
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 1, "review": 0}
+    updated = await board.get_task(task["id"])
+    assert updated["status"] == "pending"
+    assert updated["backlog_intake_status"] == "completed"
+
+
+async def test_process_pending_once_retries_running_review_task(board: TaskBoard):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Still good.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 1}
+    updated = await board.get_task(review_task["id"])
+    assert updated["status"] == "completed"
+    assert updated["review_status"] == "approved"
+
+
+async def test_backlog_analyzer_exception_marks_intake_failed(board: TaskBoard):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Fail backlog analysis",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    analyzer = FakeAnalyzer(backlog_results=[RuntimeError("model unavailable")])
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 0}
+    updated = await board.get_task(task["id"])
+    assert updated["status"] == "backlog"
+    assert updated["backlog_intake_status"] == "failed"
+    assert "model unavailable" in updated["needs_review_reason"]
+
+
+async def test_backlog_cancelled_error_marks_failed_and_reraises(board: TaskBoard):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Cancelled backlog analysis",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    analyzer = FakeAnalyzer(backlog_results=[asyncio.CancelledError("stopping")])
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    with pytest.raises(asyncio.CancelledError):
+        await manager.process_backlog_task(task["id"])
+
+    updated = await board.get_task(task["id"])
+    assert updated["backlog_intake_status"] == "failed"
+
+
+async def test_review_failed_review_outcome_marks_failed_and_appends_audit(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(outcome="failed_review", reason="Could not inspect output.")
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 1}
+    updated = await board.get_task(review_task["id"])
+    assert updated["status"] == "review"
+    assert updated["review_status"] == "failed"
+    gate_runs = json.loads(updated["system_gate_runs"])
+    assert gate_runs[-1]["outcome"] == "failed_review"
+    assert gate_runs[-1]["reason"] == "Could not inspect output."
+
+
+async def test_review_analyzer_exception_marks_failed_and_appends_audit(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    analyzer = FakeAnalyzer(review_results=[RuntimeError("review crashed")])
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 0}
+    updated = await board.get_task(review_task["id"])
+    assert updated["status"] == "review"
+    assert updated["review_status"] == "failed"
+    gate_runs = json.loads(updated["system_gate_runs"])
+    assert gate_runs[-1]["outcome"] == "failed_review"
+    assert gate_runs[-1]["reason"] == "review crashed"
+
+
+async def test_review_cancelled_error_marks_failed_and_reraises(board: TaskBoard):
+    review_task = await _create_review_task(board)
+    analyzer = FakeAnalyzer(review_results=[asyncio.CancelledError("stopping")])
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    with pytest.raises(asyncio.CancelledError):
+        await manager.process_review_task(review_task["id"])
+
+    updated = await board.get_task(review_task["id"])
+    assert updated["review_status"] == "failed"
+    gate_runs = json.loads(updated["system_gate_runs"])
+    assert gate_runs[-1]["outcome"] == "failed_review"
+
+
+async def test_reject_review_gate_skips_waiting_revision_without_cascade(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    await board.create_review_revision_tasks(
+        review_task["id"],
+        [{"description": "Fix this first."}],
+    )
+
+    unchanged = await board.reject_review_gate(
+        review_task["id"],
+        reason="Late reject should not override revision wait.",
+    )
+
+    assert unchanged["status"] == "review"
+    assert unchanged["review_status"] == "waiting_revision"
+    fresh = await board.get_task(review_task["id"])
+    assert fresh["status"] == "review"
+    assert fresh["review_status"] == "waiting_revision"
+    assert fresh["rejection_reason"] is None
+
+
+async def test_reject_review_gate_skips_unresolved_dependency_without_cascade(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    revision = await board.create_review_revision_tasks(
+        review_task["id"],
+        [{"description": "Fix this first."}],
+    )
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'pending' WHERE id = ?",
+        (review_task["id"],),
+    )
+
+    unchanged = await board.reject_review_gate(
+        review_task["id"],
+        reason="Dependency still unresolved.",
+    )
+
+    assert unchanged["status"] == "review"
+    assert unchanged["review_status"] == "pending"
+    fresh = await board.get_task(review_task["id"])
+    assert fresh["status"] == "review"
+    assert fresh["review_status"] == "pending"
+    revision_task = await board.get_task(revision[0]["id"])
+    assert revision_task["status"] == "backlog"
+
+
+def test_extract_json_object_accepts_embedded_json() -> None:
+    assert _extract_json_object('prefix ```json\n{"ok": true}\n``` suffix') == {
+        "ok": True
+    }
+
+
+def test_extract_json_object_rejects_missing_json() -> None:
+    with pytest.raises(SystemGateAnalysisError, match="did not contain"):
+        _extract_json_object("no structured output")
+
+
+def test_extract_json_object_rejects_invalid_json() -> None:
+    with pytest.raises(SystemGateAnalysisError, match="invalid"):
+        _extract_json_object('{"ok": true trailing}')
+
+
+def test_extract_json_object_rejects_non_object_json() -> None:
+    with pytest.raises(SystemGateAnalysisError, match="must be an object"):
+        _extract_json_object("[1, 2, 3]")
+
+
+async def test_agent_analyzer_rejects_wrong_needs_review_type() -> None:
+    analyzer = _agent_analyzer('{"needs_review": "yes", "reason": "Risky."}')
+
+    with pytest.raises(SystemGateAnalysisError, match="needs_review"):
+        await analyzer.decide_needs_review({"task": {"id": "CD-001"}})
+
+
+async def test_agent_analyzer_rejects_invalid_review_outcome() -> None:
+    analyzer = _agent_analyzer('{"outcome": "maybe", "reason": "Unsure."}')
+
+    with pytest.raises(SystemGateAnalysisError, match="outcome"):
+        await analyzer.review_completed_task({"task": {"id": "CD-001"}})
