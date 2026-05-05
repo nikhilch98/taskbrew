@@ -1333,27 +1333,18 @@ class TaskBoard:
         held by specific instances whose heartbeats have gone stale -- safe to
         call during normal operation.
 
-        After resetting, resolves dependencies for any tasks that were blocked
-        by the recovered tasks so they can transition to ``'pending'``.
+        Recovered tasks are pending again, not completed, so this method does
+        not resolve dependency rows for tasks that were waiting on them.
         """
         if not stale_instance_ids:
             return []
         placeholders = ", ".join("?" for _ in stale_instance_ids)
-        recovered = await self._db.execute_returning(
+        return await self._db.execute_returning(
             f"UPDATE tasks SET status = 'pending', claimed_by = NULL, started_at = NULL "
             f"WHERE status = 'in_progress' AND claimed_by IN ({placeholders}) "
             f"RETURNING *",
             tuple(stale_instance_ids),
         )
-
-        # Resolve dependencies for tasks that were blocked by the recovered
-        # tasks.  The recovered tasks are back to pending (not completed), but
-        # other tasks may have been waiting on them in a blocked state that
-        # should be re-evaluated now that the stale claim is cleared.
-        for task in recovered:
-            await self._resolve_dependencies(task["id"])
-
-        return recovered
 
     async def recover_stuck_blocked_tasks(self) -> list[dict]:
         """Recover blocked tasks whose dependencies are all in terminal states.

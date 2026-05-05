@@ -1547,3 +1547,75 @@ async def test_completed_revision_makes_parent_review_approvable(
             {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
         )
     ]
+
+
+async def test_recover_stale_revision_does_not_ready_review_parent(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[original["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for approved implementation.",
+    )
+    claimed_original = await board.claim_task("coder", "coder-1")
+    assert claimed_original["id"] == original["id"]
+    await board.complete_task_with_output(original["id"], "Ready.")
+    revisions = await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    revision = revisions[0]
+    await board.apply_backlog_intake_decision(
+        revision["id"],
+        needs_review=False,
+        reason="Revision children complete directly.",
+    )
+    claimed_revision = await board.claim_task("coder", "revision-worker-1")
+    assert claimed_revision["id"] == revision["id"]
+    event_bus.events.clear()
+
+    recovered = await board.recover_stale_in_progress_tasks(["revision-worker-1"])
+
+    assert [task["id"] for task in recovered] == [revision["id"]]
+    stored_revision = await board.get_task(revision["id"])
+    assert stored_revision["status"] == "pending"
+    assert stored_revision["claimed_by"] is None
+    parent = await board.get_task(original["id"])
+    assert parent["status"] == "review"
+    assert parent["review_status"] == "waiting_revision"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ? AND blocked_by = ?",
+        (original["id"], revision["id"]),
+    )
+    assert deps == [{"resolved": 0}]
+
+    approved = await board.approve_review_gate(
+        original["id"],
+        reason="Must not approve unfinished recovered revision.",
+    )
+
+    assert approved["status"] == "review"
+    assert approved["review_status"] == "waiting_revision"
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "blocked"
+    assert event_bus.events == []
