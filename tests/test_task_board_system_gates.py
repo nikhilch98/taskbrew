@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from taskbrew.orchestrator.database import Database
@@ -69,3 +71,114 @@ async def test_task_schema_has_system_gate_columns(db: Database):
         "system_gate_runs",
     }
     assert expected.issubset(columns.keys())
+
+
+async def test_create_task_starts_in_backlog_with_pending_intent(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="pm",
+    )
+
+    assert task["status"] == "backlog"
+    assert task["intended_status"] == "pending"
+    assert task["backlog_intake_status"] == "pending"
+    assert task["needs_review"] is None
+    assert event_bus.events == []
+
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is None
+
+
+async def test_create_blocked_task_starts_in_backlog_with_blocked_intent(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+
+    blocked = await board.create_task(
+        group_id=group["id"],
+        title="Blocked work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+
+    assert blocked["status"] == "backlog"
+    assert blocked["intended_status"] == "blocked"
+    deps = await board._db.execute_fetchall(
+        "SELECT blocked_by, resolved FROM task_dependencies WHERE task_id = ?",
+        (blocked["id"],),
+    )
+    assert deps == [{"blocked_by": blocker["id"], "resolved": 0}]
+
+
+async def test_apply_backlog_intake_decision_moves_pending_task_and_emits_available(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+
+    updated = await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Touches shared orchestration logic.",
+        signals=["shared_orchestration_logic"],
+        confidence="medium",
+    )
+
+    assert updated["status"] == "pending"
+    assert updated["needs_review"] == 1
+    assert updated["needs_review_reason"] == "Touches shared orchestration logic."
+    decision = json.loads(updated["needs_review_decision"])
+    assert decision["decision"] is True
+    assert decision["signals"] == ["shared_orchestration_logic"]
+    assert updated["backlog_intake_status"] == "completed"
+    assert event_bus.events[-1] == (
+        "task.available",
+        {"task_id": task["id"], "role": "coder", "group_id": group["id"]},
+    )
+
+
+async def test_apply_backlog_intake_decision_runs_once(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+
+    first = await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Small docs-only change.",
+    )
+    second = await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Second decision must not overwrite the first.",
+    )
+
+    assert first["status"] == "pending"
+    assert second["status"] == "pending"
+    assert second["needs_review"] == 0
+    assert second["needs_review_reason"] == "Small docs-only change."

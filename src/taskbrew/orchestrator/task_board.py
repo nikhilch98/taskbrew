@@ -187,7 +187,8 @@ class TaskBoard:
 
         task_id = await self._db.generate_task_id(prefix)
         now = _utcnow()
-        status = "blocked" if blocked_by else "pending"
+        intended_status = "blocked" if blocked_by else "pending"
+        status = BACKLOG_STATUS
 
         rf_stored: int | None
         if requires_fanout is None:
@@ -215,8 +216,9 @@ class TaskBoard:
             "INSERT INTO tasks "
             "(id, group_id, parent_id, title, description, task_type, "
             " priority, assigned_to, status, created_by, created_at, "
-            " revision_of, requires_fanout, branch_name, parent_branch) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " revision_of, requires_fanout, branch_name, parent_branch, "
+            " intended_status, backlog_intake_status, max_review_rounds) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 group_id,
@@ -233,19 +235,11 @@ class TaskBoard:
                 rf_stored,
                 branch_name,
                 parent_branch,
+                intended_status,
+                "pending",
+                DEFAULT_MAX_REVIEW_ROUNDS,
             ),
         )
-        # Emit task.available only when the task is actually claimable.
-        # A blocked task becomes available later via _resolve_dependencies.
-        if self._event_bus is not None and status == "pending":
-            await self._event_bus.emit(
-                "task.available",
-                {
-                    "task_id": task_id,
-                    "role": assigned_to,
-                    "group_id": group_id,
-                },
-            )
 
         # Create dependency rows (with cycle detection).
         if blocked_by:
@@ -270,15 +264,128 @@ class TaskBoard:
             "assigned_to": assigned_to,
             "claimed_by": None,
             "status": status,
+            "intended_status": intended_status,
             "created_by": created_by,
             "created_at": now,
             "started_at": None,
             "completed_at": None,
             "rejection_reason": None,
             "revision_of": revision_of,
+            "needs_review": None,
+            "needs_review_reason": None,
+            "needs_review_decision": None,
+            "backlog_intake_status": "pending",
+            "backlog_intake_processed_at": None,
+            "review_status": None,
+            "review_round": 0,
+            "max_review_rounds": DEFAULT_MAX_REVIEW_ROUNDS,
+            "review_parent_task_id": None,
+            "revision_task_ids": [],
+            "system_gate_runs": [],
             "requires_fanout": rf_stored,
             "fanout_retries": 0,
         }
+
+    def _json_list(self, value) -> list:
+        if value in (None, ""):
+            return []
+        if isinstance(value, list):
+            return value
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+
+    async def _has_unresolved_dependencies(self, task_id: str) -> bool:
+        row = await self._db.execute_fetchone(
+            "SELECT 1 FROM task_dependencies "
+            "WHERE task_id = ? AND resolved = 0 LIMIT 1",
+            (task_id,),
+        )
+        return row is not None
+
+    async def _target_status_after_intake(
+        self, task_id: str, intended_status: str
+    ) -> str:
+        if await self._has_unresolved_dependencies(task_id):
+            return "blocked"
+        return "pending" if intended_status in ("pending", "blocked") else intended_status
+
+    async def apply_backlog_intake_decision(
+        self,
+        task_id: str,
+        *,
+        needs_review: bool,
+        reason: str,
+        signals: list[str] | None = None,
+        confidence: str = "medium",
+    ) -> dict:
+        """Store the one-time backlog intake decision and move to intended state."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != BACKLOG_STATUS:
+            return task
+        if task.get("backlog_intake_status") == "completed":
+            return task
+
+        now = _utcnow()
+        decision = {
+            "decision": bool(needs_review),
+            "reason": reason,
+            "signals": signals or [],
+            "confidence": confidence,
+            "decided_by": "system_agent",
+            "decided_at": now,
+        }
+        intended_status = task.get("intended_status") or "pending"
+        target_status = await self._target_status_after_intake(task_id, intended_status)
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = ?, needs_review = ?, needs_review_reason = ?, "
+            "needs_review_decision = ?, backlog_intake_status = 'completed', "
+            "backlog_intake_processed_at = ? "
+            "WHERE id = ? AND status = 'backlog' "
+            "AND COALESCE(backlog_intake_status, 'pending') != 'completed' RETURNING *",
+            (
+                target_status,
+                1 if needs_review else 0,
+                reason,
+                json.dumps(decision),
+                now,
+                task_id,
+            ),
+        )
+        updated = rows[0] if rows else await self.get_task(task_id)
+        if (
+            updated
+            and self._event_bus is not None
+            and updated["status"] == CLAIMABLE_STATUS
+        ):
+            await self._event_bus.emit(
+                "task.available",
+                {
+                    "task_id": updated["id"],
+                    "role": updated["assigned_to"],
+                    "group_id": updated["group_id"],
+                },
+            )
+        return updated
+
+    async def mark_backlog_intake_failed(self, task_id: str, error: str) -> dict:
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET backlog_intake_status = 'failed', "
+            "needs_review_reason = ? "
+            "WHERE id = ? AND status = 'backlog' RETURNING *",
+            (f"System backlog intake failed at {now}: {error[:500]}", task_id),
+        )
+        if not rows:
+            task = await self.get_task(task_id)
+            if task is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return task
+        return rows[0]
 
     async def get_task(self, task_id: str) -> dict | None:
         """Return a single task by ID, or None."""
