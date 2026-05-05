@@ -25,6 +25,23 @@ _PRIORITY_ORDER = {
     "low": 3,
 }
 
+BOARD_STATUSES = (
+    "backlog",
+    "pending",
+    "in_progress",
+    "review",
+    "blocked",
+    "completed",
+    "rejected",
+    "failed",
+)
+
+TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "rejected"})
+CLAIMABLE_STATUS = "pending"
+BACKLOG_STATUS = "backlog"
+REVIEW_STATUS = "review"
+DEFAULT_MAX_REVIEW_ROUNDS = 3
+
 
 class TaskBoard:
     """High-level CRUD interface for groups, tasks, and dependencies.

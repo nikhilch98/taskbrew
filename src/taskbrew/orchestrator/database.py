@@ -68,7 +68,20 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- enters a manual-mode ask_question wait; cleared on resolve
     -- or task cancel. The activity-based idle watchdog skips tasks
     -- while this is non-NULL.
-    awaiting_input_since   TEXT
+    awaiting_input_since   TEXT,
+    -- System gate workflow fields (migration 34).
+    intended_status              TEXT DEFAULT 'pending',
+    needs_review                 INTEGER,
+    needs_review_reason          TEXT,
+    needs_review_decision        TEXT,
+    backlog_intake_status        TEXT DEFAULT 'pending',
+    backlog_intake_processed_at  TEXT,
+    review_status                TEXT,
+    review_round                 INTEGER DEFAULT 0,
+    max_review_rounds            INTEGER DEFAULT 3,
+    review_parent_task_id        TEXT REFERENCES tasks(id),
+    revision_task_ids            TEXT DEFAULT '[]',
+    system_gate_runs             TEXT DEFAULT '[]'
 );
 
 -- Structured agent clarifications (migration 32). Persists every
