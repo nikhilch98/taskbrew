@@ -12,6 +12,7 @@ class AgentConfig:
     system_prompt: str
     allowed_tools: list[str] = field(default_factory=list)
     model: str | None = None
+    reasoning_effort: str | None = None
     max_turns: int | None = None
     cwd: Path | None = None
     permission_mode: str = "default"

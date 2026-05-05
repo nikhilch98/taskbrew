@@ -14,6 +14,7 @@ from taskbrew.config import AgentConfig
 from taskbrew.orchestrator.task_board import BACKLOG_STATUS, REVIEW_STATUS, TaskBoard
 
 logger = logging.getLogger(__name__)
+_GATE_LOCKS: dict[tuple[str, str], tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
 
 
 def _utcnow() -> str:
@@ -220,7 +221,6 @@ class SystemGateManager:
         self._batch_size = batch_size
         self._running_timeout_seconds = running_timeout_seconds
         self._stop_requested = False
-        self._gate_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     async def _backlog_context(self, task: dict) -> dict:
         return {
@@ -486,11 +486,13 @@ class SystemGateManager:
 
     def _gate_lock(self, gate: str, task_id: str) -> asyncio.Lock:
         key = (gate, task_id)
-        lock = self._gate_locks.get(key)
-        if lock is None:
+        loop = asyncio.get_running_loop()
+        entry = _GATE_LOCKS.get(key)
+        if entry is None or entry[0] is not loop:
             lock = asyncio.Lock()
-            self._gate_locks[key] = lock
-        return lock
+            _GATE_LOCKS[key] = (loop, lock)
+            return lock
+        return entry[1]
 
     def _is_running_stale(self, task: dict, gate: str) -> bool:
         if self._running_timeout_seconds <= 0:

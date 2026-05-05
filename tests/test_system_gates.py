@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -805,6 +806,45 @@ async def test_overlapping_stale_review_retries_enter_analyzer_once(
     assert len(revision_ids) == 1
 
 
+async def test_two_managers_share_review_gate_lock(board: TaskBoard):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = BlockingReviewAnalyzer()
+    first_manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+    second_manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+
+    first = asyncio.create_task(first_manager.process_review_task(review_task["id"]))
+    await analyzer.first_entered.wait()
+    second = asyncio.create_task(second_manager.process_review_task(review_task["id"]))
+    await asyncio.sleep(0)
+    analyzer.release.set()
+
+    results = await asyncio.gather(first, second)
+
+    updated = await board.get_task(review_task["id"])
+    revision_ids = json.loads(updated["revision_task_ids"])
+    gate_runs = json.loads(updated["system_gate_runs"])
+    needs_revision_runs = [
+        run for run in gate_runs if run.get("outcome") == "needs_revision"
+    ]
+    assert results.count(True) == 1
+    assert results.count(False) == 1
+    assert analyzer.entered == 1
+    assert len(revision_ids) == 1
+    assert len(needs_revision_runs) == 1
+
+
 async def test_create_review_revision_tasks_rolls_back_empty_transition(
     board: TaskBoard,
     monkeypatch: pytest.MonkeyPatch,
@@ -999,6 +1039,27 @@ def test_system_agent_import_smoke() -> None:
 
     assert system_agent.SYSTEM_AGENT_PROMPT
     assert callable(system_agent.build_system_agent_config)
+
+
+def test_build_system_agent_config_smoke(tmp_path) -> None:
+    from taskbrew.system_agent import build_system_agent_config
+
+    team_config = SimpleNamespace(
+        cli_provider="codex",
+        system_agent=SimpleNamespace(
+            provider="codex",
+            model="gpt-5.4-mini",
+            reasoning_effort="low",
+        ),
+        db_path="data/tasks.db",
+        mcp_servers=None,
+    )
+
+    config = build_system_agent_config(team_config, project_dir=tmp_path)
+
+    assert config.name == "system"
+    assert config.model == "gpt-5.4-mini"
+    assert config.reasoning_effort == "low"
 
 
 async def test_agent_analyzer_rejects_wrong_needs_review_type() -> None:
