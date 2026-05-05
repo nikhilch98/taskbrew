@@ -458,6 +458,38 @@ async def test_recover_stuck_blocked_tasks(board: TaskBoard):
     assert (await board.get_task(t2["id"]))["status"] == "failed"
 
 
+async def test_recover_stuck_blocked_tasks_fails_rejected_blocker(board: TaskBoard):
+    """Rejected blockers should fail stuck blocked dependents during recovery."""
+    group = await board.create_group(title="Rejected stuck", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Rejected dep",
+        task_type="impl",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Blocked by rejected dep",
+        task_type="review",
+        assigned_to="reviewer",
+        blocked_by=[blocker["id"]],
+    )
+    dependent = await _release_task(board, dependent)
+    assert dependent["status"] == "blocked"
+
+    # Simulate a crash after review rejection updates the blocker, before cascade.
+    await board._db.execute(
+        "UPDATE tasks SET status = 'rejected' WHERE id = ?",
+        (blocker["id"],),
+    )
+    await board._db._conn.commit()
+
+    repaired = await board.recover_stuck_blocked_tasks()
+
+    assert any(task["id"] == dependent["id"] for task in repaired)
+    assert (await board.get_task(dependent["id"]))["status"] == "failed"
+
+
 async def test_recover_unblocks_when_dep_completed(board: TaskBoard):
     """If blocker completed but resolution was missed, recovery should unblock."""
     group = await board.create_group(title="Missed", created_by="pm")

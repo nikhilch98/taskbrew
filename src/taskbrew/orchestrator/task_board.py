@@ -1145,8 +1145,8 @@ class TaskBoard:
         """Recover blocked tasks whose dependencies are all in terminal states.
 
         A blocked task should be failed if any of its unresolved dependencies
-        failed, or moved to pending if all dependencies completed but the
-        resolution was missed (e.g. crash).
+        failed or was rejected, or moved to pending if all dependencies completed
+        but the resolution was missed (e.g. crash).
         """
         # Find blocked tasks with unresolved deps pointing to terminal tasks
         stuck = await self._db.execute_fetchall(
@@ -1155,7 +1155,7 @@ class TaskBoard:
             "JOIN tasks t ON t.id = d.task_id AND t.status = 'blocked' "
             "JOIN tasks t2 ON t2.id = d.blocked_by "
             "WHERE d.resolved = 0 "
-            "  AND t2.status IN ('completed', 'failed')"
+            "  AND t2.status IN ('completed', 'failed', 'rejected')"
         )
         if not stuck:
             return []
@@ -1175,7 +1175,7 @@ class TaskBoard:
             )
 
             # If blocker failed, cascade failure to this task
-            if blocker_status == "failed" and tid not in seen:
+            if blocker_status in ("failed", "rejected") and tid not in seen:
                 await self._db.execute(
                     "UPDATE tasks SET status = 'failed' WHERE id = ? AND status = 'blocked'",
                     (tid,),
