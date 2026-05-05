@@ -564,21 +564,38 @@ class TaskBoard:
         logger.info("Task %s claimed by %s", result["id"], instance_id)
         return result
 
+    def _completion_status_for(self, task: dict) -> tuple[str, str | None]:
+        needs_review = task.get("needs_review")
+        review_parent = task.get("review_parent_task_id")
+        if needs_review in (1, True) and not review_parent:
+            return REVIEW_STATUS, "pending"
+        return "completed", None
+
     async def complete_task(self, task_id: str) -> dict:
         """Mark a task as completed and resolve downstream dependencies."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != "in_progress":
+            logger.warning(
+                "complete_task(%s) skipped: task is in status '%s', "
+                "expected 'in_progress'",
+                task_id,
+                task["status"],
+            )
+            return task
+
         now = _utcnow()
+        target_status, review_status = self._completion_status_for(task)
         rows = await self._db.execute_returning(
-            "UPDATE tasks SET status = 'completed', completed_at = ? "
+            "UPDATE tasks SET status = ?, completed_at = ?, review_status = ? "
             "WHERE id = ? AND status = 'in_progress' RETURNING *",
-            (now, task_id),
+            (target_status, now, review_status, task_id),
         )
         if not rows:
-            # Check whether the task exists at all vs. is in a terminal state.
-            existing = await self._db.execute_fetchone(
-                "SELECT id, status FROM tasks WHERE id = ?", (task_id,)
-            )
+            existing = await self.get_task(task_id)
             if existing is None:
-                raise ValueError(f"Task not found: {task_id}")
+                raise ValueError(f"Task not found after completion race: {task_id}")
             logger.warning(
                 "complete_task(%s) skipped: task is in status '%s', "
                 "expected 'in_progress'",
@@ -603,19 +620,21 @@ class TaskBoard:
         """
         now = _utcnow()
         persisted_output = output or ""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        target_status, review_status = self._completion_status_for(task)
         rows = await self._db.execute_returning(
-            "UPDATE tasks SET status = 'completed', completed_at = ?, "
-            "output_text = ? "
+            "UPDATE tasks SET status = ?, completed_at = ?, output_text = ?, "
+            "review_status = ? "
             "WHERE id = ? AND status = 'in_progress' RETURNING *",
-            (now, persisted_output, task_id),
+            (target_status, now, persisted_output, review_status, task_id),
         )
         if not rows:
-            existing = await self._db.execute_fetchone(
-                "SELECT id, status, output_text FROM tasks WHERE id = ?", (task_id,)
-            )
+            existing = await self.get_task(task_id)
             if existing is None:
-                raise ValueError(f"Task not found: {task_id}")
-            if existing["status"] == "completed":
+                raise ValueError(f"Task not found after completion race: {task_id}")
+            if existing["status"] in ("completed", "review"):
                 next_output = persisted_output or existing.get("output_text") or ""
                 completed_rows = await self._db.execute_returning(
                     "UPDATE tasks SET output_text = ? "
@@ -633,6 +652,76 @@ class TaskBoard:
         await self._resolve_dependencies(task_id)
         await self._check_group_completion(task_id)
         return rows[0]
+
+    async def approve_review_gate(self, task_id: str, *, reason: str) -> dict:
+        """Approve a task waiting at the system review gate."""
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = 'completed', review_status = 'approved', "
+            "rejection_reason = NULL "
+            "WHERE id = ? AND status = 'review' RETURNING *",
+            (task_id,),
+        )
+        if not rows:
+            task = await self.get_task(task_id)
+            if task is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return task
+        await self._append_system_gate_run(
+            task_id,
+            {
+                "gate": "review",
+                "outcome": "approved",
+                "reason": reason,
+                "finished_at": now,
+            },
+        )
+        await self._resolve_dependencies(task_id)
+        await self._check_group_completion(task_id)
+        fresh = await self.get_task(task_id)
+        if fresh is None:
+            raise ValueError(f"Task not found after review approval: {task_id}")
+        return fresh
+
+    async def reject_review_gate(self, task_id: str, *, reason: str) -> dict:
+        """Reject a task waiting at the system review gate."""
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = 'rejected', review_status = 'rejected', "
+            "rejection_reason = ? WHERE id = ? AND status = 'review' RETURNING *",
+            (reason, task_id),
+        )
+        if not rows:
+            task = await self.get_task(task_id)
+            if task is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return task
+        await self._append_system_gate_run(
+            task_id,
+            {
+                "gate": "review",
+                "outcome": "rejected",
+                "reason": reason,
+                "finished_at": now,
+            },
+        )
+        await self._cascade_failure(task_id)
+        await self._check_group_completion(task_id)
+        fresh = await self.get_task(task_id)
+        if fresh is None:
+            raise ValueError(f"Task not found after review rejection: {task_id}")
+        return fresh
+
+    async def _append_system_gate_run(self, task_id: str, entry: dict) -> None:
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        runs = self._json_list(task.get("system_gate_runs"))
+        runs.append(entry)
+        await self._db.execute(
+            "UPDATE tasks SET system_gate_runs = ? WHERE id = ?",
+            (json.dumps(runs), task_id),
+        )
 
     async def reject_task(self, task_id: str, reason: str) -> dict:
         """Mark a task as rejected with a reason."""
@@ -729,7 +818,7 @@ class TaskBoard:
         # Check whether any task in this group is NOT in a terminal state.
         non_terminal = await self._db.execute_fetchone(
             "SELECT 1 FROM tasks WHERE group_id = ? "
-            "AND status NOT IN ('completed', 'failed', 'cancelled') LIMIT 1",
+            "AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected') LIMIT 1",
             (group_id,),
         )
         if non_terminal:

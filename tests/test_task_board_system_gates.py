@@ -189,6 +189,134 @@ async def test_apply_backlog_intake_decision_runs_once(board: TaskBoard):
     assert second["needs_review_reason"] == "Small docs-only change."
 
 
+async def test_complete_task_with_output_routes_review_required_task_to_review(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build risky widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Touches shared orchestration logic.",
+    )
+
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == task["id"]
+    completed = await board.complete_task_with_output(
+        task["id"],
+        "Implemented the shared orchestration change.",
+    )
+
+    assert completed["status"] == "review"
+    assert completed["review_status"] == "pending"
+    assert completed["output_text"] == "Implemented the shared orchestration change."
+
+
+async def test_complete_task_routes_non_review_task_directly_to_completed(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build simple widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Small isolated task.",
+    )
+
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == task["id"]
+    completed = await board.complete_task(task["id"])
+
+    assert completed["status"] == "completed"
+    assert completed["review_status"] is None
+
+
+async def test_approve_review_gate_completes_review_task(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build reviewed widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == task["id"]
+    await board.complete_task_with_output(task["id"], "Ready for review.")
+
+    approved = await board.approve_review_gate(
+        task["id"],
+        reason="Output satisfies the gate.",
+    )
+
+    assert approved["status"] == "completed"
+    assert approved["review_status"] == "approved"
+    assert approved["rejection_reason"] is None
+    gate_runs = json.loads(approved["system_gate_runs"])
+    assert gate_runs[-1]["gate"] == "review"
+    assert gate_runs[-1]["outcome"] == "approved"
+    assert gate_runs[-1]["reason"] == "Output satisfies the gate."
+    assert gate_runs[-1]["finished_at"]
+
+
+async def test_reject_review_gate_rejects_review_task_and_closes_group(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build reviewed widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == task["id"]
+    await board.complete_task_with_output(task["id"], "Ready for review.")
+
+    rejected = await board.reject_review_gate(
+        task["id"],
+        reason="Missing required verification notes.",
+    )
+
+    assert rejected["status"] == "rejected"
+    assert rejected["review_status"] == "rejected"
+    assert rejected["rejection_reason"] == "Missing required verification notes."
+    gate_runs = json.loads(rejected["system_gate_runs"])
+    assert gate_runs[-1]["gate"] == "review"
+    assert gate_runs[-1]["outcome"] == "rejected"
+    assert gate_runs[-1]["reason"] == "Missing required verification notes."
+    assert gate_runs[-1]["finished_at"]
+
+    groups = await board.get_groups()
+    assert groups == [
+        {
+            **group,
+            "status": "completed",
+            "completed_at": groups[0]["completed_at"],
+        }
+    ]
+    assert groups[0]["completed_at"]
+
+
 async def test_apply_backlog_intake_decision_does_not_emit_when_update_loses_race(
     board: TaskBoard,
     event_bus: RecordingEventBus,
