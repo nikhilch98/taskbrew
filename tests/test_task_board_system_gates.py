@@ -1619,3 +1619,169 @@ async def test_recover_stale_revision_does_not_ready_review_parent(
     stored_dependent = await board.get_task(dependent["id"])
     assert stored_dependent["status"] == "blocked"
     assert event_bus.events == []
+
+
+async def test_recover_stuck_review_parent_after_completed_revision(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[original["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for approved implementation.",
+    )
+    claimed_original = await board.claim_task("coder", "coder-1")
+    assert claimed_original["id"] == original["id"]
+    await board.complete_task_with_output(original["id"], "Ready.")
+    revisions = await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    revision = revisions[0]
+    await board._db.execute(
+        "UPDATE tasks SET status = 'completed' WHERE id = ?",
+        (revision["id"],),
+    )
+    event_bus.events.clear()
+
+    repaired = await board.recover_stuck_blocked_tasks()
+
+    assert [task["id"] for task in repaired] == [original["id"]]
+    parent = await board.get_task(original["id"])
+    assert parent["status"] == "review"
+    assert parent["review_status"] == "pending"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ? AND blocked_by = ?",
+        (original["id"], revision["id"]),
+    )
+    assert deps == [{"resolved": 1}]
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "blocked"
+    assert event_bus.events == []
+
+
+async def test_recover_stuck_review_parent_after_failed_revision(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[original["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for approved implementation.",
+    )
+    claimed_original = await board.claim_task("coder", "coder-1")
+    assert claimed_original["id"] == original["id"]
+    await board.complete_task_with_output(original["id"], "Ready.")
+    revisions = await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    revision = revisions[0]
+    await board._db.execute(
+        "UPDATE tasks SET status = 'failed' WHERE id = ?",
+        (revision["id"],),
+    )
+    event_bus.events.clear()
+
+    repaired = await board.recover_stuck_blocked_tasks()
+
+    assert [task["id"] for task in repaired] == [original["id"]]
+    parent = await board.get_task(original["id"])
+    assert parent["status"] == "rejected"
+    assert parent["review_status"] == "rejected"
+    assert "required revision" in parent["rejection_reason"].lower()
+    assert revision["id"] in parent["rejection_reason"]
+    gate_runs = json.loads(parent["system_gate_runs"])
+    assert gate_runs[-1]["outcome"] == "rejected"
+    assert gate_runs[-1]["failed_revision_task_id"] == revision["id"]
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "failed"
+    assert event_bus.events == []
+
+
+async def test_add_dependency_failed_blocker_cascades_from_non_review_target(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    failed_blocker = await board.create_task(
+        group_id=group["id"],
+        title="Failed blocker",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    target = await board.create_task(
+        group_id=group["id"],
+        title="Target work",
+        task_type="implementation",
+        assigned_to="tester",
+    )
+    downstream = await board.create_task(
+        group_id=group["id"],
+        title="Downstream work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[target["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        failed_blocker["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    await board.apply_backlog_intake_decision(
+        target["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    await board.apply_backlog_intake_decision(
+        downstream["id"],
+        needs_review=False,
+        reason="Waits for target.",
+    )
+    claimed_blocker = await board.claim_task("coder", "coder-1")
+    assert claimed_blocker["id"] == failed_blocker["id"]
+    await board.fail_task(failed_blocker["id"])
+
+    await board.add_dependency(target["id"], failed_blocker["id"])
+
+    stored_target = await board.get_task(target["id"])
+    assert stored_target["status"] == "failed"
+    stored_downstream = await board.get_task(downstream["id"])
+    assert stored_downstream["status"] == "failed"

@@ -1267,7 +1267,12 @@ class TaskBoard:
                     await self._cascade_failure(task_id)
                     await self._check_group_completion(task_id)
                     return
-        await self._reconcile_dependencies_after_create(task_id)
+        reconciled = await self._reconcile_dependencies_after_create(task_id)
+        if blocker and blocker["status"] in ("failed", "rejected"):
+            target = reconciled or await self.get_task(task_id)
+            if target and target["status"] == "failed":
+                await self._cascade_failure(task_id)
+                await self._check_group_completion(task_id)
 
     # ------------------------------------------------------------------
     # Resilience / Recovery
@@ -1362,9 +1367,6 @@ class TaskBoard:
             "WHERE d.resolved = 0 "
             "  AND t2.status IN ('completed', 'failed', 'rejected')"
         )
-        if not stuck:
-            return []
-
         repaired: list[dict] = []
         seen: set[str] = set()
 
@@ -1393,6 +1395,38 @@ class TaskBoard:
                     repaired.append(task)
                     # Cascade further
                     await self._cascade_failure(tid)
+
+        stuck_review = await self._db.execute_fetchall(
+            "SELECT DISTINCT d.task_id, d.blocked_by, t2.status AS blocker_status "
+            "FROM task_dependencies d "
+            "JOIN tasks t ON t.id = d.task_id "
+            "AND t.status = 'review' "
+            "AND t.review_status = 'waiting_revision' "
+            "JOIN tasks t2 ON t2.id = d.blocked_by "
+            "WHERE d.resolved = 0 "
+            "AND t2.status IN ('completed', 'failed', 'rejected')"
+        )
+        for row in stuck_review:
+            tid = row["task_id"]
+            blocker_status = row["blocker_status"]
+            if blocker_status == "completed":
+                await self._db.execute(
+                    "UPDATE task_dependencies SET resolved = 1 "
+                    "WHERE task_id = ? AND blocked_by = ?",
+                    (tid, row["blocked_by"]),
+                )
+                updated = await self.mark_review_ready_if_unblocked(tid)
+                if updated.get("review_status") == "pending":
+                    repaired.append(updated)
+                continue
+
+            rejected = await self._reject_waiting_revision_parent(
+                tid, row["blocked_by"]
+            )
+            if rejected:
+                repaired.append(rejected)
+                await self._cascade_failure(tid)
+                await self._check_group_completion(tid)
 
         # Check for tasks now fully unblocked (all deps resolved successfully)
         newly_free = await self._db.execute_fetchall(
