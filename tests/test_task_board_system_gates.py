@@ -214,3 +214,76 @@ async def test_apply_backlog_intake_decision_does_not_emit_when_update_loses_rac
 
     assert updated["status"] == "pending"
     assert event_bus.events == []
+
+
+async def test_failing_blocker_cascades_to_backlog_dependent(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Blocked work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Implementation task.",
+    )
+
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    await board.fail_task(blocker["id"])
+
+    failed_dependent = await board.get_task(dependent["id"])
+    assert failed_dependent["status"] == "failed"
+
+
+async def test_apply_backlog_intake_decision_corrects_stale_blocked_target(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Blocked work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    await board._db.execute(
+        "UPDATE task_dependencies SET resolved = 1 WHERE task_id = ?",
+        (dependent["id"],),
+    )
+
+    async def stale_target_status(task_id: str, intended_status: str) -> str:
+        return "blocked"
+
+    monkeypatch.setattr(board, "_target_status_after_intake", stale_target_status)
+
+    updated = await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Dependency resolved during intake.",
+    )
+
+    assert updated["status"] == "pending"
+    assert event_bus.events == [
+        (
+            "task.available",
+            {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
+        )
+    ]

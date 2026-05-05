@@ -357,8 +357,22 @@ class TaskBoard:
             ),
         )
         updated = rows[0] if rows else await self.get_task(task_id)
+        did_transition = bool(rows)
         if (
-            rows
+            did_transition
+            and updated
+            and updated["status"] == "blocked"
+            and not await self._has_unresolved_dependencies(task_id)
+        ):
+            pending_rows = await self._db.execute_returning(
+                "UPDATE tasks SET status = 'pending' "
+                "WHERE id = ? AND status = 'blocked' RETURNING *",
+                (task_id,),
+            )
+            if pending_rows:
+                updated = pending_rows[0]
+        if (
+            did_transition
             and updated
             and self._event_bus is not None
             and updated["status"] == CLAIMABLE_STATUS
@@ -578,7 +592,7 @@ class TaskBoard:
         # be blocked -- cascade to those too.
         await self._db.execute(
             "UPDATE tasks SET status = 'cancelled' "
-            "WHERE parent_id = ? AND status IN ('pending', 'blocked')",
+            "WHERE parent_id = ? AND status IN ('backlog', 'pending', 'blocked')",
             (task_id,),
         )
         await self._check_group_completion(task_id)
@@ -600,7 +614,8 @@ class TaskBoard:
             )
             for dep in dependents:
                 dep_task = await self._db.execute_fetchone(
-                    "SELECT * FROM tasks WHERE id = ? AND status IN ('pending', 'blocked')",
+                    "SELECT * FROM tasks "
+                    "WHERE id = ? AND status IN ('backlog', 'pending', 'blocked')",
                     (dep["task_id"],),
                 )
                 if dep_task:
