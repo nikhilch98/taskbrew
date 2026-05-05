@@ -554,10 +554,18 @@ class TaskBoard:
             "WHERE id = ("
             "    SELECT id FROM tasks "
             "    WHERE assigned_to = ? AND status = 'pending' AND claimed_by IS NULL "
+            "    AND NOT EXISTS ("
+            "        SELECT 1 FROM task_dependencies d "
+            "        WHERE d.task_id = tasks.id AND d.resolved = 0"
+            "    ) "
             f"    ORDER BY {priority_case}, created_at "
             "    LIMIT 1"
             ") "
             "AND status = 'pending' AND claimed_by IS NULL "
+            "AND NOT EXISTS ("
+            "    SELECT 1 FROM task_dependencies d "
+            "    WHERE d.task_id = tasks.id AND d.resolved = 0"
+            ") "
             "RETURNING *"
         )
         rows = await self._db.execute_returning(sql, (instance_id, now, role))

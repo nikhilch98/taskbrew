@@ -1842,3 +1842,65 @@ async def test_add_dependency_blocks_pending_target_until_blocker_completes(
     ]
     claimed_target = await board.claim_task("tester", "tester-1")
     assert claimed_target["id"] == target["id"]
+
+
+async def test_claim_task_skips_target_during_add_dependency_race(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    target = await board.create_task(
+        group_id=group["id"],
+        title="Target work",
+        task_type="qa_verification",
+        assigned_to="tester",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    await board.apply_backlog_intake_decision(
+        target["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    event_bus.events.clear()
+    original_execute = board._db.execute
+    raced_claim: dict | None = None
+
+    async def execute_with_claim_race(sql: str, params: tuple = ()) -> None:
+        nonlocal raced_claim
+        await original_execute(sql, params)
+        if sql.startswith("INSERT OR IGNORE INTO task_dependencies"):
+            raced_claim = await board.claim_task("tester", "tester-racer")
+
+    monkeypatch.setattr(board._db, "execute", execute_with_claim_race)
+
+    await board.add_dependency(target["id"], blocker["id"])
+
+    assert raced_claim is None
+    stored_target = await board.get_task(target["id"])
+    assert stored_target["status"] == "blocked"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ? AND blocked_by = ?",
+        (target["id"], blocker["id"]),
+    )
+    assert deps == [{"resolved": 0}]
+    assert event_bus.events == []
+
+    claimed_blocker = await board.claim_task("coder", "coder-1")
+    assert claimed_blocker["id"] == blocker["id"]
+    await board.complete_task(blocker["id"])
+
+    stored_target = await board.get_task(target["id"])
+    assert stored_target["status"] == "pending"
+    claimed_target = await board.claim_task("tester", "tester-1")
+    assert claimed_target["id"] == target["id"]
