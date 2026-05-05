@@ -159,6 +159,7 @@ class TaskBoard:
         priority: str = "medium",
         parent_id: str | None = None,
         revision_of: str | None = None,
+        review_parent_task_id: str | None = None,
         blocked_by: list[str] | None = None,
         requires_fanout: bool | None = None,
         branch_name: str | None = None,
@@ -217,8 +218,9 @@ class TaskBoard:
             "(id, group_id, parent_id, title, description, task_type, "
             " priority, assigned_to, status, created_by, created_at, "
             " revision_of, requires_fanout, branch_name, parent_branch, "
-            " intended_status, backlog_intake_status, max_review_rounds) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " intended_status, backlog_intake_status, max_review_rounds, "
+            " review_parent_task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 group_id,
@@ -238,6 +240,7 @@ class TaskBoard:
                 intended_status,
                 "pending",
                 DEFAULT_MAX_REVIEW_ROUNDS,
+                review_parent_task_id,
             ),
         )
 
@@ -287,7 +290,7 @@ class TaskBoard:
             "review_status": None,
             "review_round": 0,
             "max_review_rounds": DEFAULT_MAX_REVIEW_ROUNDS,
-            "review_parent_task_id": None,
+            "review_parent_task_id": review_parent_task_id,
             "revision_task_ids": [],
             "system_gate_runs": [],
             "requires_fanout": rf_stored,
@@ -714,6 +717,77 @@ class TaskBoard:
             raise ValueError(f"Task not found after review rejection: {task_id}")
         return fresh
 
+    async def create_review_revision_tasks(
+        self, original_task_id: str, revisions: list[dict]
+    ) -> list[dict]:
+        """Create revision tasks and block a review task until they complete."""
+        original = await self.get_task(original_task_id)
+        if original is None:
+            raise ValueError(f"Task not found: {original_task_id}")
+        if original["status"] != REVIEW_STATUS:
+            raise ValueError(
+                f"Task {original_task_id} is in status '{original['status']}', "
+                f"expected '{REVIEW_STATUS}'"
+            )
+
+        created: list[dict] = []
+        for index, revision in enumerate(revisions, start=1):
+            revision_task = await self.create_task(
+                group_id=original["group_id"],
+                title=revision.get("title") or f"Revision {index} for {original_task_id}",
+                task_type=revision.get("task_type") or "revision",
+                assigned_to=revision.get("assigned_to")
+                or original.get("assigned_to")
+                or "coder",
+                created_by="system",
+                description=revision.get("description")
+                or "Address the system review finding.",
+                priority=revision.get("priority") or original.get("priority") or "medium",
+                parent_id=original_task_id,
+                revision_of=original_task_id,
+                review_parent_task_id=original_task_id,
+            )
+            await self.add_dependency(original_task_id, revision_task["id"])
+            created.append(revision_task)
+
+        revision_task_ids = self._json_list(original.get("revision_task_ids"))
+        revision_task_ids.extend(task["id"] for task in created)
+        await self._db.execute(
+            "UPDATE tasks SET review_status = 'waiting_revision', "
+            "revision_task_ids = ? WHERE id = ?",
+            (json.dumps(revision_task_ids), original_task_id),
+        )
+        await self._append_system_gate_run(
+            original_task_id,
+            {
+                "gate": "review",
+                "outcome": "needs_revision",
+                "revision_task_ids": [task["id"] for task in created],
+                "finished_at": _utcnow(),
+            },
+        )
+        return created
+
+    async def mark_review_ready_if_unblocked(self, task_id: str) -> dict:
+        """Move a waiting review task back to pending review when unblocked."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != REVIEW_STATUS:
+            return task
+        if await self._has_unresolved_dependencies(task_id):
+            return task
+        if task.get("review_status") != "waiting_revision":
+            return task
+
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET review_status = 'pending' "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status = 'waiting_revision' RETURNING *",
+            (task_id,),
+        )
+        return rows[0] if rows else await self.get_task(task_id)
+
     async def _append_system_gate_run(self, task_id: str, entry: dict) -> None:
         task = await self.get_task(task_id)
         if task is None:
@@ -1054,6 +1128,18 @@ class TaskBoard:
                     queue.append(upstream)
 
         return False
+
+    async def add_dependency(self, task_id: str, blocked_by_id: str) -> None:
+        """Add a dependency edge after checking that it will not create a cycle."""
+        if await self.has_cycle(task_id, blocked_by_id):
+            raise ValueError(
+                f"Dependency {task_id} -> {blocked_by_id} would create a cycle"
+            )
+        await self._db.execute(
+            "INSERT OR IGNORE INTO task_dependencies (task_id, blocked_by) "
+            "VALUES (?, ?)",
+            (task_id, blocked_by_id),
+        )
 
     # ------------------------------------------------------------------
     # Resilience / Recovery

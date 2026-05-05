@@ -921,3 +921,112 @@ async def test_create_task_reconciles_blocker_completed_during_dependency_insert
             {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
         )
     ]
+
+
+async def test_create_review_revision_tasks_blocks_original_on_revision(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build reviewed widget",
+        task_type="implementation",
+        assigned_to="coder",
+        priority="high",
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == original["id"]
+    completed = await board.complete_task_with_output(original["id"], "Ready.")
+    assert completed["status"] == "review"
+
+    revisions = await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+
+    assert len(revisions) == 1
+    revision = revisions[0]
+    assert revision["status"] == "backlog"
+    assert revision["review_parent_task_id"] == original["id"]
+    assert revision["revision_of"] == original["id"]
+    assert revision["parent_id"] == original["id"]
+    assert revision["group_id"] == group["id"]
+    assert revision["created_by"] == "system"
+    assert revision["task_type"] == "revision"
+    assert revision["assigned_to"] == "coder"
+    assert revision["priority"] == "high"
+
+    parent = await board.get_task(original["id"])
+    assert parent["status"] == "review"
+    assert parent["review_status"] == "waiting_revision"
+    assert json.loads(parent["revision_task_ids"]) == [revision["id"]]
+    gate_runs = json.loads(parent["system_gate_runs"])
+    assert gate_runs[-1]["gate"] == "review"
+    assert gate_runs[-1]["outcome"] == "needs_revision"
+    assert gate_runs[-1]["revision_task_ids"] == [revision["id"]]
+    assert gate_runs[-1]["finished_at"]
+
+    deps = await board._db.execute_fetchall(
+        "SELECT task_id, blocked_by, resolved FROM task_dependencies WHERE task_id = ?",
+        (original["id"],),
+    )
+    assert deps == [
+        {"task_id": original["id"], "blocked_by": revision["id"], "resolved": 0}
+    ]
+
+
+async def test_mark_review_ready_if_unblocked_waits_for_revision_dependencies(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    original = await board.create_task(
+        group_id=group["id"],
+        title="Build reviewed widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        original["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == original["id"]
+    await board.complete_task_with_output(original["id"], "Ready.")
+    revisions = await board.create_review_revision_tasks(
+        original["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    revision = revisions[0]
+
+    still_waiting = await board.mark_review_ready_if_unblocked(original["id"])
+
+    assert still_waiting["status"] == "review"
+    assert still_waiting["review_status"] == "waiting_revision"
+
+    await board.apply_backlog_intake_decision(
+        revision["id"],
+        needs_review=True,
+        reason="Revision children complete directly.",
+    )
+    claimed_revision = await board.claim_task("coder", "coder-1")
+    assert claimed_revision["id"] == revision["id"]
+    completed_revision = await board.complete_task(claimed_revision["id"])
+
+    assert completed_revision["status"] == "completed"
+    assert completed_revision["review_status"] is None
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ? AND blocked_by = ?",
+        (original["id"], revision["id"]),
+    )
+    assert deps == [{"resolved": 1}]
+
+    ready = await board.mark_review_ready_if_unblocked(original["id"])
+
+    assert ready["status"] == "review"
+    assert ready["review_status"] == "pending"
