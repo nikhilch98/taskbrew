@@ -629,8 +629,14 @@ async def get_task_detail(task_id: str):
     children = await orch.task_board._db.execute_fetchall(
         "SELECT id, title, status, assigned_to FROM tasks WHERE parent_id = ?", (task_id,)
     )
+    revision_tasks = await orch.task_board._db.execute_fetchall(
+        "SELECT id, title, status, assigned_to FROM tasks "
+        "WHERE review_parent_task_id = ? ORDER BY created_at",
+        (task_id,),
+    )
     task["dependencies"] = deps
     task["children"] = children
+    task["revision_tasks"] = revision_tasks
     return task
 
 
@@ -698,7 +704,7 @@ _TASK_UPDATE_COLUMN_SQL: dict[str, str] = {
     "status": "status = ?",
 }
 _VALID_TASK_STATUSES = frozenset({
-    "blocked", "pending", "in_progress",
+    "backlog", "blocked", "pending", "in_progress", "review",
     "completed", "failed", "rejected", "cancelled",
 })
 

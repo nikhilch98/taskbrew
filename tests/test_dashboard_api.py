@@ -12,6 +12,15 @@ from taskbrew.agents.instance_manager import InstanceManager
 from taskbrew.project_manager import ProjectManager
 
 
+async def _release_task(board: TaskBoard, task: dict) -> dict:
+    """Move a backlog task through the system intake gate for legacy tests."""
+    return await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Test intake release.",
+    )
+
+
 @pytest.fixture
 async def app_client(tmp_path):
     db = Database(str(tmp_path / "test.db"))
@@ -76,9 +85,34 @@ async def test_get_board_with_tasks(app_client):
     resp = await app_client["client"].get("/api/board")
     assert resp.status_code == 200
     data = resp.json()
-    assert "pending" in data
-    assert len(data["pending"]) == 1
-    assert data["pending"][0]["title"] == "Implement login"
+    assert "backlog" in data
+    assert len(data["backlog"]) == 1
+    assert data["backlog"][0]["title"] == "Implement login"
+
+
+async def test_task_detail_exposes_system_gate_fields(app_client):
+    board = app_client["board"]
+    group = await board.create_group(title="Gate Detail", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Risky task",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="pm",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Touches shared orchestration logic.",
+    )
+
+    resp = await app_client["client"].get(f"/api/tasks/{task['id']}")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["needs_review"] == 1
+    assert data["needs_review_reason"] == "Touches shared orchestration logic."
+    assert "revision_tasks" in data
 
 
 async def test_get_board_filtered(app_client):
@@ -303,7 +337,7 @@ async def test_group_trace_fanout_children_relationships(app_client):
     assert by_id[coder_a["id"]]["parent_id"] == arch["id"]
     assert by_id[coder_b["id"]]["parent_id"] == arch["id"]
     # Both coder tasks are implementation, architect is tech_design.
-    assert data["status_counts"]["pending"] == 3
+    assert data["status_counts"]["backlog"] == 3
 
 
 async def test_group_trace_surfaces_completion_checks_and_merge_status(app_client):
@@ -403,7 +437,8 @@ async def test_post_task(app_client):
     assert data["title"] == "Design the architecture"
     assert data["assigned_to"] == "architect"
     assert data["created_by"] == "pm-1"
-    assert data["status"] == "pending"
+    assert data["status"] == "backlog"
+    assert data["intended_status"] == "pending"
     assert data["id"].startswith("AR-")
 
 
@@ -427,7 +462,9 @@ async def test_post_task_with_blocked_by(app_client):
         "blocked_by": [first_task_id],
     })
     assert resp.status_code == 200
-    assert resp.json()["status"] == "blocked"
+    data = resp.json()
+    assert data["status"] == "backlog"
+    assert data["intended_status"] == "blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -1491,6 +1528,7 @@ async def test_agent_created_task_infers_current_parent(stage1_client):
         group_id=group["id"], title="PRD", task_type="goal",
         assigned_to="pm", created_by="human",
     )
+    await _release_task(board, pm_goal)
     claimed = await board.claim_task("pm", "pm-1")
     assert claimed["id"] == pm_goal["id"]
 
@@ -1516,6 +1554,7 @@ async def test_duplicate_verifier_rejected_when_parent_inferred(stage1_client):
         group_id=group["id"], title="Implement", task_type="implementation",
         assigned_to="coder", created_by="human",
     )
+    await _release_task(board, impl)
     claimed = await board.claim_task("coder", "coder-1")
     assert claimed["id"] == impl["id"]
 
@@ -1554,6 +1593,7 @@ async def test_verifier_revision_infers_implementation_parent(stage1_client):
         group_id=group["id"], title="Verify", task_type="verification",
         assigned_to="verifier", created_by="coder-1", parent_id=impl["id"],
     )
+    await _release_task(board, verification)
     claimed = await board.claim_task("verifier", "verifier-1")
     assert claimed["id"] == verification["id"]
 
@@ -1664,7 +1704,7 @@ async def test_fix4_group_completion_spawns_goal_verification(stage1_client):
     for t in tasks:
         await board.complete_task(t["id"])
 
-    # The goal_verification task should now exist, pending for PM.
+    # The goal_verification task should now exist in backlog for PM intake.
     gv = await db.execute_fetchone(
         "SELECT id, status, assigned_to, parent_id, requires_fanout "
         "FROM tasks WHERE group_id = ? AND task_type = 'goal_verification'",
@@ -1672,7 +1712,7 @@ async def test_fix4_group_completion_spawns_goal_verification(stage1_client):
     )
     assert gv is not None
     assert gv["assigned_to"] == "pm"
-    assert gv["status"] == "pending"
+    assert gv["status"] == "backlog"
     assert gv["parent_id"] == pm_goal["id"]
     # Goal-verify should NOT be subject to the fan-out gate itself.
     assert gv["requires_fanout"] == 0
