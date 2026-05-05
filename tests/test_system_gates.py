@@ -66,6 +66,22 @@ class FakeRunner:
         return self.text
 
 
+class BlockingReviewAnalyzer(SystemGateAnalyzer):
+    def __init__(self) -> None:
+        self.entered = 0
+        self.first_entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def decide_needs_review(self, context: dict) -> BacklogIntakeResult:
+        raise AssertionError("backlog analysis should not run")
+
+    async def review_completed_task(self, context: dict) -> ReviewResult:
+        self.entered += 1
+        self.first_entered.set()
+        await self.release.wait()
+        return ReviewResult(outcome="needs_revision", reason="Add the missing test.")
+
+
 def _agent_analyzer(text: str) -> AgentRunnerSystemGateAnalyzer:
     analyzer = AgentRunnerSystemGateAnalyzer.__new__(AgentRunnerSystemGateAnalyzer)
     analyzer._runner = FakeRunner(text)
@@ -242,7 +258,39 @@ async def test_process_pending_once_defaults_revision_task_when_missing(
     assert revision["description"] == "Fix the gap."
 
 
-async def test_process_pending_once_retries_running_backlog_task(board: TaskBoard):
+async def test_process_pending_once_skips_active_running_backlog_task(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Do not retry active backlog",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET backlog_intake_status = 'running' WHERE id = ?",
+        (task["id"],),
+    )
+    analyzer = FakeAnalyzer(
+        backlog_results=[
+            BacklogIntakeResult(needs_review=False, reason="Must not be consumed.")
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 0}
+    assert analyzer.backlog_contexts == []
+    updated = await board.get_task(task["id"])
+    assert updated["status"] == "backlog"
+    assert updated["backlog_intake_status"] == "running"
+
+
+async def test_process_pending_once_retries_stale_running_backlog_task(
+    board: TaskBoard,
+):
     group = await _create_group(board)
     task = await board.create_task(
         group_id=group["id"],
@@ -262,7 +310,11 @@ async def test_process_pending_once_retries_running_backlog_task(board: TaskBoar
             )
         ]
     )
-    manager = SystemGateManager(board=board, analyzer=analyzer)
+    manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
 
     counts = await manager.process_pending_once()
 
@@ -272,7 +324,29 @@ async def test_process_pending_once_retries_running_backlog_task(board: TaskBoar
     assert updated["backlog_intake_status"] == "completed"
 
 
-async def test_process_pending_once_retries_running_review_task(board: TaskBoard):
+async def test_process_pending_once_skips_active_running_review_task(board: TaskBoard):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Must not be consumed.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 0}
+    assert analyzer.review_contexts == []
+    updated = await board.get_task(review_task["id"])
+    assert updated["status"] == "review"
+    assert updated["review_status"] == "running"
+
+
+async def test_process_pending_once_retries_stale_running_review_task(
+    board: TaskBoard,
+):
     review_task = await _create_review_task(board)
     await board._db.execute(
         "UPDATE tasks SET review_status = 'running' WHERE id = ?",
@@ -281,7 +355,11 @@ async def test_process_pending_once_retries_running_review_task(board: TaskBoard
     analyzer = FakeAnalyzer(
         review_results=[ReviewResult(outcome="approved", reason="Still good.")]
     )
-    manager = SystemGateManager(board=board, analyzer=analyzer)
+    manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
 
     counts = await manager.process_pending_once()
 
@@ -289,6 +367,32 @@ async def test_process_pending_once_retries_running_review_task(board: TaskBoard
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "completed"
     assert updated["review_status"] == "approved"
+
+
+async def test_overlapping_review_tasks_create_one_revision(board: TaskBoard):
+    review_task = await _create_review_task(board)
+    analyzer = BlockingReviewAnalyzer()
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    first = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    await analyzer.first_entered.wait()
+    second = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    await asyncio.sleep(0)
+    analyzer.release.set()
+
+    results = await asyncio.gather(first, second)
+
+    assert results.count(True) == 1
+    assert results.count(False) == 1
+    updated = await board.get_task(review_task["id"])
+    revision_ids = json.loads(updated["revision_task_ids"])
+    gate_runs = json.loads(updated["system_gate_runs"])
+    needs_revision_runs = [
+        run for run in gate_runs if run.get("outcome") == "needs_revision"
+    ]
+    assert len(revision_ids) == 1
+    assert len(needs_revision_runs) == 1
+    assert analyzer.entered == 1
 
 
 async def test_backlog_analyzer_exception_marks_intake_failed(board: TaskBoard):
@@ -451,6 +555,13 @@ def test_extract_json_object_rejects_invalid_json() -> None:
 def test_extract_json_object_rejects_non_object_json() -> None:
     with pytest.raises(SystemGateAnalysisError, match="must be an object"):
         _extract_json_object("[1, 2, 3]")
+
+
+def test_system_agent_import_smoke() -> None:
+    import taskbrew.system_agent as system_agent
+
+    assert system_agent.SYSTEM_AGENT_PROMPT
+    assert callable(system_agent.build_system_agent_config)
 
 
 async def test_agent_analyzer_rejects_wrong_needs_review_type() -> None:

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from taskbrew.agents.base import AgentRunner
@@ -13,6 +14,10 @@ from taskbrew.config import AgentConfig
 from taskbrew.orchestrator.task_board import BACKLOG_STATUS, REVIEW_STATUS, TaskBoard
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass(frozen=True)
@@ -207,11 +212,13 @@ class SystemGateManager:
         analyzer: SystemGateAnalyzer,
         interval_seconds: float = 5.0,
         batch_size: int = 10,
+        running_timeout_seconds: float = 300.0,
     ) -> None:
         self._board = board
         self._analyzer = analyzer
         self._interval_seconds = interval_seconds
         self._batch_size = batch_size
+        self._running_timeout_seconds = running_timeout_seconds
         self._stop_requested = False
 
     async def _backlog_context(self, task: dict) -> dict:
@@ -234,18 +241,29 @@ class SystemGateManager:
         task = await self._board.get_task(task_id)
         if task is None or task["status"] != BACKLOG_STATUS:
             return False
+        backlog_status = task.get("backlog_intake_status") or "pending"
+        include_running = (
+            backlog_status == "running" and self._is_running_stale(task, "backlog")
+        )
+        if backlog_status == "running" and not include_running:
+            return False
+        status_predicate = (
+            "IN ('pending', 'failed', 'running')"
+            if include_running
+            else "IN ('pending', 'failed')"
+        )
 
         rows = await self._board._db.execute_returning(
             "UPDATE tasks SET backlog_intake_status = 'running' "
             "WHERE id = ? AND status = 'backlog' "
-            "AND COALESCE(backlog_intake_status, 'pending') "
-            "IN ('pending', 'failed', 'running') "
+            f"AND COALESCE(backlog_intake_status, 'pending') {status_predicate} "
             "RETURNING *",
             (task_id,),
         )
         if not rows:
             return False
 
+        await self._append_running_gate_run(task_id, "backlog")
         running_task = rows[0]
         try:
             result = await self._analyzer.decide_needs_review(
@@ -273,12 +291,22 @@ class SystemGateManager:
             return False
         if await self._board._has_unresolved_dependencies(task_id):
             return False
+        review_status = task.get("review_status") or "pending"
+        include_running = (
+            review_status == "running" and self._is_running_stale(task, "review")
+        )
+        if review_status == "running" and not include_running:
+            return False
+        status_predicate = (
+            "IN ('pending', 'failed', 'running')"
+            if include_running
+            else "IN ('pending', 'failed')"
+        )
 
         rows = await self._board._db.execute_returning(
             "UPDATE tasks SET review_status = 'running' "
             "WHERE id = ? AND status = 'review' "
-            "AND COALESCE(review_status, 'pending') "
-            "IN ('pending', 'failed', 'running') "
+            f"AND COALESCE(review_status, 'pending') {status_predicate} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM task_dependencies "
             "  WHERE task_id = ? AND resolved = 0"
@@ -288,6 +316,7 @@ class SystemGateManager:
         if not rows:
             return False
 
+        await self._append_running_gate_run(task_id, "review")
         running_task = rows[0]
         try:
             result = await self._analyzer.review_completed_task(
@@ -309,13 +338,19 @@ class SystemGateManager:
             return counts
 
         backlog_rows = await self._board._db.execute_fetchall(
-            "SELECT id FROM tasks WHERE status = 'backlog' "
+            "SELECT id, backlog_intake_status, system_gate_runs "
+            "FROM tasks WHERE status = 'backlog' "
             "AND COALESCE(backlog_intake_status, 'pending') "
             "IN ('pending', 'failed', 'running') "
             "ORDER BY created_at LIMIT ?",
             (self._batch_size,),
         )
         for row in backlog_rows:
+            if (
+                row.get("backlog_intake_status") == "running"
+                and not self._is_running_stale(row, "backlog")
+            ):
+                continue
             if await self.process_backlog_task(row["id"]):
                 counts["backlog"] += 1
 
@@ -324,7 +359,8 @@ class SystemGateManager:
             return counts
 
         review_rows = await self._board._db.execute_fetchall(
-            "SELECT id FROM tasks WHERE status = 'review' "
+            "SELECT id, review_status, system_gate_runs "
+            "FROM tasks WHERE status = 'review' "
             "AND COALESCE(review_status, 'pending') "
             "IN ('pending', 'failed', 'running') "
             "AND NOT EXISTS ("
@@ -335,6 +371,11 @@ class SystemGateManager:
             (remaining,),
         )
         for row in review_rows:
+            if (
+                row.get("review_status") == "running"
+                and not self._is_running_stale(row, "review")
+            ):
+                continue
             if await self.process_review_task(row["id"]):
                 counts["review"] += 1
 
@@ -357,6 +398,8 @@ class SystemGateManager:
         elif outcome == "rejected":
             await self._board.reject_review_gate(task_id, reason=result.reason)
         elif outcome == "needs_revision":
+            if not await self._review_gate_still_running(task_id):
+                return
             revisions = result.revisions or [
                 RevisionRequest(description=result.reason)
             ]
@@ -372,9 +415,59 @@ class SystemGateManager:
     async def _restore_pending_review_status(self, task_id: str) -> None:
         await self._board._db.execute(
             "UPDATE tasks SET review_status = 'pending' "
-            "WHERE id = ? AND status = 'review' AND review_status = 'running'",
-            (task_id,),
+            "WHERE id = ? AND status = 'review' AND review_status = 'running' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ")",
+            (task_id, task_id),
         )
+
+    async def _review_gate_still_running(self, task_id: str) -> bool:
+        row = await self._board._db.execute_fetchone(
+            "SELECT 1 FROM tasks WHERE id = ? AND status = 'review' "
+            "AND review_status = 'running' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") LIMIT 1",
+            (task_id, task_id),
+        )
+        return row is not None
+
+    async def _append_running_gate_run(self, task_id: str, gate: str) -> None:
+        await self._board._append_system_gate_run(
+            task_id,
+            {
+                "gate": gate,
+                "outcome": "running",
+                "started_at": _utcnow(),
+            },
+        )
+
+    def _is_running_stale(self, task: dict, gate: str) -> bool:
+        if self._running_timeout_seconds <= 0:
+            return True
+        started_at = self._latest_running_started_at(task, gate)
+        if started_at is None:
+            return False
+        return (
+            datetime.now(timezone.utc) - started_at
+        ).total_seconds() >= self._running_timeout_seconds
+
+    def _latest_running_started_at(self, task: dict, gate: str) -> datetime | None:
+        runs = self._board._json_list(task.get("system_gate_runs"))
+        for run in reversed(runs):
+            if run.get("gate") != gate or run.get("outcome") != "running":
+                continue
+            started_at = run.get("started_at")
+            if not isinstance(started_at, str):
+                continue
+            try:
+                return datetime.fromisoformat(started_at)
+            except ValueError:
+                continue
+        return None
 
     def _revision_to_dict(self, revision: RevisionRequest) -> dict:
         return {
