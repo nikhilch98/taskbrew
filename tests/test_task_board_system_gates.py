@@ -1349,3 +1349,130 @@ async def test_add_dependency_fails_target_for_failed_blocker(board: TaskBoard):
     assert deps == [{"resolved": 0}]
     stored_target = await board.get_task(target["id"])
     assert stored_target["status"] == "failed"
+
+
+async def test_add_dependency_rejects_review_pending_target_for_failed_blocker(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    review_task = await board.create_task(
+        group_id=group["id"],
+        title="Build reviewed widget",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Failed blocker",
+        task_type="implementation",
+        assigned_to="tester",
+    )
+    await board.apply_backlog_intake_decision(
+        review_task["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    claimed_review = await board.claim_task("coder", "coder-1")
+    assert claimed_review["id"] == review_task["id"]
+    await board.complete_task_with_output(review_task["id"], "Ready.")
+    claimed_blocker = await board.claim_task("tester", "tester-1")
+    assert claimed_blocker["id"] == blocker["id"]
+    await board.fail_task(blocker["id"])
+
+    await board.add_dependency(review_task["id"], blocker["id"])
+
+    stored_review = await board.get_task(review_task["id"])
+    assert stored_review["status"] == "rejected"
+    assert stored_review["review_status"] == "rejected"
+    assert "terminal dependency" in stored_review["rejection_reason"].lower()
+    assert blocker["id"] in stored_review["rejection_reason"]
+    gate_runs = json.loads(stored_review["system_gate_runs"])
+    assert gate_runs[-1]["gate"] == "review"
+    assert gate_runs[-1]["outcome"] == "rejected"
+    assert gate_runs[-1]["failed_dependency_task_id"] == blocker["id"]
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (review_task["id"],),
+    )
+    assert deps == [{"resolved": 0}]
+
+
+async def test_add_dependency_rejects_waiting_review_target_for_rejected_blocker(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    review_task = await board.create_task(
+        group_id=group["id"],
+        title="Build risky foundation",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Verify risky foundation",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[review_task["id"]],
+    )
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Rejected blocker",
+        task_type="implementation",
+        assigned_to="tester",
+    )
+    await board.apply_backlog_intake_decision(
+        review_task["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Waits for approved implementation.",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=True,
+        reason="Needs system review.",
+    )
+    claimed_review = await board.claim_task("coder", "coder-1")
+    assert claimed_review["id"] == review_task["id"]
+    await board.complete_task_with_output(review_task["id"], "Ready.")
+    await board.create_review_revision_tasks(
+        review_task["id"],
+        [{"title": "Fix missing edge-case test"}],
+    )
+    claimed_blocker = await board.claim_task("tester", "tester-1")
+    assert claimed_blocker["id"] == blocker["id"]
+    await board.complete_task(claimed_blocker["id"])
+    await board.reject_review_gate(
+        blocker["id"],
+        reason="Review rejected the blocker.",
+    )
+    event_bus.events.clear()
+
+    await board.add_dependency(review_task["id"], blocker["id"])
+
+    stored_review = await board.get_task(review_task["id"])
+    assert stored_review["status"] == "rejected"
+    assert stored_review["review_status"] == "rejected"
+    assert "terminal dependency" in stored_review["rejection_reason"].lower()
+    assert blocker["id"] in stored_review["rejection_reason"]
+    gate_runs = json.loads(stored_review["system_gate_runs"])
+    assert gate_runs[-1]["outcome"] == "rejected"
+    assert gate_runs[-1]["failed_dependency_task_id"] == blocker["id"]
+
+    stored_dependent = await board.get_task(dependent["id"])
+    assert stored_dependent["status"] == "failed"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (dependent["id"],),
+    )
+    assert deps == [{"resolved": 0}]
+    assert event_bus.events == []

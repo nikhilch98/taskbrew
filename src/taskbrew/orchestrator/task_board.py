@@ -932,6 +932,36 @@ class TaskBoard:
         )
         return rows[0]
 
+    async def _reject_review_for_terminal_dependency(
+        self, review_task_id: str, failed_dependency_task_id: str
+    ) -> dict | None:
+        """Reject a review task blocked by an already failed or rejected dependency."""
+        now = _utcnow()
+        reason = (
+            f"Terminal dependency task {failed_dependency_task_id} failed or was "
+            "rejected; the review cannot proceed."
+        )
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = 'rejected', review_status = 'rejected', "
+            "rejection_reason = ? "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status IN ('pending', 'waiting_revision') RETURNING *",
+            (reason, review_task_id),
+        )
+        if not rows:
+            return None
+        await self._append_system_gate_run(
+            review_task_id,
+            {
+                "gate": "review",
+                "outcome": "rejected",
+                "reason": reason,
+                "failed_dependency_task_id": failed_dependency_task_id,
+                "finished_at": now,
+            },
+        )
+        return rows[0]
+
     # ------------------------------------------------------------------
     # Group completion check
     # ------------------------------------------------------------------
@@ -1216,6 +1246,16 @@ class TaskBoard:
                 "WHERE task_id = ? AND blocked_by = ?",
                 (now, task_id, blocked_by_id),
             )
+        if blocker and blocker["status"] in ("failed", "rejected"):
+            target = await self.get_task(task_id)
+            if target and target["status"] == REVIEW_STATUS:
+                rejected = await self._reject_review_for_terminal_dependency(
+                    task_id, blocked_by_id
+                )
+                if rejected:
+                    await self._cascade_failure(task_id)
+                    await self._check_group_completion(task_id)
+                    return
         await self._reconcile_dependencies_after_create(task_id)
 
     # ------------------------------------------------------------------
