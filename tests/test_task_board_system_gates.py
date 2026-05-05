@@ -346,6 +346,11 @@ async def test_review_rejection_cascades_to_blocked_dependent(
     stored_dependent = await board.get_task(dependent["id"])
     assert stored_dependent["status"] == "failed"
     assert stored_dependent["status"] != "pending"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ?",
+        (dependent["id"],),
+    )
+    assert deps == [{"resolved": 0}]
     assert event_bus.events == []
 
 
@@ -777,6 +782,47 @@ async def test_dependent_created_after_blocker_failed_is_failed(board: TaskBoard
     )
 
     assert dependent["status"] == "failed"
+    assert await board.claim_task("tester", "tester-1") is None
+
+
+async def test_dependent_created_after_blocker_rejected_is_failed(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Rejected blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=True,
+        reason="Risky implementation.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed["id"] == blocker["id"]
+    completed = await board.complete_task(blocker["id"])
+    assert completed["status"] == "review"
+    await board.reject_review_gate(
+        blocker["id"],
+        reason="Review rejected the implementation.",
+    )
+
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Depends on rejected work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    after_intake = await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Should not wait on rejected work.",
+    )
+
+    assert dependent["status"] == "failed"
+    assert after_intake["status"] == "failed"
+    assert after_intake["status"] != "blocked"
     assert await board.claim_task("tester", "tester-1") is None
 
 

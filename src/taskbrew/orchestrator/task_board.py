@@ -353,7 +353,7 @@ class TaskBoard:
             "SELECT 1 FROM task_dependencies d "
             "JOIN tasks blocker ON blocker.id = d.blocked_by "
             "WHERE d.task_id = ? AND d.resolved = 0 "
-            "AND blocker.status = 'failed' LIMIT 1",
+            "AND blocker.status IN ('failed', 'rejected') LIMIT 1",
             (task_id,),
         )
         if failed_blocker:
