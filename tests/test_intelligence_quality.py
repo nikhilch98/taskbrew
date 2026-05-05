@@ -34,12 +34,12 @@ async def quality(db: Database) -> QualityManager:
 async def _create_task(db: Database, task_type: str = "implementation") -> str:
     """Insert a minimal task + group so foreign key constraints are satisfied."""
     now = datetime.now(timezone.utc).isoformat()
-    group_id = f"GRP-{uuid.uuid4().hex[:4]}"
+    group_id = f"GRP-{uuid.uuid4().hex[:12]}"
     await db.execute(
         "INSERT INTO groups (id, title, origin, status, created_at) VALUES (?, 'Test', 'test', 'active', ?)",
         (group_id, now),
     )
-    task_id = f"TSK-{uuid.uuid4().hex[:4]}"
+    task_id = f"TSK-{uuid.uuid4().hex[:12]}"
     await db.execute(
         "INSERT INTO tasks (id, group_id, title, task_type, priority, assigned_to, status, created_by, created_at) "
         "VALUES (?, ?, 'Test Task', ?, 'medium', 'coder', 'completed', 'test', ?)",

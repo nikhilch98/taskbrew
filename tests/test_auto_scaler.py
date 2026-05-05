@@ -39,6 +39,15 @@ def _make_role(
     )
 
 
+async def _release_task(board: TaskBoard, task: dict) -> dict:
+    """Run the one-time intake gate for tests that need pending queue pressure."""
+    return await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Test intake release.",
+    )
+
+
 # ------------------------------------------------------------------
 # Fixtures
 # ------------------------------------------------------------------
@@ -110,12 +119,13 @@ async def test_scale_up_calls_factory(
     # Create a group and multiple pending tasks to exceed threshold
     group = await task_board.create_group(title="Feature", created_by="pm")
     for i in range(3):
-        await task_board.create_task(
+        task = await task_board.create_task(
             group_id=group["id"],
             title=f"Task {i}",
             task_type="implementation",
             assigned_to="coder",
         )
+        await _release_task(task_board, task)
 
     factory_calls = []
 
@@ -197,12 +207,13 @@ async def test_no_scale_at_max_instances(
     # Create many pending tasks
     group = await task_board.create_group(title="Feature", created_by="pm")
     for i in range(10):
-        await task_board.create_task(
+        task = await task_board.create_task(
             group_id=group["id"],
             title=f"Task {i}",
             task_type="implementation",
             assigned_to="coder",
         )
+        await _release_task(task_board, task)
 
     factory_calls = []
 
@@ -233,12 +244,13 @@ async def test_scale_up_cooldown(
 
     group = await task_board.create_group(title="Feature", created_by="pm")
     for i in range(5):
-        await task_board.create_task(
+        task = await task_board.create_task(
             group_id=group["id"],
             title=f"Task {i}",
             task_type="implementation",
             assigned_to="coder",
         )
+        await _release_task(task_board, task)
 
     factory_calls = []
 

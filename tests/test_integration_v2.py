@@ -16,6 +16,15 @@ async def system(tmp_path):
     yield {"db": db, "board": board, "event_bus": event_bus}
     await db.close()
 
+
+async def _release_task(board: TaskBoard, task: dict) -> dict:
+    return await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Test intake release.",
+    )
+
+
 @pytest.mark.asyncio
 async def test_full_task_flow(system):
     board = system["board"]
@@ -26,6 +35,8 @@ async def test_full_task_flow(system):
         group_id=group["id"], title="Create PRD for dark mode",
         task_type="goal", assigned_to="pm", created_by="human",
     )
+    assert pm_task["status"] == "backlog"
+    pm_task = await _release_task(board, pm_task)
     assert pm_task["status"] == "pending"
 
     # 2. PM claims and completes -> creates architect task
@@ -37,6 +48,7 @@ async def test_full_task_flow(system):
         task_type="tech_design", assigned_to="architect", created_by="pm-1",
         parent_id=pm_task["id"],
     )
+    ar_task = await _release_task(board, ar_task)
 
     # 3. Architect completes -> creates coder task
     await board.claim_task("architect", "architect-1")
@@ -46,6 +58,7 @@ async def test_full_task_flow(system):
         task_type="implementation", assigned_to="coder", created_by="architect-1",
         parent_id=ar_task["id"],
     )
+    cd_task = await _release_task(board, cd_task)
 
     # 4. Coder completes -> creates tester (pending) + reviewer (blocked)
     await board.claim_task("coder", "coder-1")
@@ -55,11 +68,13 @@ async def test_full_task_flow(system):
         task_type="qa_verification", assigned_to="tester", created_by="coder-1",
         parent_id=cd_task["id"],
     )
+    ts_task = await _release_task(board, ts_task)
     rv_task = await board.create_task(
         group_id=group["id"], title="Review CSS variables",
         task_type="code_review", assigned_to="reviewer", created_by="coder-1",
         parent_id=cd_task["id"], blocked_by=[ts_task["id"]],
     )
+    rv_task = await _release_task(board, rv_task)
     assert rv_task["status"] == "blocked"
 
     # 5. Tester completes -> reviewer unblocks
@@ -78,12 +93,13 @@ async def test_full_task_flow(system):
     assert len(all_tasks) == 6
     gv = [t for t in all_tasks if t["task_type"] == "goal_verification"]
     assert len(gv) == 1
+    gv_task = await _release_task(board, gv[0])
     assert gv[0]["assigned_to"] == "pm"
-    assert gv[0]["status"] == "pending"
+    assert gv_task["status"] == "pending"
 
     # 7. PM completes the goal verification -> group seals.
     await board.claim_task("pm", "pm-1")
-    await board.complete_task(gv[0]["id"])
+    await board.complete_task(gv_task["id"])
 
     all_tasks = await board.get_group_tasks(group["id"])
     assert len(all_tasks) == 6
@@ -99,6 +115,7 @@ async def test_rejection_flow(system):
         group_id=group["id"], title="Implement X",
         task_type="implementation", assigned_to="coder", created_by="architect-1",
     )
+    cd_task = await _release_task(board, cd_task)
     await board.claim_task("coder", "coder-1")
     await board.complete_task(cd_task["id"])
 
@@ -107,6 +124,7 @@ async def test_rejection_flow(system):
         task_type="code_review", assigned_to="reviewer", created_by="coder-1",
         parent_id=cd_task["id"],
     )
+    rv_task = await _release_task(board, rv_task)
     await board.claim_task("reviewer", "reviewer-1")
     await board.reject_task(rv_task["id"], reason="Missing error handling")
 
@@ -116,6 +134,7 @@ async def test_rejection_flow(system):
         task_type="revision", assigned_to="coder", created_by="reviewer-1",
         parent_id=rv_task["id"], revision_of=cd_task["id"],
     )
+    revision = await _release_task(board, revision)
     assert revision["status"] == "pending"
     assert revision["revision_of"] == cd_task["id"]
 

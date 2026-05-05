@@ -142,6 +142,13 @@ class TestDatabasePerformance:
 class TestTaskBoardPerformance:
     """Tests verifying task board handles moderate load."""
 
+    async def _release_task(self, task_board: TaskBoard, task: dict) -> dict:
+        return await task_board.apply_backlog_intake_decision(
+            task["id"],
+            needs_review=False,
+            reason="Test intake release.",
+        )
+
     async def test_board_handles_100_plus_tasks(
         self, task_board: TaskBoard
     ):
@@ -199,12 +206,13 @@ class TestTaskBoardPerformance:
 
         # Create 10 tasks
         for i in range(10):
-            await task_board.create_task(
+            task = await task_board.create_task(
                 group_id=group["id"],
                 title=f"Concurrent task {i}",
                 task_type="implementation",
                 assigned_to="coder",
             )
+            await self._release_task(task_board, task)
 
         # Register 10 agent instances
         for i in range(10):

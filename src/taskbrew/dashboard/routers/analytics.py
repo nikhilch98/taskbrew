@@ -47,8 +47,8 @@ async def agent_performance_summary(days: int = Query(30, ge=1, le=365)):
         task_stats = await db.execute_fetchone(
             "SELECT "
             "  COUNT(*) as total_tasks, "
-            "  SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed, "
-            "  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed "
+            "  COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) as completed, "
+            "  COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed "
             "FROM tasks WHERE claimed_by = ? AND created_at >= ?",
             (r["agent_id"], cutoff),
         )
