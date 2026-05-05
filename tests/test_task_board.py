@@ -41,6 +41,15 @@ async def board(db: Database) -> TaskBoard:
     return tb
 
 
+async def _release_task(board: TaskBoard, task: dict) -> dict:
+    """Move a backlog task through the system intake gate for legacy tests."""
+    return await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Test intake release.",
+    )
+
+
 # ------------------------------------------------------------------
 # Task 5: Group CRUD
 # ------------------------------------------------------------------
@@ -79,7 +88,8 @@ async def test_create_task(board: TaskBoard):
     )
     # The ID uses the architect prefix because assigned_to="architect".
     assert task["id"] == "AR-001"
-    assert task["status"] == "pending"
+    assert task["status"] == "backlog"
+    assert task["intended_status"] == "pending"
     assert task["group_id"] == group["id"]
     assert task["assigned_to"] == "architect"
     assert task["created_by"] == "pm"
@@ -108,12 +118,13 @@ async def test_create_task_with_parent(board: TaskBoard):
 async def test_claim_task(board: TaskBoard):
     """claim_task should atomically claim the first pending task for a role."""
     group = await board.create_group(title="Feature C", created_by="pm")
-    await board.create_task(
+    task = await board.create_task(
         group_id=group["id"],
         title="Implement endpoint",
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, task)
     claimed = await board.claim_task("coder", "coder-instance-1")
     assert claimed is not None
     assert claimed["claimed_by"] == "coder-instance-1"
@@ -136,6 +147,7 @@ async def test_complete_task(board: TaskBoard):
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, task)
     # Must claim before completing (task needs to be in_progress).
     await board.claim_task("coder", "coder-1")
     result = await board.complete_task(task["id"])
@@ -152,6 +164,7 @@ async def test_complete_task_with_output_updates_already_completed_task(board: T
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, task)
     await board.claim_task("coder", "coder-1")
     await board.complete_task(task["id"])
 
@@ -191,6 +204,8 @@ async def test_get_board(board: TaskBoard):
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, t1)
+    await _release_task(board, t2)
     # Claim then complete one task.
     await board.claim_task("coder", "coder-1")
     await board.complete_task(t1["id"])
@@ -247,6 +262,8 @@ async def test_blocked_task_unblocks_when_dependency_completes(board: TaskBoard)
         assigned_to="tester",
         blocked_by=[dep["id"]],
     )
+    await _release_task(board, dep)
+    blocked = await _release_task(board, blocked)
     assert blocked["status"] == "blocked"
 
     # Claim then complete the dependency.
@@ -283,6 +300,9 @@ async def test_task_with_multiple_deps_stays_blocked_until_all_complete(
         assigned_to="reviewer",
         blocked_by=[dep1["id"], dep2["id"]],
     )
+    await _release_task(board, dep1)
+    await _release_task(board, dep2)
+    blocked = await _release_task(board, blocked)
     assert blocked["status"] == "blocked"
 
     # Claim and complete only the first dependency.
@@ -368,6 +388,8 @@ async def test_fail_task_cascades_to_blocked_dependents(board: TaskBoard):
         group_id=group["id"], title="Code review", task_type="review",
         assigned_to="reviewer", blocked_by=[task_a["id"]],
     )
+    await _release_task(board, task_a)
+    task_b = await _release_task(board, task_b)
     assert task_b["status"] == "blocked"
 
     # Claim and fail task A
@@ -394,6 +416,9 @@ async def test_fail_task_cascades_recursively(board: TaskBoard):
         group_id=group["id"], title="T3", task_type="review",
         assigned_to="reviewer", blocked_by=[t2["id"]],
     )
+    await _release_task(board, t1)
+    t2 = await _release_task(board, t2)
+    t3 = await _release_task(board, t3)
     assert t2["status"] == "blocked"
     assert t3["status"] == "blocked"
 
@@ -415,6 +440,7 @@ async def test_recover_stuck_blocked_tasks(board: TaskBoard):
         group_id=group["id"], title="Blocked", task_type="review",
         assigned_to="reviewer", blocked_by=[t1["id"]],
     )
+    t2 = await _release_task(board, t2)
     assert t2["status"] == "blocked"
 
     # Simulate old bug: fail t1 without cascade (direct SQL)
@@ -432,6 +458,38 @@ async def test_recover_stuck_blocked_tasks(board: TaskBoard):
     assert (await board.get_task(t2["id"]))["status"] == "failed"
 
 
+async def test_recover_stuck_blocked_tasks_fails_rejected_blocker(board: TaskBoard):
+    """Rejected blockers should fail stuck blocked dependents during recovery."""
+    group = await board.create_group(title="Rejected stuck", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Rejected dep",
+        task_type="impl",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Blocked by rejected dep",
+        task_type="review",
+        assigned_to="reviewer",
+        blocked_by=[blocker["id"]],
+    )
+    dependent = await _release_task(board, dependent)
+    assert dependent["status"] == "blocked"
+
+    # Simulate a crash after review rejection updates the blocker, before cascade.
+    await board._db.execute(
+        "UPDATE tasks SET status = 'rejected' WHERE id = ?",
+        (blocker["id"],),
+    )
+    await board._db._conn.commit()
+
+    repaired = await board.recover_stuck_blocked_tasks()
+
+    assert any(task["id"] == dependent["id"] for task in repaired)
+    assert (await board.get_task(dependent["id"]))["status"] == "failed"
+
+
 async def test_recover_unblocks_when_dep_completed(board: TaskBoard):
     """If blocker completed but resolution was missed, recovery should unblock."""
     group = await board.create_group(title="Missed", created_by="pm")
@@ -443,6 +501,7 @@ async def test_recover_unblocks_when_dep_completed(board: TaskBoard):
         group_id=group["id"], title="Blocked", task_type="review",
         assigned_to="reviewer", blocked_by=[t1["id"]],
     )
+    await _release_task(board, t2)
 
     # Simulate completed but dependency not resolved (crash scenario)
     await board._db.execute(
@@ -465,12 +524,13 @@ async def test_recover_unblocks_when_dep_completed(board: TaskBoard):
 async def test_claim_task_no_double_claim(board: TaskBoard):
     """Two sequential claims for the same role should not claim the same task."""
     group = await board.create_group(title="Double claim test", created_by="pm")
-    await board.create_task(
+    task = await board.create_task(
         group_id=group["id"],
         title="Only task",
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, task)
 
     # First claim should succeed
     first = await board.claim_task("coder", "coder-instance-1")
@@ -486,27 +546,30 @@ async def test_claim_task_no_double_claim(board: TaskBoard):
 async def test_claim_task_priority_ordering(board: TaskBoard):
     """claim_task should claim the highest-priority task first within a transaction."""
     group = await board.create_group(title="Priority test", created_by="pm")
-    await board.create_task(
+    low = await board.create_task(
         group_id=group["id"],
         title="Low priority task",
         task_type="implementation",
         assigned_to="coder",
         priority="low",
     )
-    await board.create_task(
+    critical = await board.create_task(
         group_id=group["id"],
         title="Critical task",
         task_type="implementation",
         assigned_to="coder",
         priority="critical",
     )
-    await board.create_task(
+    high = await board.create_task(
         group_id=group["id"],
         title="High priority task",
         task_type="implementation",
         assigned_to="coder",
         priority="high",
     )
+    await _release_task(board, low)
+    await _release_task(board, critical)
+    await _release_task(board, high)
 
     # Should claim critical first
     first = await board.claim_task("coder", "coder-1")
@@ -538,6 +601,7 @@ async def test_claim_task_returns_correct_fields(board: TaskBoard):
         assigned_to="coder",
         priority="medium",
     )
+    await _release_task(board, task)
 
     claimed = await board.claim_task("coder", "coder-instance-1")
     assert claimed is not None
@@ -571,6 +635,7 @@ async def test_create_task_blocked_by_valid(board: TaskBoard):
         assigned_to="coder",
         blocked_by=[task_a["id"]],
     )
+    task_b = await _release_task(board, task_b)
     assert task_b["status"] == "blocked"
 
 

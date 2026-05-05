@@ -25,6 +25,25 @@ _PRIORITY_ORDER = {
     "low": 3,
 }
 
+# Visible Kanban column order. Existing cancelled tasks remain terminal,
+# but are not represented as a separate visible board column.
+BOARD_STATUSES = (
+    "backlog",
+    "pending",
+    "in_progress",
+    "review",
+    "blocked",
+    "completed",
+    "rejected",
+    "failed",
+)
+
+TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "rejected"})
+CLAIMABLE_STATUS = "pending"
+BACKLOG_STATUS = "backlog"
+REVIEW_STATUS = "review"
+DEFAULT_MAX_REVIEW_ROUNDS = 3
+
 
 class TaskBoard:
     """High-level CRUD interface for groups, tasks, and dependencies.
@@ -140,6 +159,7 @@ class TaskBoard:
         priority: str = "medium",
         parent_id: str | None = None,
         revision_of: str | None = None,
+        review_parent_task_id: str | None = None,
         blocked_by: list[str] | None = None,
         requires_fanout: bool | None = None,
         branch_name: str | None = None,
@@ -168,7 +188,8 @@ class TaskBoard:
 
         task_id = await self._db.generate_task_id(prefix)
         now = _utcnow()
-        status = "blocked" if blocked_by else "pending"
+        intended_status = "blocked" if blocked_by else "pending"
+        status = BACKLOG_STATUS
 
         rf_stored: int | None
         if requires_fanout is None:
@@ -196,8 +217,10 @@ class TaskBoard:
             "INSERT INTO tasks "
             "(id, group_id, parent_id, title, description, task_type, "
             " priority, assigned_to, status, created_by, created_at, "
-            " revision_of, requires_fanout, branch_name, parent_branch) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " revision_of, requires_fanout, branch_name, parent_branch, "
+            " intended_status, backlog_intake_status, max_review_rounds, "
+            " review_parent_task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 group_id,
@@ -214,19 +237,12 @@ class TaskBoard:
                 rf_stored,
                 branch_name,
                 parent_branch,
+                intended_status,
+                "pending",
+                DEFAULT_MAX_REVIEW_ROUNDS,
+                review_parent_task_id,
             ),
         )
-        # Emit task.available only when the task is actually claimable.
-        # A blocked task becomes available later via _resolve_dependencies.
-        if self._event_bus is not None and status == "pending":
-            await self._event_bus.emit(
-                "task.available",
-                {
-                    "task_id": task_id,
-                    "role": assigned_to,
-                    "group_id": group_id,
-                },
-            )
 
         # Create dependency rows (with cycle detection).
         if blocked_by:
@@ -235,12 +251,20 @@ class TaskBoard:
                     raise ValueError(
                         f"Dependency {task_id} -> {dep_id} would create a cycle"
                     )
+                blocker = await self._db.execute_fetchone(
+                    "SELECT status FROM tasks WHERE id = ?",
+                    (dep_id,),
+                )
+                dep_resolved = 1 if blocker and blocker["status"] == "completed" else 0
+                dep_resolved_at = now if dep_resolved else None
                 await self._db.execute(
-                    "INSERT INTO task_dependencies (task_id, blocked_by) VALUES (?, ?)",
-                    (task_id, dep_id),
+                    "INSERT INTO task_dependencies "
+                    "(task_id, blocked_by, resolved, resolved_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (task_id, dep_id, dep_resolved, dep_resolved_at),
                 )
 
-        return {
+        task = {
             "id": task_id,
             "group_id": group_id,
             "parent_id": parent_id,
@@ -251,15 +275,215 @@ class TaskBoard:
             "assigned_to": assigned_to,
             "claimed_by": None,
             "status": status,
+            "intended_status": intended_status,
             "created_by": created_by,
             "created_at": now,
             "started_at": None,
             "completed_at": None,
             "rejection_reason": None,
             "revision_of": revision_of,
+            "needs_review": None,
+            "needs_review_reason": None,
+            "needs_review_decision": None,
+            "backlog_intake_status": "pending",
+            "backlog_intake_processed_at": None,
+            "review_status": None,
+            "review_round": 0,
+            "max_review_rounds": DEFAULT_MAX_REVIEW_ROUNDS,
+            "review_parent_task_id": review_parent_task_id,
+            "revision_task_ids": [],
+            "system_gate_runs": [],
             "requires_fanout": rf_stored,
             "fanout_retries": 0,
         }
+        if blocked_by:
+            reconciled = await self._reconcile_dependencies_after_create(task_id)
+            fresh = reconciled or await self.get_task(task_id)
+            if fresh:
+                task.update(fresh)
+        return self._normalize_task_return(task)
+
+    def _normalize_task_return(self, task: dict) -> dict:
+        task["revision_task_ids"] = self._json_list(task.get("revision_task_ids"))
+        task["system_gate_runs"] = self._json_list(task.get("system_gate_runs"))
+        return task
+
+    def _json_list(self, value) -> list:
+        if value in (None, ""):
+            return []
+        if isinstance(value, list):
+            return value
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+
+    async def _has_unresolved_dependencies(self, task_id: str) -> bool:
+        row = await self._db.execute_fetchone(
+            "SELECT 1 FROM task_dependencies "
+            "WHERE task_id = ? AND resolved = 0 LIMIT 1",
+            (task_id,),
+        )
+        return row is not None
+
+    async def _has_dependency_rows(self, task_id: str) -> bool:
+        row = await self._db.execute_fetchone(
+            "SELECT 1 FROM task_dependencies WHERE task_id = ? LIMIT 1",
+            (task_id,),
+        )
+        return row is not None
+
+    async def _target_status_after_intake(
+        self, task_id: str, intended_status: str
+    ) -> str:
+        if await self._has_unresolved_dependencies(task_id):
+            return "blocked"
+        if intended_status == "blocked" and not await self._has_dependency_rows(task_id):
+            return "blocked"
+        return "pending" if intended_status in ("pending", "blocked") else intended_status
+
+    async def _reconcile_dependencies_after_create(self, task_id: str) -> dict | None:
+        now = _utcnow()
+        await self._db.execute(
+            "UPDATE task_dependencies SET resolved = 1, resolved_at = ? "
+            "WHERE task_id = ? AND resolved = 0 "
+            "AND blocked_by IN (SELECT id FROM tasks WHERE status = 'completed')",
+            (now, task_id),
+        )
+
+        failed_blocker = await self._db.execute_fetchone(
+            "SELECT 1 FROM task_dependencies d "
+            "JOIN tasks blocker ON blocker.id = d.blocked_by "
+            "WHERE d.task_id = ? AND d.resolved = 0 "
+            "AND blocker.status IN ('failed', 'rejected') LIMIT 1",
+            (task_id,),
+        )
+        if failed_blocker:
+            failed_rows = await self._db.execute_returning(
+                "UPDATE tasks SET status = 'failed' "
+                "WHERE id = ? AND status IN ('backlog', 'blocked', 'pending') "
+                "RETURNING *",
+                (task_id,),
+            )
+            return failed_rows[0] if failed_rows else await self.get_task(task_id)
+
+        if not await self._has_unresolved_dependencies(task_id):
+            pending_rows = await self._db.execute_returning(
+                "UPDATE tasks SET status = 'pending' "
+                "WHERE id = ? AND status = 'blocked' RETURNING *",
+                (task_id,),
+            )
+            if pending_rows:
+                task = pending_rows[0]
+                if self._event_bus is not None:
+                    await self._event_bus.emit(
+                        "task.available",
+                        {
+                            "task_id": task["id"],
+                            "role": task["assigned_to"],
+                            "group_id": task["group_id"],
+                        },
+                    )
+                return task
+        return None
+
+    async def apply_backlog_intake_decision(
+        self,
+        task_id: str,
+        *,
+        needs_review: bool,
+        reason: str,
+        signals: list[str] | None = None,
+        confidence: str = "medium",
+    ) -> dict:
+        """Store the one-time backlog intake decision and move to intended state."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != BACKLOG_STATUS:
+            return task
+        if task.get("backlog_intake_status") == "completed":
+            return task
+
+        now = _utcnow()
+        decision = {
+            "decision": bool(needs_review),
+            "reason": reason,
+            "signals": signals or [],
+            "confidence": confidence,
+            "decided_by": "system_agent",
+            "decided_at": now,
+        }
+        intended_status = task.get("intended_status") or "pending"
+        target_status = await self._target_status_after_intake(task_id, intended_status)
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = ?, needs_review = ?, needs_review_reason = ?, "
+            "needs_review_decision = ?, backlog_intake_status = 'completed', "
+            "backlog_intake_processed_at = ? "
+            "WHERE id = ? AND status = 'backlog' "
+            "AND COALESCE(backlog_intake_status, 'pending') != 'completed' RETURNING *",
+            (
+                target_status,
+                1 if needs_review else 0,
+                reason,
+                json.dumps(decision),
+                now,
+                task_id,
+            ),
+        )
+        updated = rows[0] if rows else await self.get_task(task_id)
+        did_transition = bool(rows)
+        emit_available = bool(
+            did_transition and updated and updated["status"] == CLAIMABLE_STATUS
+        )
+        if (
+            did_transition
+            and updated
+            and updated["status"] == "blocked"
+            and await self._has_dependency_rows(task_id)
+            and not await self._has_unresolved_dependencies(task_id)
+        ):
+            pending_rows = await self._db.execute_returning(
+                "UPDATE tasks SET status = 'pending' "
+                "WHERE id = ? AND status = 'blocked' RETURNING *",
+                (task_id,),
+            )
+            if pending_rows:
+                updated = pending_rows[0]
+                emit_available = True
+            else:
+                updated = await self.get_task(task_id) or updated
+                emit_available = False
+        if (
+            emit_available
+            and updated
+            and self._event_bus is not None
+        ):
+            await self._event_bus.emit(
+                "task.available",
+                {
+                    "task_id": updated["id"],
+                    "role": updated["assigned_to"],
+                    "group_id": updated["group_id"],
+                },
+            )
+        return updated
+
+    async def mark_backlog_intake_failed(self, task_id: str, error: str) -> dict:
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET backlog_intake_status = 'failed', "
+            "needs_review_reason = ? "
+            "WHERE id = ? AND status = 'backlog' RETURNING *",
+            (f"System backlog intake failed at {now}: {error[:500]}", task_id),
+        )
+        if not rows:
+            task = await self.get_task(task_id)
+            if task is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return task
+        return rows[0]
 
     async def get_task(self, task_id: str) -> dict | None:
         """Return a single task by ID, or None."""
@@ -330,10 +554,18 @@ class TaskBoard:
             "WHERE id = ("
             "    SELECT id FROM tasks "
             "    WHERE assigned_to = ? AND status = 'pending' AND claimed_by IS NULL "
+            "    AND NOT EXISTS ("
+            "        SELECT 1 FROM task_dependencies d "
+            "        WHERE d.task_id = tasks.id AND d.resolved = 0"
+            "    ) "
             f"    ORDER BY {priority_case}, created_at "
             "    LIMIT 1"
             ") "
             "AND status = 'pending' AND claimed_by IS NULL "
+            "AND NOT EXISTS ("
+            "    SELECT 1 FROM task_dependencies d "
+            "    WHERE d.task_id = tasks.id AND d.resolved = 0"
+            ") "
             "RETURNING *"
         )
         rows = await self._db.execute_returning(sql, (instance_id, now, role))
@@ -343,21 +575,38 @@ class TaskBoard:
         logger.info("Task %s claimed by %s", result["id"], instance_id)
         return result
 
+    def _completion_status_for(self, task: dict) -> tuple[str, str | None]:
+        needs_review = task.get("needs_review")
+        review_parent = task.get("review_parent_task_id")
+        if needs_review in (1, True) and not review_parent:
+            return REVIEW_STATUS, "pending"
+        return "completed", None
+
     async def complete_task(self, task_id: str) -> dict:
         """Mark a task as completed and resolve downstream dependencies."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != "in_progress":
+            logger.warning(
+                "complete_task(%s) skipped: task is in status '%s', "
+                "expected 'in_progress'",
+                task_id,
+                task["status"],
+            )
+            return task
+
         now = _utcnow()
+        target_status, review_status = self._completion_status_for(task)
         rows = await self._db.execute_returning(
-            "UPDATE tasks SET status = 'completed', completed_at = ? "
+            "UPDATE tasks SET status = ?, completed_at = ?, review_status = ? "
             "WHERE id = ? AND status = 'in_progress' RETURNING *",
-            (now, task_id),
+            (target_status, now, review_status, task_id),
         )
         if not rows:
-            # Check whether the task exists at all vs. is in a terminal state.
-            existing = await self._db.execute_fetchone(
-                "SELECT id, status FROM tasks WHERE id = ?", (task_id,)
-            )
+            existing = await self.get_task(task_id)
             if existing is None:
-                raise ValueError(f"Task not found: {task_id}")
+                raise ValueError(f"Task not found after completion race: {task_id}")
             logger.warning(
                 "complete_task(%s) skipped: task is in status '%s', "
                 "expected 'in_progress'",
@@ -365,8 +614,9 @@ class TaskBoard:
                 existing["status"],
             )
             return existing
-        await self._resolve_dependencies(task_id)
-        await self._check_group_completion(task_id)
+        if target_status == "completed":
+            await self._resolve_dependencies(task_id)
+            await self._check_group_completion(task_id)
         logger.info("Task %s completed", task_id)
         return rows[0]
 
@@ -382,19 +632,21 @@ class TaskBoard:
         """
         now = _utcnow()
         persisted_output = output or ""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        target_status, review_status = self._completion_status_for(task)
         rows = await self._db.execute_returning(
-            "UPDATE tasks SET status = 'completed', completed_at = ?, "
-            "output_text = ? "
+            "UPDATE tasks SET status = ?, completed_at = ?, output_text = ?, "
+            "review_status = ? "
             "WHERE id = ? AND status = 'in_progress' RETURNING *",
-            (now, persisted_output, task_id),
+            (target_status, now, persisted_output, review_status, task_id),
         )
         if not rows:
-            existing = await self._db.execute_fetchone(
-                "SELECT id, status, output_text FROM tasks WHERE id = ?", (task_id,)
-            )
+            existing = await self.get_task(task_id)
             if existing is None:
-                raise ValueError(f"Task not found: {task_id}")
-            if existing["status"] == "completed":
+                raise ValueError(f"Task not found after completion race: {task_id}")
+            if existing["status"] in ("completed", "review"):
                 next_output = persisted_output or existing.get("output_text") or ""
                 completed_rows = await self._db.execute_returning(
                     "UPDATE tasks SET output_text = ? "
@@ -409,9 +661,282 @@ class TaskBoard:
                 existing["status"],
             )
             return existing
+        if target_status == "completed":
+            await self._resolve_dependencies(task_id)
+            await self._check_group_completion(task_id)
+        return rows[0]
+
+    async def approve_review_gate(self, task_id: str, *, reason: str) -> dict:
+        """Approve a task waiting at the system review gate."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != REVIEW_STATUS:
+            return task
+        if task.get("review_status") != "pending":
+            return task
+        if await self._has_unresolved_dependencies(task_id):
+            return task
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = 'completed', review_status = 'approved', "
+            "rejection_reason = NULL "
+            "WHERE id = ? AND status = 'review' AND review_status = 'pending' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") RETURNING *",
+            (task_id, task_id),
+        )
+        if not rows:
+            task = await self.get_task(task_id)
+            if task is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return task
+        await self._append_system_gate_run(
+            task_id,
+            {
+                "gate": "review",
+                "outcome": "approved",
+                "reason": reason,
+                "finished_at": now,
+            },
+        )
         await self._resolve_dependencies(task_id)
         await self._check_group_completion(task_id)
+        fresh = await self.get_task(task_id)
+        if fresh is None:
+            raise ValueError(f"Task not found after review approval: {task_id}")
+        return fresh
+
+    async def reject_review_gate(self, task_id: str, *, reason: str) -> dict:
+        """Reject a task waiting at the system review gate."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != REVIEW_STATUS:
+            return task
+        if task.get("review_status") not in ("pending", "running"):
+            return task
+        if await self._has_unresolved_dependencies(task_id):
+            return task
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = 'rejected', review_status = 'rejected', "
+            "rejection_reason = ? WHERE id = ? AND status = 'review' "
+            "AND review_status IN ('pending', 'running') "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") RETURNING *",
+            (reason, task_id, task_id),
+        )
+        if not rows:
+            task = await self.get_task(task_id)
+            return task
+        await self._append_system_gate_run(
+            task_id,
+            {
+                "gate": "review",
+                "outcome": "rejected",
+                "reason": reason,
+                "finished_at": now,
+            },
+        )
+        await self._cascade_failure(task_id)
+        await self._check_group_completion(task_id)
+        fresh = await self.get_task(task_id)
+        if fresh is None:
+            raise ValueError(f"Task not found after review rejection: {task_id}")
+        return fresh
+
+    async def create_review_revision_tasks(
+        self, original_task_id: str, revisions: list[dict]
+    ) -> list[dict]:
+        """Create revision tasks and block a review task until they complete."""
+        original = await self.get_task(original_task_id)
+        if original is None:
+            raise ValueError(f"Task not found: {original_task_id}")
+        if original["status"] != REVIEW_STATUS:
+            raise ValueError(
+                f"Task {original_task_id} is in status '{original['status']}', "
+                f"expected '{REVIEW_STATUS}'"
+            )
+        if not revisions:
+            raise ValueError("At least one revision is required")
+        original_review_status = original.get("review_status") or "pending"
+        original_review_round = int(original.get("review_round") or 0)
+        max_review_rounds = int(
+            original.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+        )
+        if max_review_rounds > 0 and original_review_round >= max_review_rounds:
+            return []
+
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET review_status = 'waiting_revision', "
+            "review_round = COALESCE(review_round, 0) + 1 "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status IN ('pending', 'running') "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") "
+            "AND (COALESCE(max_review_rounds, ?) <= 0 "
+            "OR COALESCE(review_round, 0) < COALESCE(max_review_rounds, ?)) "
+            "RETURNING *",
+            (
+                original_task_id,
+                original_task_id,
+                DEFAULT_MAX_REVIEW_ROUNDS,
+                DEFAULT_MAX_REVIEW_ROUNDS,
+            ),
+        )
+        if not rows:
+            return []
+        original = rows[0]
+
+        created: list[dict] = []
+        try:
+            for index, revision in enumerate(revisions, start=1):
+                revision_task = await self.create_task(
+                    group_id=original["group_id"],
+                    title=revision.get("title")
+                    or f"Revision {index} for {original_task_id}",
+                    task_type=revision.get("task_type") or "revision",
+                    assigned_to=revision.get("assigned_to")
+                    or original.get("assigned_to")
+                    or "coder",
+                    created_by="system",
+                    description=revision.get("description")
+                    or "Address the system review finding.",
+                    priority=revision.get("priority")
+                    or original.get("priority")
+                    or "medium",
+                    parent_id=original_task_id,
+                    revision_of=original_task_id,
+                    review_parent_task_id=original_task_id,
+                )
+                await self.add_dependency(original_task_id, revision_task["id"])
+                created.append(revision_task)
+        except BaseException:
+            await self._rollback_empty_revision_transition(
+                original_task_id,
+                original_review_status,
+                original_review_round,
+            )
+            raise
+
+        revision_task_ids = self._json_list(original.get("revision_task_ids"))
+        revision_task_ids.extend(task["id"] for task in created)
+        await self._db.execute(
+            "UPDATE tasks SET revision_task_ids = ? WHERE id = ?",
+            (json.dumps(revision_task_ids), original_task_id),
+        )
+        await self._append_system_gate_run(
+            original_task_id,
+            {
+                "gate": "review",
+                "outcome": "needs_revision",
+                "revision_task_ids": [task["id"] for task in created],
+                "review_round": original["review_round"],
+                "finished_at": _utcnow(),
+            },
+        )
+        return created
+
+    async def _rollback_empty_revision_transition(
+        self, original_task_id: str, review_status: str, review_round: int
+    ) -> None:
+        task = await self.get_task(original_task_id)
+        if task is None or task["status"] != REVIEW_STATUS:
+            return
+        if task.get("review_status") != "waiting_revision":
+            return
+        if self._json_list(task.get("revision_task_ids")):
+            return
+        dep = await self._db.execute_fetchone(
+            "SELECT 1 FROM task_dependencies WHERE task_id = ? LIMIT 1",
+            (original_task_id,),
+        )
+        if dep is not None:
+            return
+        await self._db.execute(
+            "UPDATE tasks SET review_status = ?, review_round = ? "
+            "WHERE id = ? AND status = 'review' AND review_status = 'waiting_revision'",
+            (review_status, review_round, original_task_id),
+        )
+
+    async def mark_review_ready_if_unblocked(self, task_id: str) -> dict:
+        """Move a waiting review task back to pending review when unblocked."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != REVIEW_STATUS:
+            return task
+        if await self._has_unresolved_dependencies(task_id):
+            return task
+        if task.get("review_status") != "waiting_revision":
+            return task
+
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET review_status = 'pending' "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status = 'waiting_revision' RETURNING *",
+            (task_id,),
+        )
+        return rows[0] if rows else await self.get_task(task_id)
+
+    async def mark_review_failed(self, task_id: str, reason: str) -> dict:
+        """Mark a review gate attempt as failed without rejecting the task."""
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        if task["status"] != REVIEW_STATUS:
+            return task
+        if task.get("review_status") not in ("pending", "running", "failed"):
+            return task
+        if await self._has_unresolved_dependencies(task_id):
+            return task
+
+        now = _utcnow()
+        runs = self._json_list(task.get("system_gate_runs"))
+        runs.append(
+            {
+                "gate": "review",
+                "outcome": "failed_review",
+                "reason": reason[:1000],
+                "finished_at": now,
+            }
+        )
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET review_status = 'failed', system_gate_runs = ? "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status IN ('pending', 'running', 'failed') "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") RETURNING *",
+            (json.dumps(runs), task_id, task_id),
+        )
+        if not rows:
+            fresh = await self.get_task(task_id)
+            if fresh is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return fresh
         return rows[0]
+
+    async def _append_system_gate_run(self, task_id: str, entry: dict) -> None:
+        task = await self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task not found: {task_id}")
+        runs = self._json_list(task.get("system_gate_runs"))
+        runs.append(entry)
+        await self._db.execute(
+            "UPDATE tasks SET system_gate_runs = ? WHERE id = ?",
+            (json.dumps(runs), task_id),
+        )
 
     async def reject_task(self, task_id: str, reason: str) -> dict:
         """Mark a task as rejected with a reason."""
@@ -422,6 +947,8 @@ class TaskBoard:
         )
         if not rows:
             raise ValueError(f"Task not found: {task_id}")
+        await self._cascade_failure(task_id)
+        await self._check_group_completion(task_id)
         return rows[0]
 
     async def fail_task(self, task_id: str) -> dict:
@@ -451,7 +978,7 @@ class TaskBoard:
         # be blocked -- cascade to those too.
         await self._db.execute(
             "UPDATE tasks SET status = 'cancelled' "
-            "WHERE parent_id = ? AND status IN ('pending', 'blocked')",
+            "WHERE parent_id = ? AND status IN ('backlog', 'pending', 'blocked')",
             (task_id,),
         )
         await self._check_group_completion(task_id)
@@ -472,8 +999,23 @@ class TaskBoard:
                 (current,),
             )
             for dep in dependents:
+                review_parent = await self._db.execute_fetchone(
+                    "SELECT * FROM tasks "
+                    "WHERE id = ? AND status = 'review' "
+                    "AND review_status = 'waiting_revision'",
+                    (dep["task_id"],),
+                )
+                if review_parent:
+                    rejected = await self._reject_waiting_revision_parent(
+                        review_parent["id"], current
+                    )
+                    if rejected:
+                        queue.append(review_parent["id"])
+                    continue
+
                 dep_task = await self._db.execute_fetchone(
-                    "SELECT * FROM tasks WHERE id = ? AND status IN ('pending', 'blocked')",
+                    "SELECT * FROM tasks "
+                    "WHERE id = ? AND status IN ('backlog', 'pending', 'blocked')",
                     (dep["task_id"],),
                 )
                 if dep_task:
@@ -482,6 +1024,66 @@ class TaskBoard:
                         (dep_task["id"],),
                     )
                     queue.append(dep_task["id"])
+
+    async def _reject_waiting_revision_parent(
+        self, parent_task_id: str, failed_revision_task_id: str
+    ) -> dict | None:
+        """Reject a review parent whose required revision failed or was rejected."""
+        now = _utcnow()
+        reason = (
+            f"Required revision task {failed_revision_task_id} failed or was rejected; "
+            "the review cannot continue."
+        )
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = 'rejected', review_status = 'rejected', "
+            "rejection_reason = ? "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status = 'waiting_revision' RETURNING *",
+            (reason, parent_task_id),
+        )
+        if not rows:
+            return None
+        await self._append_system_gate_run(
+            parent_task_id,
+            {
+                "gate": "review",
+                "outcome": "rejected",
+                "reason": reason,
+                "failed_revision_task_id": failed_revision_task_id,
+                "finished_at": now,
+            },
+        )
+        return rows[0]
+
+    async def _reject_review_for_terminal_dependency(
+        self, review_task_id: str, failed_dependency_task_id: str
+    ) -> dict | None:
+        """Reject a review task blocked by an already failed or rejected dependency."""
+        now = _utcnow()
+        reason = (
+            f"Terminal dependency task {failed_dependency_task_id} failed or was "
+            "rejected; the review cannot proceed."
+        )
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET status = 'rejected', review_status = 'rejected', "
+            "rejection_reason = ? "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status IN ('pending', 'waiting_revision') RETURNING *",
+            (reason, review_task_id),
+        )
+        if not rows:
+            return None
+        await self._append_system_gate_run(
+            review_task_id,
+            {
+                "gate": "review",
+                "outcome": "rejected",
+                "reason": reason,
+                "failed_dependency_task_id": failed_dependency_task_id,
+                "finished_at": now,
+            },
+        )
+        return rows[0]
 
     # ------------------------------------------------------------------
     # Group completion check
@@ -507,7 +1109,7 @@ class TaskBoard:
         # Check whether any task in this group is NOT in a terminal state.
         non_terminal = await self._db.execute_fetchone(
             "SELECT 1 FROM tasks WHERE group_id = ? "
-            "AND status NOT IN ('completed', 'failed', 'cancelled') LIMIT 1",
+            "AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected') LIMIT 1",
             (group_id,),
         )
         if non_terminal:
@@ -622,6 +1224,17 @@ class TaskBoard:
             (now, completed_task_id),
         )
 
+        review_dependents = await self._db.execute_fetchall(
+            "SELECT DISTINCT t.id FROM tasks t "
+            "JOIN task_dependencies d ON d.task_id = t.id "
+            "WHERE d.blocked_by = ? "
+            "AND t.status = 'review' "
+            "AND t.review_status = 'waiting_revision'",
+            (completed_task_id,),
+        )
+        for row in review_dependents:
+            await self.mark_review_ready_if_unblocked(row["id"])
+
         # Find tasks that were blocked and now have no remaining unresolved deps.
         newly_free = await self._db.execute_fetchall(
             "SELECT t.id, t.assigned_to, t.group_id FROM tasks t "
@@ -632,20 +1245,22 @@ class TaskBoard:
             "  )",
         )
         for row in newly_free:
-            await self._db.execute(
-                "UPDATE tasks SET status = 'pending' WHERE id = ?",
+            transitioned = await self._db.execute_returning(
+                "UPDATE tasks SET status = 'pending' "
+                "WHERE id = ? AND status = 'blocked' RETURNING *",
                 (row["id"],),
             )
             # Wake any idle agent for this role so it doesn't wait
             # out the poll_interval before picking up work that is
             # now claimable.
-            if self._event_bus is not None:
+            if transitioned and self._event_bus is not None:
+                task = transitioned[0]
                 await self._event_bus.emit(
                     "task.available",
                     {
-                        "task_id": row["id"],
-                        "role": row["assigned_to"],
-                        "group_id": row["group_id"],
+                        "task_id": task["id"],
+                        "role": task["assigned_to"],
+                        "group_id": task["group_id"],
                     },
                 )
 
@@ -740,6 +1355,54 @@ class TaskBoard:
 
         return False
 
+    async def add_dependency(self, task_id: str, blocked_by_id: str) -> None:
+        """Add a dependency edge after checking that it will not create a cycle."""
+        if await self.has_cycle(task_id, blocked_by_id):
+            raise ValueError(
+                f"Dependency {task_id} -> {blocked_by_id} would create a cycle"
+            )
+        now = _utcnow()
+        blocker = await self._db.execute_fetchone(
+            "SELECT status FROM tasks WHERE id = ?",
+            (blocked_by_id,),
+        )
+        dep_resolved = 1 if blocker and blocker["status"] == "completed" else 0
+        dep_resolved_at = now if dep_resolved else None
+        await self._db.execute(
+            "INSERT OR IGNORE INTO task_dependencies "
+            "(task_id, blocked_by, resolved, resolved_at) VALUES (?, ?, ?, ?)",
+            (task_id, blocked_by_id, dep_resolved, dep_resolved_at),
+        )
+        if dep_resolved:
+            await self._db.execute(
+                "UPDATE task_dependencies SET resolved = 1, "
+                "resolved_at = COALESCE(resolved_at, ?) "
+                "WHERE task_id = ? AND blocked_by = ?",
+                (now, task_id, blocked_by_id),
+            )
+        elif not blocker or blocker["status"] not in ("failed", "rejected"):
+            await self._db.execute(
+                "UPDATE tasks SET status = 'blocked' "
+                "WHERE id = ? AND status = 'pending'",
+                (task_id,),
+            )
+        if blocker and blocker["status"] in ("failed", "rejected"):
+            target = await self.get_task(task_id)
+            if target and target["status"] == REVIEW_STATUS:
+                rejected = await self._reject_review_for_terminal_dependency(
+                    task_id, blocked_by_id
+                )
+                if rejected:
+                    await self._cascade_failure(task_id)
+                    await self._check_group_completion(task_id)
+                    return
+        reconciled = await self._reconcile_dependencies_after_create(task_id)
+        if blocker and blocker["status"] in ("failed", "rejected"):
+            target = reconciled or await self.get_task(task_id)
+            if target and target["status"] == "failed":
+                await self._cascade_failure(task_id)
+                await self._check_group_completion(task_id)
+
     # ------------------------------------------------------------------
     # Resilience / Recovery
     # ------------------------------------------------------------------
@@ -804,34 +1467,25 @@ class TaskBoard:
         held by specific instances whose heartbeats have gone stale -- safe to
         call during normal operation.
 
-        After resetting, resolves dependencies for any tasks that were blocked
-        by the recovered tasks so they can transition to ``'pending'``.
+        Recovered tasks are pending again, not completed, so this method does
+        not resolve dependency rows for tasks that were waiting on them.
         """
         if not stale_instance_ids:
             return []
         placeholders = ", ".join("?" for _ in stale_instance_ids)
-        recovered = await self._db.execute_returning(
+        return await self._db.execute_returning(
             f"UPDATE tasks SET status = 'pending', claimed_by = NULL, started_at = NULL "
             f"WHERE status = 'in_progress' AND claimed_by IN ({placeholders}) "
             f"RETURNING *",
             tuple(stale_instance_ids),
         )
 
-        # Resolve dependencies for tasks that were blocked by the recovered
-        # tasks.  The recovered tasks are back to pending (not completed), but
-        # other tasks may have been waiting on them in a blocked state that
-        # should be re-evaluated now that the stale claim is cleared.
-        for task in recovered:
-            await self._resolve_dependencies(task["id"])
-
-        return recovered
-
     async def recover_stuck_blocked_tasks(self) -> list[dict]:
         """Recover blocked tasks whose dependencies are all in terminal states.
 
         A blocked task should be failed if any of its unresolved dependencies
-        failed, or moved to pending if all dependencies completed but the
-        resolution was missed (e.g. crash).
+        failed or was rejected, or moved to pending if all dependencies completed
+        but the resolution was missed (e.g. crash).
         """
         # Find blocked tasks with unresolved deps pointing to terminal tasks
         stuck = await self._db.execute_fetchall(
@@ -840,11 +1494,8 @@ class TaskBoard:
             "JOIN tasks t ON t.id = d.task_id AND t.status = 'blocked' "
             "JOIN tasks t2 ON t2.id = d.blocked_by "
             "WHERE d.resolved = 0 "
-            "  AND t2.status IN ('completed', 'failed')"
+            "  AND t2.status IN ('completed', 'failed', 'rejected')"
         )
-        if not stuck:
-            return []
-
         repaired: list[dict] = []
         seen: set[str] = set()
 
@@ -860,7 +1511,7 @@ class TaskBoard:
             )
 
             # If blocker failed, cascade failure to this task
-            if blocker_status == "failed" and tid not in seen:
+            if blocker_status in ("failed", "rejected") and tid not in seen:
                 await self._db.execute(
                     "UPDATE tasks SET status = 'failed' WHERE id = ? AND status = 'blocked'",
                     (tid,),
@@ -873,6 +1524,38 @@ class TaskBoard:
                     repaired.append(task)
                     # Cascade further
                     await self._cascade_failure(tid)
+
+        stuck_review = await self._db.execute_fetchall(
+            "SELECT DISTINCT d.task_id, d.blocked_by, t2.status AS blocker_status "
+            "FROM task_dependencies d "
+            "JOIN tasks t ON t.id = d.task_id "
+            "AND t.status = 'review' "
+            "AND t.review_status = 'waiting_revision' "
+            "JOIN tasks t2 ON t2.id = d.blocked_by "
+            "WHERE d.resolved = 0 "
+            "AND t2.status IN ('completed', 'failed', 'rejected')"
+        )
+        for row in stuck_review:
+            tid = row["task_id"]
+            blocker_status = row["blocker_status"]
+            if blocker_status == "completed":
+                await self._db.execute(
+                    "UPDATE task_dependencies SET resolved = 1 "
+                    "WHERE task_id = ? AND blocked_by = ?",
+                    (tid, row["blocked_by"]),
+                )
+                updated = await self.mark_review_ready_if_unblocked(tid)
+                if updated.get("review_status") == "pending":
+                    repaired.append(updated)
+                continue
+
+            rejected = await self._reject_waiting_revision_parent(
+                tid, row["blocked_by"]
+            )
+            if rejected:
+                repaired.append(rejected)
+                await self._cascade_failure(tid)
+                await self._check_group_completion(tid)
 
         # Check for tasks now fully unblocked (all deps resolved successfully)
         newly_free = await self._db.execute_fetchall(

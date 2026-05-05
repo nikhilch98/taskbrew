@@ -804,8 +804,10 @@ body.sidebar-open .main-content {
 }
 
 .accent-blocked { background: var(--accent-amber); box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); }
+.accent-backlog { background: var(--text-muted); box-shadow: 0 0 8px rgba(139, 147, 167, 0.35); }
 .accent-pending { background: var(--accent-indigo); box-shadow: 0 0 8px rgba(99, 102, 241, 0.4); }
 .accent-in_progress { background: var(--accent-blue); box-shadow: 0 0 8px rgba(59, 130, 246, 0.4); }
+.accent-review { background: var(--accent-cyan); box-shadow: 0 0 8px rgba(6, 182, 212, 0.35); }
 .accent-completed { background: var(--accent-emerald); box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
 .accent-rejected { background: var(--accent-rose); box-shadow: 0 0 8px rgba(244, 63, 94, 0.4); }
 
@@ -902,8 +904,18 @@ body.sidebar-open .main-content {
 }
 .task-detail-badge .badge-icon { font-size: 13px; }
 
+.task-detail-badge.badge-status-backlog {
+    background: rgba(139, 147, 167, 0.12);
+    color: var(--text-secondary);
+    border-color: rgba(139, 147, 167, 0.2);
+}
 .task-detail-badge.badge-status-pending { background: rgba(99, 102, 241, 0.12); color: #818cf8; border-color: rgba(99, 102, 241, 0.2); }
 .task-detail-badge.badge-status-in_progress { background: rgba(6, 182, 212, 0.12); color: #22d3ee; border-color: rgba(6, 182, 212, 0.2); }
+.task-detail-badge.badge-status-review {
+    background: rgba(6, 182, 212, 0.12);
+    color: var(--accent-cyan-light);
+    border-color: rgba(6, 182, 212, 0.2);
+}
 .task-detail-badge.badge-status-completed { background: rgba(16, 185, 129, 0.12); color: #34d399; border-color: rgba(16, 185, 129, 0.2); }
 .task-detail-badge.badge-status-blocked { background: rgba(245, 158, 11, 0.12); color: #fbbf24; border-color: rgba(245, 158, 11, 0.2); }
 .task-detail-badge.badge-status-failed { background: rgba(244, 63, 94, 0.12); color: #fb7185; border-color: rgba(244, 63, 94, 0.2); }
@@ -1079,6 +1091,12 @@ body.sidebar-open .main-content {
     border: 1px solid rgba(6, 182, 212, 0.2);
 }
 
+.badge-needs-review {
+    background: rgba(6, 182, 212, 0.12);
+    color: #67e8f9;
+    border: 1px solid rgba(6, 182, 212, 0.24);
+}
+
 .badge-priority-critical {
     background: rgba(244, 63, 94, 0.15);
     color: #fb7185;
@@ -1208,12 +1226,16 @@ body.sidebar-open .main-content {
     border-radius: 50%;
 }
 
+.list-status-backlog { background: rgba(139, 147, 167, 0.12); color: var(--text-secondary); }
+.list-status-backlog .dot { background: var(--text-muted); }
 .list-status-blocked { background: rgba(245, 158, 11, 0.12); color: #fbbf24; }
 .list-status-blocked .dot { background: #f59e0b; }
 .list-status-pending { background: rgba(99, 102, 241, 0.12); color: #818cf8; }
 .list-status-pending .dot { background: #6366f1; }
 .list-status-in_progress { background: rgba(59, 130, 246, 0.12); color: #60a5fa; }
 .list-status-in_progress .dot { background: #3b82f6; }
+.list-status-review { background: rgba(6, 182, 212, 0.12); color: var(--accent-cyan-light); }
+.list-status-review .dot { background: var(--accent-cyan); }
 .list-status-completed { background: rgba(16, 185, 129, 0.12); color: #34d399; }
 .list-status-completed .dot { background: #10b981; }
 .list-status-rejected { background: rgba(244, 63, 94, 0.12); color: #fb7185; }

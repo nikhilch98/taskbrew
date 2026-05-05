@@ -95,6 +95,12 @@ async def _create_task(board: TaskBoard, title: str = "Test task", **kwargs) -> 
     }
     defaults.update(kwargs)
     task = await board.create_task(**defaults)
+    if task["status"] == "backlog":
+        task = await board.apply_backlog_intake_decision(
+            task["id"],
+            needs_review=False,
+            reason="Test intake release.",
+        )
     return task
 
 

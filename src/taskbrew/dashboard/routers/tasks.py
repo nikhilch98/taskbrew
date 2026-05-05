@@ -629,8 +629,14 @@ async def get_task_detail(task_id: str):
     children = await orch.task_board._db.execute_fetchall(
         "SELECT id, title, status, assigned_to FROM tasks WHERE parent_id = ?", (task_id,)
     )
+    revision_tasks = await orch.task_board._db.execute_fetchall(
+        "SELECT id, title, status, assigned_to FROM tasks "
+        "WHERE review_parent_task_id = ? OR revision_of = ? ORDER BY created_at",
+        (task_id, task_id),
+    )
     task["dependencies"] = deps
     task["children"] = children
+    task["revision_tasks"] = revision_tasks
     return task
 
 
@@ -698,9 +704,10 @@ _TASK_UPDATE_COLUMN_SQL: dict[str, str] = {
     "status": "status = ?",
 }
 _VALID_TASK_STATUSES = frozenset({
-    "blocked", "pending", "in_progress",
+    "backlog", "blocked", "pending", "in_progress", "review",
     "completed", "failed", "rejected", "cancelled",
 })
+_GATE_ONLY_TASK_STATUSES = frozenset({"backlog", "review"})
 
 
 @router.patch("/api/tasks/{task_id}")
@@ -720,6 +727,11 @@ async def update_task_endpoint(task_id: str, body: UpdateTaskBody):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid status '{body.status}'. Valid: {sorted(_VALID_TASK_STATUSES)}",
+            )
+        if body.status in _GATE_ONLY_TASK_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Status '{body.status}' is managed by the system gate workflow",
             )
         updates["status"] = body.status
     if not updates:

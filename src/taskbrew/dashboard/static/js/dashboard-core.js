@@ -25,8 +25,8 @@ const ROLE_TITLE = {
 };
 
 const STATUS_ICONS = {
-    blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1',
-    completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5'
+    backlog: 'B', blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1',
+    review: 'R', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5'
 };
 
 const MAX_LOG_ENTRIES = 200;
@@ -438,7 +438,7 @@ async function refreshBoard() {
 
         // Flatten all tasks for list view and stats
         allTasks = [];
-        const statuses = ['blocked', 'pending', 'in_progress', 'completed', 'failed', 'rejected'];
+        const statuses = ['backlog', 'pending', 'in_progress', 'review', 'blocked', 'completed', 'rejected', 'failed'];
         for (const status of statuses) {
             const tasks = data[status] || [];
             for (const t of tasks) {
@@ -547,11 +547,14 @@ async function refreshFilters() {
 // ================================================================
 function renderBoardView(data) {
     const columns = {
-        blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
+        backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
         pending:     { el: 'tasksPending',    count: 'countPending' },
         in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
+        review:      { el: 'tasksReview',     count: 'countReview' },
+        blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
         completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
         rejected:    { el: 'tasksRejected',   count: 'countRejected' },
+        failed:      { el: 'tasksFailed',     count: 'countFailed' },
     };
 
     for (const [status, cfg] of Object.entries(columns)) {
@@ -633,6 +636,9 @@ function createTaskCard(task, status) {
     // Group badge
     if (task.group_id) {
         html += '<span class="badge badge-group">' + escapeHtml(task.group_id) + '</span>';
+    }
+    if (task.needs_review === true || task.needs_review === 1) {
+        html += '<span class="badge badge-needs-review">Needs Review</span>';
     }
 
     html += '</div>';
@@ -1063,11 +1069,14 @@ function appendAgentActivity(agentName, kind, text) {
 // ================================================================
 function updateColumnCounts() {
     const columns = {
-        blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
+        backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
         pending:     { el: 'tasksPending',    count: 'countPending' },
         in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
+        review:      { el: 'tasksReview',     count: 'countReview' },
+        blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
         completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
         rejected:    { el: 'tasksRejected',   count: 'countRejected' },
+        failed:      { el: 'tasksFailed',     count: 'countFailed' },
     };
     for (const [status, cfg] of Object.entries(columns)) {
         const container = document.getElementById(cfg.el);
@@ -1080,13 +1089,15 @@ function updateColumnCounts() {
 }
 
 const STATUS_TO_COL_ID = {
-    blocked: 'col-blocked',
+    backlog: 'col-backlog',
     pending: 'col-pending',
     in_progress: 'col-in_progress',
+    review: 'col-review',
+    blocked: 'col-blocked',
     completed: 'col-completed',
     rejected: 'col-rejected',
     cancelled: 'col-rejected',
-    failed: 'col-rejected',
+    failed: 'col-failed',
 };
 
 function _saveColumnScrollPositions() {

@@ -27,6 +27,15 @@ async def board(db):
     return b
 
 
+async def _release_task(board: TaskBoard, task: dict) -> dict:
+    """Move a backlog task through the system intake gate for legacy tests."""
+    return await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Test intake release.",
+    )
+
+
 # ------------------------------------------------------------------
 # Claim tests
 # ------------------------------------------------------------------
@@ -41,6 +50,7 @@ async def test_claim_task_assigns_to_agent(board: TaskBoard):
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, task)
 
     claimed = await board.claim_task("coder", "coder-instance-42")
     assert claimed is not None
@@ -57,12 +67,13 @@ async def test_claim_task_assigns_to_agent(board: TaskBoard):
 async def test_claim_already_claimed_task_fails(board: TaskBoard):
     """Claiming the only task again should return None (no pending tasks left)."""
     group = await board.create_group(title="Double Claim", created_by="pm")
-    await board.create_task(
+    task = await board.create_task(
         group_id=group["id"],
         title="Sole task",
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, task)
 
     first = await board.claim_task("coder", "coder-1")
     assert first is not None
@@ -87,6 +98,7 @@ async def test_complete_task_sets_status(board: TaskBoard):
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, task)
 
     # Claim then complete
     await board.claim_task("coder", "coder-1")
@@ -127,6 +139,9 @@ async def test_get_board_filters_by_status(board: TaskBoard):
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, t1)
+    await _release_task(board, t2)
+    await _release_task(board, t3)
 
     # Claim then complete t1, leave t2 and t3 pending
     await board.claim_task("coder", "coder-1")
@@ -200,6 +215,7 @@ async def test_create_task_with_dependencies(board: TaskBoard):
         assigned_to="tester",
         blocked_by=[task_a["id"]],
     )
+    task_b = await _release_task(board, task_b)
 
     assert task_b["status"] == "blocked"
 
@@ -230,6 +246,8 @@ async def test_dependency_resolution(board: TaskBoard):
         assigned_to="tester",
         blocked_by=[task_a["id"]],
     )
+    await _release_task(board, task_a)
+    task_b = await _release_task(board, task_b)
 
     assert task_b["status"] == "blocked"
 

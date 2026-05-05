@@ -1471,6 +1471,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_merge_queue_ready
             ON merge_queue(status, next_attempt_at, created_at);
     """),
+    (34, "add_backlog_review_system_gate_columns", """
+        ALTER TABLE tasks ADD COLUMN intended_status TEXT DEFAULT 'pending';
+        ALTER TABLE tasks ADD COLUMN needs_review INTEGER;
+        ALTER TABLE tasks ADD COLUMN needs_review_reason TEXT;
+        ALTER TABLE tasks ADD COLUMN needs_review_decision TEXT;
+        ALTER TABLE tasks ADD COLUMN backlog_intake_status TEXT DEFAULT 'pending';
+        ALTER TABLE tasks ADD COLUMN backlog_intake_processed_at TEXT;
+        ALTER TABLE tasks ADD COLUMN review_status TEXT;
+        ALTER TABLE tasks ADD COLUMN review_round INTEGER DEFAULT 0;
+        ALTER TABLE tasks ADD COLUMN max_review_rounds INTEGER DEFAULT 3;
+        ALTER TABLE tasks ADD COLUMN review_parent_task_id TEXT REFERENCES tasks(id);
+        ALTER TABLE tasks ADD COLUMN revision_task_ids TEXT DEFAULT '[]';
+        ALTER TABLE tasks ADD COLUMN system_gate_runs TEXT DEFAULT '[]';
+
+        CREATE INDEX IF NOT EXISTS idx_tasks_backlog_intake
+            ON tasks(status, backlog_intake_status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_tasks_review_gate
+            ON tasks(status, review_status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_tasks_review_parent
+            ON tasks(review_parent_task_id);
+    """),
 ]
 
 

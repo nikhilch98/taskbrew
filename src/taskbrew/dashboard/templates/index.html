@@ -909,8 +909,10 @@
         }
 
         .accent-blocked { background: var(--accent-amber); box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); }
+        .accent-backlog { background: var(--text-muted); box-shadow: 0 0 8px rgba(139, 147, 167, 0.35); }
         .accent-pending { background: var(--accent-indigo); box-shadow: 0 0 8px rgba(99, 102, 241, 0.4); }
         .accent-in_progress { background: var(--accent-blue); box-shadow: 0 0 8px rgba(59, 130, 246, 0.4); }
+        .accent-review { background: var(--accent-cyan); box-shadow: 0 0 8px rgba(6, 182, 212, 0.35); }
         .accent-completed { background: var(--accent-emerald); box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
         .accent-rejected { background: var(--accent-rose); box-shadow: 0 0 8px rgba(244, 63, 94, 0.4); }
         .accent-failed { background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
@@ -1008,8 +1010,18 @@
         }
         .task-detail-badge .badge-icon { font-size: 13px; }
 
+        .task-detail-badge.badge-status-backlog {
+            background: rgba(139, 147, 167, 0.12);
+            color: var(--text-secondary);
+            border-color: rgba(139, 147, 167, 0.2);
+        }
         .task-detail-badge.badge-status-pending { background: rgba(99, 102, 241, 0.12); color: var(--accent-indigo-light); border-color: rgba(99, 102, 241, 0.2); }
         .task-detail-badge.badge-status-in_progress { background: rgba(6, 182, 212, 0.12); color: var(--accent-cyan-light); border-color: rgba(6, 182, 212, 0.2); }
+        .task-detail-badge.badge-status-review {
+            background: rgba(6, 182, 212, 0.12);
+            color: var(--accent-cyan-light);
+            border-color: rgba(6, 182, 212, 0.2);
+        }
         .task-detail-badge.badge-status-completed { background: rgba(16, 185, 129, 0.12); color: var(--accent-emerald-light); border-color: rgba(16, 185, 129, 0.2); }
         .task-detail-badge.badge-status-blocked { background: rgba(245, 158, 11, 0.12); color: var(--accent-amber-light); border-color: rgba(245, 158, 11, 0.2); }
         .task-detail-badge.badge-status-failed { background: rgba(244, 63, 94, 0.12); color: var(--accent-rose-light); border-color: rgba(244, 63, 94, 0.2); }
@@ -1279,6 +1291,12 @@
             border: 1px solid rgba(6, 182, 212, 0.2);
         }
 
+        .badge-needs-review {
+            background: rgba(6, 182, 212, 0.12);
+            color: #67e8f9;
+            border: 1px solid rgba(6, 182, 212, 0.24);
+        }
+
         .badge-priority-critical {
             background: rgba(244, 63, 94, 0.15);
             color: var(--accent-rose-light);
@@ -1408,12 +1426,16 @@
             border-radius: 50%;
         }
 
+        .list-status-backlog { background: rgba(139, 147, 167, 0.12); color: var(--text-secondary); }
+        .list-status-backlog .dot { background: var(--text-muted); }
         .list-status-blocked { background: rgba(245, 158, 11, 0.12); color: var(--accent-amber-light); }
         .list-status-blocked .dot { background: var(--accent-amber); }
         .list-status-pending { background: rgba(99, 102, 241, 0.12); color: var(--accent-indigo-light); }
         .list-status-pending .dot { background: var(--accent-indigo); }
         .list-status-in_progress { background: rgba(59, 130, 246, 0.12); color: var(--accent-blue-light); }
         .list-status-in_progress .dot { background: var(--accent-blue); }
+        .list-status-review { background: rgba(6, 182, 212, 0.12); color: var(--accent-cyan-light); }
+        .list-status-review .dot { background: var(--accent-cyan); }
         .list-status-completed { background: rgba(16, 185, 129, 0.12); color: var(--accent-emerald-light); }
         .list-status-completed .dot { background: var(--accent-emerald); }
         .list-status-rejected { background: rgba(244, 63, 94, 0.12); color: var(--accent-rose-light); }
@@ -4834,8 +4856,10 @@
             </div>
             <select id="statusFilter" onchange="applySearchFilters()" aria-label="Filter by status">
                 <option value="">All Statuses</option>
+                <option value="backlog">Backlog</option>
                 <option value="pending">Pending</option>
                 <option value="in_progress">In Progress</option>
+                <option value="review">Review</option>
                 <option value="blocked">Blocked</option>
                 <option value="completed">Completed</option>
                 <option value="rejected">Rejected</option>
@@ -4874,9 +4898,11 @@
             </select>
             <select class="filter-select" id="filterStatus" onchange="applyFilters()" aria-label="Filter by task status">
                 <option value="">All Statuses</option>
-                <option value="blocked">Blocked</option>
+                <option value="backlog">Backlog</option>
                 <option value="pending">Pending</option>
                 <option value="in_progress">In Progress</option>
+                <option value="review">Review</option>
+                <option value="blocked">Blocked</option>
                 <option value="completed">Completed</option>
                 <option value="rejected">Rejected</option>
                 <option value="failed">Failed</option>
@@ -5027,8 +5053,10 @@
             <input type="text" id="task-search" placeholder="Search tasks..." oninput="filterTasks()">
             <select id="filter-status" onchange="filterTasks()">
                 <option value="">All Statuses</option>
+                <option value="backlog">Backlog</option>
                 <option value="pending">Pending</option>
                 <option value="in_progress">In Progress</option>
+                <option value="review">Review</option>
                 <option value="completed">Completed</option>
                 <option value="blocked">Blocked</option>
                 <option value="rejected">Rejected</option>
@@ -5062,11 +5090,11 @@
         <!-- Board View -->
         <div class="view-container active" id="viewBoard" role="region" aria-label="Task Board">
             <div class="kanban-board" id="kanbanBoard" role="list" aria-label="Task columns">
-                <div class="kanban-column" id="col-blocked" role="listitem" aria-label="Blocked tasks">
+                <div class="kanban-column" id="col-backlog" role="listitem" aria-label="Backlog tasks">
                     <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-blocked"></span> Blocked <span class="count" id="countBlocked">0</span></h3>
+                        <h3><span class="accent-bar accent-backlog"></span> Backlog <span class="count" id="countBacklog">0</span></h3>
                     </div>
-                    <div class="column-tasks" id="tasksBlocked" role="list" aria-label="Blocked task cards"></div>
+                    <div class="column-tasks" id="tasksBacklog" role="list" aria-label="Backlog task cards"></div>
                 </div>
                 <div class="kanban-column" id="col-pending" role="listitem" aria-label="Pending tasks">
                     <div class="kanban-column-header">
@@ -5079,6 +5107,18 @@
                         <h3><span class="accent-bar accent-in_progress"></span> In Progress <span class="count" id="countInProgress">0</span></h3>
                     </div>
                     <div class="column-tasks" id="tasksInProgress" role="list" aria-label="In progress task cards"></div>
+                </div>
+                <div class="kanban-column" id="col-review" role="listitem" aria-label="Review tasks">
+                    <div class="kanban-column-header">
+                        <h3><span class="accent-bar accent-review"></span> Review <span class="count" id="countReview">0</span></h3>
+                    </div>
+                    <div class="column-tasks" id="tasksReview" role="list" aria-label="Review task cards"></div>
+                </div>
+                <div class="kanban-column" id="col-blocked" role="listitem" aria-label="Blocked tasks">
+                    <div class="kanban-column-header">
+                        <h3><span class="accent-bar accent-blocked"></span> Blocked <span class="count" id="countBlocked">0</span></h3>
+                    </div>
+                    <div class="column-tasks" id="tasksBlocked" role="list" aria-label="Blocked task cards"></div>
                 </div>
                 <div class="kanban-column" id="col-completed" role="listitem" aria-label="Completed tasks">
                     <div class="kanban-column-header">
@@ -5875,8 +5915,8 @@
         };
 
         const STATUS_ICONS = {
-            blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1',
-            completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5'
+            backlog: 'B', blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1',
+            review: 'R', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5'
         };
 
         const MAX_LOG_ENTRIES = 200;
@@ -6294,7 +6334,7 @@
 
                 // Flatten all tasks for list view and stats
                 allTasks = [];
-                const statuses = ['blocked', 'pending', 'in_progress', 'completed', 'failed', 'rejected'];
+                const statuses = ['backlog', 'pending', 'in_progress', 'review', 'blocked', 'completed', 'rejected', 'failed'];
                 for (const status of statuses) {
                     const tasks = data[status] || [];
                     for (const t of tasks) {
@@ -6403,9 +6443,11 @@
         // ================================================================
         function renderBoardView(data) {
             const columns = {
-                blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
+                backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
                 pending:     { el: 'tasksPending',    count: 'countPending' },
                 in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
+                review:      { el: 'tasksReview',     count: 'countReview' },
+                blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
                 completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
                 rejected:    { el: 'tasksRejected',   count: 'countRejected' },
                 failed:      { el: 'tasksFailed',     count: 'countFailed' },
@@ -6496,6 +6538,11 @@
                         draggedCard.classList.add('drop-flash');
                         setTimeout(function() { draggedCard.classList.remove('drop-flash'); }, 600);
                     }, 350);
+                } else {
+                    var targetCol = card.closest('.kanban-column');
+                    if (targetCol && (targetCol.id === 'col-backlog' || targetCol.id === 'col-review')) {
+                        showToast('Backlog and Review are managed by system gates', 'error', 3000);
+                    }
                 }
                 // Cross-column drops are handled by the column-level drop handler
             });
@@ -6540,6 +6587,9 @@
             // Group badge
             if (task.group_id) {
                 html += '<span class="badge badge-group">' + escapeHtml(task.group_id) + '</span>';
+            }
+            if (task.needs_review === true || task.needs_review === 1) {
+                html += '<span class="badge badge-needs-review">Needs Review</span>';
             }
 
             html += '</div>';
@@ -7192,11 +7242,14 @@
         // ================================================================
         function updateColumnCounts() {
             const columns = {
-                blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
+                backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
                 pending:     { el: 'tasksPending',    count: 'countPending' },
                 in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
+                review:      { el: 'tasksReview',     count: 'countReview' },
+                blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
                 completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
                 rejected:    { el: 'tasksRejected',   count: 'countRejected' },
+                failed:      { el: 'tasksFailed',     count: 'countFailed' },
             };
             for (const [status, cfg] of Object.entries(columns)) {
                 const container = document.getElementById(cfg.el);
@@ -7209,13 +7262,15 @@
         }
 
         const STATUS_TO_COL_ID = {
-            blocked: 'col-blocked',
+            backlog: 'col-backlog',
             pending: 'col-pending',
             in_progress: 'col-in_progress',
+            review: 'col-review',
+            blocked: 'col-blocked',
             completed: 'col-completed',
             rejected: 'col-rejected',
             cancelled: 'col-rejected',
-            failed: 'col-rejected',
+            failed: 'col-failed',
         };
 
         function _saveColumnScrollPositions() {
@@ -7658,7 +7713,7 @@
             const role = task.assigned_to || '';
             const roleColor = getRoleColor(role);
             const emoji = getRoleEmoji(role);
-            const statusIcons = { blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5' };
+            const statusIcons = { backlog: 'B', blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1', review: 'R', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5' };
             const priorityIcons = { critical: '\uD83D\uDD34', high: '\uD83D\uDFE0', medium: '\uD83D\uDFE1', low: '\uD83D\uDFE2' };
 
             // Header with accent color
@@ -7722,6 +7777,21 @@
             if (task.description) {
                 html += '<div class="task-detail-section"><div class="task-detail-section-title">Description</div>';
                 html += '<div class="task-detail-description"><div class="value">' + DOMPurify.sanitize(marked.parse(task.description)) + '</div></div></div>';
+            }
+
+            if (task.needs_review !== null && task.needs_review !== undefined) {
+                html += '<div class="task-detail-section"><div class="task-detail-section-title">System Review Decision</div>';
+                html += '<div class="task-detail-grid">';
+                html += tdField('Needs Review', (task.needs_review === true || task.needs_review === 1) ? 'Yes' : 'No');
+                var reasonText = task.needs_review_reason ? escapeHtml(task.needs_review_reason) : '-';
+                html += tdField('Reason', reasonText, task.needs_review_reason ? '' : 'muted');
+                if (task.review_status) {
+                    html += tdField('Review Status', escapeHtml(String(task.review_status)));
+                }
+                if (task.review_round !== null && task.review_round !== undefined) {
+                    html += tdField('Review Round', escapeHtml(String(task.review_round)));
+                }
+                html += '</div></div>';
             }
 
             // Rejection reason
@@ -8327,11 +8397,14 @@
         // ================================================================
         (function initDragDrop() {
             const COL_STATUS_MAP = {
-                'col-blocked': 'blocked',
+                'col-backlog': 'backlog',
                 'col-pending': 'pending',
                 'col-in_progress': 'in_progress',
+                'col-review': 'review',
+                'col-blocked': 'blocked',
                 'col-completed': 'completed',
                 'col-rejected': 'rejected',
+                'col-failed': 'failed',
             };
 
             document.querySelectorAll('.kanban-column').forEach(col => {
@@ -8375,6 +8448,11 @@
                     // Check if card is already in this column (no-op for same column drops that missed a card)
                     const currentCol = card.closest('.kanban-column');
                     if (currentCol && currentCol.id === col.id) return;
+
+                    if (col.id === 'col-backlog' || col.id === 'col-review') {
+                        showToast('Backlog and Review are managed by system gates', 'error', 3000);
+                        return;
+                    }
 
                     // Optimistic DOM move: move card to new column immediately
                     const tasksContainer = col.querySelector('.column-tasks');
@@ -8492,7 +8570,7 @@
             });
 
             // Render filtered results in the board view
-            const grouped = { blocked: [], pending: [], in_progress: [], completed: [], rejected: [], failed: [] };
+            const grouped = { backlog: [], pending: [], in_progress: [], review: [], blocked: [], completed: [], rejected: [], failed: [] };
             for (const t of filtered) {
                 const s = t._status || 'pending';
                 if (grouped[s]) grouped[s].push(t);
@@ -8503,7 +8581,7 @@
         function renderSearchResults(data) {
             // data may be an array of tasks or an object with results
             const tasks = Array.isArray(data) ? data : (data.results || data.tasks || []);
-            const grouped = { blocked: [], pending: [], in_progress: [], completed: [], rejected: [], failed: [] };
+            const grouped = { backlog: [], pending: [], in_progress: [], review: [], blocked: [], completed: [], rejected: [], failed: [] };
             for (const t of tasks) {
                 const s = t.status || t._status || 'pending';
                 if (grouped[s]) grouped[s].push(t);
@@ -11349,7 +11427,7 @@
                 return true;
             });
 
-            var grouped = { blocked: [], pending: [], in_progress: [], completed: [], rejected: [] };
+            var grouped = { backlog: [], pending: [], in_progress: [], review: [], blocked: [], completed: [], rejected: [], failed: [] };
             for (var i = 0; i < filtered.length; i++) {
                 var s = filtered[i]._status || 'pending';
                 if (grouped[s]) grouped[s].push(filtered[i]);

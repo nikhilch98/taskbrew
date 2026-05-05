@@ -50,6 +50,12 @@ async def _seed(app_client):
         task_type="test", assigned_to="coder", priority="medium",
         blocked_by=[t2["id"]],
     )
+    for task in (t1, t2, t3):
+        await board.apply_backlog_intake_decision(
+            task["id"],
+            needs_review=False,
+            reason="Test intake release.",
+        )
     return g, t1, t2, t3
 
 

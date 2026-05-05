@@ -40,9 +40,9 @@ async def env():
     await db.close()
 
 
-async def test_create_task_emits_task_available_for_pending_tasks(env):
-    """A newly-created pending task must emit task.available with the
-    assigned role so any idle agent for that role wakes up."""
+async def test_intake_emits_task_available_for_pending_tasks(env):
+    """A pending-intake task must emit task.available with the assigned
+    role so any idle agent for that role wakes up."""
     _db, event_bus, board, _im = env
     group = await board.create_group(title="G", origin="pm", created_by="human")
 
@@ -53,14 +53,19 @@ async def test_create_task_emits_task_available_for_pending_tasks(env):
 
     event_bus.subscribe("task.available", capture)
 
-    await board.create_task(
+    task = await board.create_task(
         group_id=group["id"],
         title="Test",
         task_type="implementation",
         assigned_to="coder",
         created_by="human",
     )
-    # Event dispatch is via create_task() on the event bus, which
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Event-driven claim test release.",
+    )
+    # Event dispatch is via apply_backlog_intake_decision() on the event bus, which
     # spawns the handler on the loop. Give it a tick to run.
     await asyncio.sleep(0.05)
     assert seen, "expected at least one task.available event"
@@ -69,7 +74,7 @@ async def test_create_task_emits_task_available_for_pending_tasks(env):
 
 
 async def test_blocked_task_does_not_emit_task_available(env):
-    """A task created with blocked_by starts in status=blocked, so it
+    """A task created with blocked_by intakes to status=blocked, so it
     is not claimable yet and must not wake any agent until its
     dependencies resolve."""
     _db, event_bus, board, _im = env
@@ -89,7 +94,7 @@ async def test_blocked_task_does_not_emit_task_available(env):
 
     event_bus.subscribe("task.available", capture)
 
-    await board.create_task(
+    blocked = await board.create_task(
         group_id=group["id"],
         title="Blocked",
         task_type="implementation",
@@ -97,8 +102,13 @@ async def test_blocked_task_does_not_emit_task_available(env):
         created_by="human",
         blocked_by=[blocker["id"]],
     )
+    await board.apply_backlog_intake_decision(
+        blocked["id"],
+        needs_review=False,
+        reason="Blocked task remains unavailable.",
+    )
     await asyncio.sleep(0.05)
-    # No event fired because the second task is status=blocked.
+    # No event fired because the second task intakes to status=blocked.
     assert seen == []
 
 
@@ -126,6 +136,12 @@ async def test_dependency_resolve_emits_task_available(env):
         seen.append(event)
 
     event_bus.subscribe("task.available", capture)
+
+    await board.apply_backlog_intake_decision(
+        blocked["id"],
+        needs_review=False,
+        reason="Wait for blocker.",
+    )
 
     # Simulate the blocker completing.
     await board._db.execute(
@@ -184,11 +200,16 @@ async def test_agent_wakes_on_task_available_within_100ms(env):
     # Give the loop a moment to enter its wait_for.
     await asyncio.sleep(0.05)
 
-    t_create = asyncio.get_event_loop().time()
-    await board.create_task(
+    task = await board.create_task(
         group_id=group["id"], title="T",
         task_type="implementation", assigned_to="coder",
         created_by="human",
+    )
+    t_release = asyncio.get_event_loop().time()
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Wake the coder agent.",
     )
 
     try:
@@ -201,7 +222,7 @@ async def test_agent_wakes_on_task_available_within_100ms(env):
         )
 
     assert claim_times, "expected at least one claim"
-    elapsed = claim_times[0] - t_create
+    elapsed = claim_times[0] - t_release
     assert elapsed < 0.5, (
         f"expected wake-and-claim < 500ms, got {elapsed*1000:.1f}ms"
     )
@@ -247,10 +268,15 @@ async def test_agent_does_not_wake_for_other_role(env):
     await asyncio.sleep(0.05)
 
     # Task for architect, not coder.
-    await board.create_task(
+    task = await board.create_task(
         group_id=group["id"], title="Design",
         task_type="tech_design", assigned_to="architect",
         created_by="human",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Wake only architect agents.",
     )
 
     # Give the event a window to wake the coder (it shouldn't).

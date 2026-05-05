@@ -44,6 +44,11 @@ async def _seed(app_client):
         task_type="test", assigned_to="coder", priority="medium",
     )
     # Claim and complete first task
+    await board.apply_backlog_intake_decision(
+        t1["id"],
+        needs_review=False,
+        reason="Test intake release.",
+    )
     await board.claim_task("coder", "coder-1")
     await board.complete_task(t1["id"])
     # Record usage

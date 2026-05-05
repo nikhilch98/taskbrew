@@ -114,6 +114,15 @@ def _make_loop(
     )
 
 
+async def _release_task(board: TaskBoard, task: dict) -> dict:
+    """Run the system intake gate for tests that need a claimable task."""
+    return await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Test intake release.",
+    )
+
+
 # ------------------------------------------------------------------
 # Tests
 # ------------------------------------------------------------------
@@ -124,12 +133,13 @@ async def test_poll_claims_task(
 ):
     """poll_for_task should claim a pending task assigned to this role."""
     group = await board.create_group(title="Feature", created_by="pm")
-    await board.create_task(
+    task = await board.create_task(
         group_id=group["id"],
         title="Implement endpoint",
         task_type="implementation",
         assigned_to="coder",
     )
+    await _release_task(board, task)
 
     loop = _make_loop(board, event_bus, instance_mgr)
     task = await loop.poll_for_task()
@@ -532,7 +542,7 @@ async def test_merge_gate_auto_creates_verifier_task(
     assert len(verifier_children) == 1, (
         f"expected auto-created VR, got {verifier_children}"
     )
-    assert verifier_children[0]["status"] == "pending"
+    assert verifier_children[0]["status"] == "backlog"
 
 
 async def test_merge_gate_skips_tiny_diffs(
@@ -1220,6 +1230,7 @@ async def _prepare_retry_test(board, event_bus, instance_mgr, exception_to_raise
         group_id=group["id"], title="T",
         task_type="bug_fix", assigned_to="coder", created_by="human",
     )
+    await _release_task(board, task)
 
     role = _make_role(role="coder", display_name="Coder")
     loop = _make_loop(board, event_bus, instance_mgr,

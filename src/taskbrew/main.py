@@ -193,6 +193,8 @@ class Orchestrator:
         self.plugin_registry = None
         self.merge_queue = None
         self.merge_broker = None
+        self.system_gate_manager = None
+        self._system_gate_task = None
 
         # Shutdown state
         self._shutting_down = False
@@ -230,6 +232,8 @@ class Orchestrator:
             self._escalation_stop.set()
         if self.merge_broker:
             self.merge_broker.stop()
+        if self.system_gate_manager:
+            self.system_gate_manager.stop()
 
         # Phase 2 — wait for agent tasks, then force-cancel stragglers
         if self.agent_tasks:
@@ -362,6 +366,32 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
         task_board=task_board,
         event_bus=event_bus,
         repo_dir=str(project_dir),
+    )
+
+    from taskbrew.orchestrator.system_gates import (
+        AgentRunnerSystemGateAnalyzer,
+        SystemGateManager,
+    )
+    from taskbrew.system_agent import build_system_agent_config
+
+    connect_host = (
+        "127.0.0.1"
+        if team_config.dashboard_host in ("0.0.0.0", "::")
+        else team_config.dashboard_host
+    )
+    system_agent_config = build_system_agent_config(
+        team_config,
+        project_dir=project_dir,
+        api_url=f"http://{connect_host}:{team_config.dashboard_port}",
+    )
+    analyzer = AgentRunnerSystemGateAnalyzer(
+        config=system_agent_config,
+        project_dir=project_dir,
+        event_bus=event_bus,
+    )
+    orch.system_gate_manager = SystemGateManager(
+        board=task_board,
+        analyzer=analyzer,
     )
 
     # Instantiate intelligence managers centrally
@@ -515,6 +545,16 @@ async def _orphan_recovery_loop(
             _logger.exception("Error in orphan recovery loop")
 
 
+def _start_system_gate_manager(orch: Orchestrator) -> None:
+    if not orch.system_gate_manager:
+        return
+    if orch._system_gate_task is not None and not orch._system_gate_task.done():
+        return
+    system_gate_task = asyncio.create_task(orch.system_gate_manager.run())
+    orch._system_gate_task = system_gate_task
+    orch.agent_tasks.append(system_gate_task)
+
+
 # Tools that mutate filesystem state and therefore justify a worktree.
 # Kept conservative: read-only tools (Grep, Glob, Read) don't need isolation.
 _FILE_MUTATING_TOOLS = frozenset({"Bash", "Edit", "Write", "NotebookEdit"})
@@ -573,6 +613,8 @@ async def start_agents(orch: Orchestrator):
     if orch.merge_broker:
         broker_task = asyncio.create_task(orch.merge_broker.run())
         orch.agent_tasks.append(broker_task)
+
+    _start_system_gate_manager(orch)
 
     # Spawn agent loops
     # Map bind host to connect host (0.0.0.0 binds all interfaces but can't be connected to)

@@ -47,6 +47,12 @@ async def _seed_data(app_client):
         task_type="test", assigned_to="coder", priority="medium",
         description="Unit tests for authentication module",
     )
+    for task in (t1, t2):
+        await board.apply_backlog_intake_decision(
+            task["id"],
+            needs_review=False,
+            reason="Test intake release.",
+        )
     return group, t1, t2
 
 
