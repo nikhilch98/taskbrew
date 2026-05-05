@@ -766,6 +766,7 @@ class TaskBoard:
             )
         if not revisions:
             raise ValueError("At least one revision is required")
+        original_review_status = original.get("review_status") or "pending"
 
         rows = await self._db.execute_returning(
             "UPDATE tasks SET review_status = 'waiting_revision' "
@@ -782,24 +783,34 @@ class TaskBoard:
         original = rows[0]
 
         created: list[dict] = []
-        for index, revision in enumerate(revisions, start=1):
-            revision_task = await self.create_task(
-                group_id=original["group_id"],
-                title=revision.get("title") or f"Revision {index} for {original_task_id}",
-                task_type=revision.get("task_type") or "revision",
-                assigned_to=revision.get("assigned_to")
-                or original.get("assigned_to")
-                or "coder",
-                created_by="system",
-                description=revision.get("description")
-                or "Address the system review finding.",
-                priority=revision.get("priority") or original.get("priority") or "medium",
-                parent_id=original_task_id,
-                revision_of=original_task_id,
-                review_parent_task_id=original_task_id,
+        try:
+            for index, revision in enumerate(revisions, start=1):
+                revision_task = await self.create_task(
+                    group_id=original["group_id"],
+                    title=revision.get("title")
+                    or f"Revision {index} for {original_task_id}",
+                    task_type=revision.get("task_type") or "revision",
+                    assigned_to=revision.get("assigned_to")
+                    or original.get("assigned_to")
+                    or "coder",
+                    created_by="system",
+                    description=revision.get("description")
+                    or "Address the system review finding.",
+                    priority=revision.get("priority")
+                    or original.get("priority")
+                    or "medium",
+                    parent_id=original_task_id,
+                    revision_of=original_task_id,
+                    review_parent_task_id=original_task_id,
+                )
+                await self.add_dependency(original_task_id, revision_task["id"])
+                created.append(revision_task)
+        except BaseException:
+            await self._rollback_empty_revision_transition(
+                original_task_id,
+                original_review_status,
             )
-            await self.add_dependency(original_task_id, revision_task["id"])
-            created.append(revision_task)
+            raise
 
         revision_task_ids = self._json_list(original.get("revision_task_ids"))
         revision_task_ids.extend(task["id"] for task in created)
@@ -817,6 +828,28 @@ class TaskBoard:
             },
         )
         return created
+
+    async def _rollback_empty_revision_transition(
+        self, original_task_id: str, review_status: str
+    ) -> None:
+        task = await self.get_task(original_task_id)
+        if task is None or task["status"] != REVIEW_STATUS:
+            return
+        if task.get("review_status") != "waiting_revision":
+            return
+        if self._json_list(task.get("revision_task_ids")):
+            return
+        dep = await self._db.execute_fetchone(
+            "SELECT 1 FROM task_dependencies WHERE task_id = ? LIMIT 1",
+            (original_task_id,),
+        )
+        if dep is not None:
+            return
+        await self._db.execute(
+            "UPDATE tasks SET review_status = ? "
+            "WHERE id = ? AND status = 'review' AND review_status = 'waiting_revision'",
+            (review_status, original_task_id),
+        )
 
     async def mark_review_ready_if_unblocked(self, task_id: str) -> dict:
         """Move a waiting review task back to pending review when unblocked."""

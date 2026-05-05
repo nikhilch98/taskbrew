@@ -371,6 +371,42 @@ async def test_process_pending_once_retries_running_backlog_without_audit(
     assert updated["backlog_intake_status"] == "completed"
 
 
+async def test_process_pending_once_retries_running_backlog_with_naive_timestamp(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Retry naive timestamp backlog",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    runs = json.dumps(
+        [
+            {
+                "gate": "backlog",
+                "outcome": "running",
+                "started_at": "2026-05-05T12:00:00",
+            }
+        ]
+    )
+    await board._db.execute(
+        "UPDATE tasks SET backlog_intake_status = 'running', system_gate_runs = ? "
+        "WHERE id = ?",
+        (runs, task["id"]),
+    )
+    analyzer = FakeAnalyzer(
+        backlog_results=[BacklogIntakeResult(needs_review=False, reason="Retry.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 1, "review": 0}
+    updated = await board.get_task(task["id"])
+    assert updated["status"] == "pending"
+
+
 async def test_active_running_backlog_does_not_starve_pending_backlog(
     board: TaskBoard,
 ):
@@ -524,6 +560,36 @@ async def test_process_pending_once_retries_running_review_without_audit(
     assert updated["review_status"] == "approved"
 
 
+async def test_process_pending_once_retries_running_review_with_naive_timestamp(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    runs = json.dumps(
+        [
+            {
+                "gate": "review",
+                "outcome": "running",
+                "started_at": "2026-05-05T12:00:00",
+            }
+        ]
+    )
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running', system_gate_runs = ? "
+        "WHERE id = ?",
+        (runs, review_task["id"]),
+    )
+    analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Retry.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 1}
+    updated = await board.get_task(review_task["id"])
+    assert updated["status"] == "completed"
+
+
 async def test_active_running_review_does_not_starve_pending_review(
     board: TaskBoard,
 ):
@@ -635,7 +701,7 @@ async def test_overlapping_stale_review_retries_create_one_revision(
         "UPDATE tasks SET review_status = 'running' WHERE id = ?",
         (review_task["id"],),
     )
-    analyzer = TwoCallerReviewAnalyzer()
+    analyzer = BlockingReviewAnalyzer()
     manager = SystemGateManager(
         board=board,
         analyzer=analyzer,
@@ -643,8 +709,9 @@ async def test_overlapping_stale_review_retries_create_one_revision(
     )
 
     first = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    await analyzer.first_entered.wait()
     second = asyncio.create_task(manager.process_review_task(review_task["id"]))
-    await analyzer.both_entered.wait()
+    await asyncio.sleep(0)
     analyzer.release.set()
 
     results = await asyncio.gather(first, second)
@@ -657,7 +724,7 @@ async def test_overlapping_stale_review_retries_create_one_revision(
     ]
     assert results.count(True) == 1
     assert results.count(False) == 1
-    assert analyzer.entered == 2
+    assert analyzer.entered == 1
     assert len(revision_ids) == 1
     assert len(needs_revision_runs) == 1
 
@@ -670,7 +737,7 @@ async def test_late_failing_stale_review_retry_does_not_override_revision(
         "UPDATE tasks SET review_status = 'running' WHERE id = ?",
         (review_task["id"],),
     )
-    analyzer = SuccessThenFailureReviewAnalyzer()
+    analyzer = BlockingReviewAnalyzer()
     manager = SystemGateManager(
         board=board,
         analyzer=analyzer,
@@ -679,18 +746,16 @@ async def test_late_failing_stale_review_retry_does_not_override_revision(
 
     first = asyncio.create_task(manager.process_review_task(review_task["id"]))
     await analyzer.first_entered.wait()
-    second = asyncio.create_task(manager.process_review_task(review_task["id"]))
-    await analyzer.both_entered.wait()
-    analyzer.release_success.set()
+    analyzer.release.set()
 
     for _ in range(50):
         updated = await board.get_task(review_task["id"])
         if updated["review_status"] == "waiting_revision":
             break
         await asyncio.sleep(0.01)
-    analyzer.release_failure.set()
+    second = await board.mark_review_failed(review_task["id"], "late review failure")
 
-    results = await asyncio.gather(first, second)
+    results = await asyncio.gather(first)
 
     updated = await board.get_task(review_task["id"])
     revision_ids = json.loads(updated["revision_task_ids"])
@@ -701,11 +766,70 @@ async def test_late_failing_stale_review_retry_does_not_override_revision(
     failed_review_runs = [
         run for run in gate_runs if run.get("outcome") == "failed_review"
     ]
-    assert results == [True, False]
+    assert results == [True]
+    assert second["review_status"] == "waiting_revision"
     assert updated["review_status"] == "waiting_revision"
     assert len(revision_ids) == 1
     assert len(needs_revision_runs) == 1
     assert failed_review_runs == []
+
+
+async def test_overlapping_stale_review_retries_enter_analyzer_once(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = BlockingReviewAnalyzer()
+    manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+
+    first = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    await analyzer.first_entered.wait()
+    second = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    await asyncio.sleep(0)
+    analyzer.release.set()
+
+    results = await asyncio.gather(first, second)
+
+    updated = await board.get_task(review_task["id"])
+    revision_ids = json.loads(updated["revision_task_ids"])
+    assert results.count(True) == 1
+    assert results.count(False) == 1
+    assert analyzer.entered == 1
+    assert len(revision_ids) == 1
+
+
+async def test_create_review_revision_tasks_rolls_back_empty_transition(
+    board: TaskBoard,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    review_task = await _create_review_task(board)
+
+    async def fail_create_task(*args, **kwargs):
+        raise RuntimeError("create failed")
+
+    monkeypatch.setattr(board, "create_task", fail_create_task)
+
+    with pytest.raises(RuntimeError, match="create failed"):
+        await board.create_review_revision_tasks(
+            review_task["id"],
+            [{"description": "Fix this first."}],
+        )
+
+    updated = await board.get_task(review_task["id"])
+    deps = await board._db.execute_fetchall(
+        "SELECT * FROM task_dependencies WHERE task_id = ?",
+        (review_task["id"],),
+    )
+    assert updated["review_status"] == "pending"
+    assert json.loads(updated["revision_task_ids"]) == []
+    assert deps == []
 
 
 async def test_backlog_analyzer_exception_marks_intake_failed(board: TaskBoard):

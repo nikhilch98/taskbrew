@@ -220,6 +220,7 @@ class SystemGateManager:
         self._batch_size = batch_size
         self._running_timeout_seconds = running_timeout_seconds
         self._stop_requested = False
+        self._gate_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     async def _backlog_context(self, task: dict) -> dict:
         return {
@@ -238,6 +239,10 @@ class SystemGateManager:
         }
 
     async def process_backlog_task(self, task_id: str) -> bool:
+        async with self._gate_lock("backlog", task_id):
+            return await self._process_backlog_task(task_id)
+
+    async def _process_backlog_task(self, task_id: str) -> bool:
         task = await self._board.get_task(task_id)
         if task is None or task["status"] != BACKLOG_STATUS:
             return False
@@ -286,6 +291,10 @@ class SystemGateManager:
         return True
 
     async def process_review_task(self, task_id: str) -> bool:
+        async with self._gate_lock("review", task_id):
+            return await self._process_review_task(task_id)
+
+    async def _process_review_task(self, task_id: str) -> bool:
         task = await self._board.get_task(task_id)
         if task is None or task["status"] != REVIEW_STATUS:
             return False
@@ -475,6 +484,14 @@ class SystemGateManager:
             },
         )
 
+    def _gate_lock(self, gate: str, task_id: str) -> asyncio.Lock:
+        key = (gate, task_id)
+        lock = self._gate_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._gate_locks[key] = lock
+        return lock
+
     def _is_running_stale(self, task: dict, gate: str) -> bool:
         if self._running_timeout_seconds <= 0:
             return True
@@ -492,11 +509,14 @@ class SystemGateManager:
                 continue
             started_at = run.get("started_at")
             if not isinstance(started_at, str):
-                continue
+                return None
             try:
-                return datetime.fromisoformat(started_at)
+                parsed = datetime.fromisoformat(started_at)
             except ValueError:
-                continue
+                return None
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                return None
+            return parsed
         return None
 
     def _revision_to_dict(self, revision: RevisionRequest) -> dict:
