@@ -116,6 +116,7 @@ def get_agent_config(
             system_prompt=rc.system_prompt,
             allowed_tools=list(rc.tools),
             model=rc.model,
+            reasoning_effort=rc.reasoning_effort,
             max_turns=rc.max_turns,
         )
 

@@ -148,6 +148,28 @@ def test_validate_startup_does_not_require_unused_default_provider():
             )
 
 
+def test_validate_startup_checks_system_agent_provider():
+    """The per-project system agent can require a different CLI than team roles."""
+    from taskbrew.main import StartupValidationError, _validate_startup
+
+    def fake_which(name):
+        return "/usr/bin/claude" if name == "claude" else None
+
+    roles = {"pm": SimpleNamespace(model="claude-sonnet-4-6")}
+    team_config = SimpleNamespace(
+        system_agent=SimpleNamespace(provider="codex", model="gpt-5.4")
+    )
+    with patch.dict(os.environ, {}, clear=True):
+        with patch("shutil.which", side_effect=fake_which):
+            with pytest.raises(StartupValidationError, match="Codex CLI not found"):
+                _validate_startup(
+                    project_dir=Path("/tmp"),
+                    team_config=team_config,
+                    roles=roles,
+                    cli_provider="claude",
+                )
+
+
 def test_validate_startup_multiple_errors():
     """Should accumulate multiple errors before failing."""
     from taskbrew.main import StartupValidationError, _validate_startup

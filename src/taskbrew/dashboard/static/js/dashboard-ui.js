@@ -334,6 +334,39 @@ function closeTaskDetail() { const o = document.getElementById('taskDetailOverla
 let settingsData = { team: null, roles: {} };
 let settingsActiveTab = 'team';
 let settingsModels = [];
+let projectWizardModels = [];
+
+const FALLBACK_MODEL_CATALOG = {
+    claude: [
+        { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', label: 'Flagship', reasoning_efforts: ['low', 'medium', 'high', 'xhigh', 'max'], default_reasoning_effort: 'xhigh', reasoning_label: 'Effort' },
+        { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', label: 'Previous Opus', reasoning_efforts: ['low', 'medium', 'high', 'max'], default_reasoning_effort: 'high', reasoning_label: 'Effort' },
+        { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', label: 'Balanced', reasoning_efforts: ['low', 'medium', 'high', 'max'], default_reasoning_effort: 'high', reasoning_label: 'Effort' },
+        { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5 Latest', label: 'Fast' },
+    ],
+    gemini: [
+        { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', label: 'Flagship', reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', reasoning_label: 'Thinking' },
+        { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', label: 'Preview', reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', reasoning_label: 'Thinking' },
+        { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', label: 'Balanced', reasoning_efforts: ['minimal', 'low', 'medium', 'high'], default_reasoning_effort: 'medium', reasoning_label: 'Thinking' },
+        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', label: 'Previous Pro', reasoning_efforts: ['dynamic', 'low', 'medium', 'high'], default_reasoning_effort: 'dynamic', reasoning_label: 'Thinking' },
+        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', label: 'Previous Flash', reasoning_efforts: ['off', 'dynamic', 'low', 'medium', 'high'], default_reasoning_effort: 'dynamic', reasoning_label: 'Thinking' },
+    ],
+    codex: [
+        { id: 'gpt-5.5', name: 'GPT-5.5', label: 'Flagship', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
+        { id: 'gpt-5.4', name: 'GPT-5.4', label: 'Balanced', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
+        { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', label: 'Fast', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
+        { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', label: 'Codex', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
+        { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark', label: 'Codex Fast', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'high', reasoning_label: 'Reasoning' },
+        { id: 'gpt-5.2', name: 'GPT-5.2', label: 'Previous', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
+    ],
+};
+
+const DEFAULT_ROLE_MODEL_TIERS = { pm: 'flagship', architect: 'flagship', coder: 'balanced', verifier: 'balanced' };
+const PROVIDER_DEFAULT_MODELS = {
+    claude: { flagship: 'claude-opus-4-7', balanced: 'claude-sonnet-4-6', fast: 'claude-haiku-4-5' },
+    gemini: { flagship: 'gemini-3-pro-preview', balanced: 'gemini-3-flash-preview', fast: 'gemini-3-flash-preview' },
+    codex: { flagship: 'gpt-5.5', balanced: 'gpt-5.4', fast: 'gpt-5.4-mini' },
+};
+const DEFAULT_PROJECT_ROLES = ['pm', 'architect', 'coder', 'verifier'];
 
 function toggleSettingsModal() {
     const o = document.getElementById('settingsOverlay');
@@ -369,35 +402,81 @@ function providerForModel(model) {
     return 'claude';
 }
 
+function flattenedFallbackModels() {
+    let models = [];
+    Object.keys(FALLBACK_MODEL_CATALOG).forEach(function(provider) {
+        FALLBACK_MODEL_CATALOG[provider].forEach(function(model) {
+            models.push(Object.assign({ provider: provider }, model));
+        });
+    });
+    return models;
+}
+
+function allKnownModels() {
+    if (settingsModels.length) return settingsModels;
+    if (projectWizardModels.length) return projectWizardModels;
+    return flattenedFallbackModels();
+}
+
+function catalogModelById(modelId) {
+    const models = allKnownModels();
+    for (const m of models) {
+        if ((m.id || m) === modelId) return m;
+    }
+    return null;
+}
+
+function reasoningOptionsForModel(modelId) {
+    const model = catalogModelById(modelId);
+    return model && Array.isArray(model.reasoning_efforts) ? model.reasoning_efforts : [];
+}
+
+function defaultReasoningForModel(modelId) {
+    const model = catalogModelById(modelId);
+    if (model && model.default_reasoning_effort) return model.default_reasoning_effort;
+    const opts = reasoningOptionsForModel(modelId);
+    return opts.length ? opts[0] : '';
+}
+
+function reasoningLabelForModel(modelId) {
+    const model = catalogModelById(modelId);
+    return (model && model.reasoning_label) || 'Reasoning';
+}
+
 function modelOptionsForProvider(provider, currentModel) {
-    let filtered = settingsModels.filter(function(m) {
+    let filtered = allKnownModels().filter(function(m) {
         return (m.provider || providerForModel(m.id || m)) === provider;
     });
     if (filtered.length === 0) {
-        const fallback = {
-            claude: [
-                { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
-                { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
-                { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
-            ],
-            gemini: [
-                { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro' },
-                { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash' },
-            ],
-            codex: [
-                { id: 'gpt-5.5', name: 'GPT-5.5' },
-                { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
-                { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark' },
-                { id: 'gpt-4o', name: 'GPT-4o' },
-                { id: 'o3', name: 'o3' },
-            ],
-        };
-        filtered = fallback[provider] || fallback.claude;
+        filtered = FALLBACK_MODEL_CATALOG[provider] || FALLBACK_MODEL_CATALOG.claude;
     }
     if (currentModel && !filtered.some(function(m) { return (m.id || m) === currentModel; })) {
         filtered = [{ id: currentModel, name: currentModel + ' (custom)' }].concat(filtered);
     }
     return filtered;
+}
+
+function defaultModelForRole(provider, role) {
+    const tier = DEFAULT_ROLE_MODEL_TIERS[role] || 'balanced';
+    const defaults = PROVIDER_DEFAULT_MODELS[provider] || PROVIDER_DEFAULT_MODELS.claude;
+    return defaults[tier] || defaults.balanced;
+}
+
+function defaultSystemModelForProvider(provider) {
+    const defaults = PROVIDER_DEFAULT_MODELS[provider] || PROVIDER_DEFAULT_MODELS.claude;
+    return defaults.balanced;
+}
+
+function reasoningSelectHtml(id, modelId, selected, onchange) {
+    const options = reasoningOptionsForModel(modelId);
+    if (!options.length) return '';
+    const value = selected || defaultReasoningForModel(modelId);
+    let html = '<select id="' + escapeHtml(id) + '" onchange="' + onchange + '" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">';
+    options.forEach(function(opt) {
+        html += '<option value="' + escapeHtml(opt) + '"' + (opt === value ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
+    });
+    html += '</select>';
+    return html;
 }
 
 function defaultModelForProvider(provider) {
@@ -409,6 +488,7 @@ function updateSettingsProvider(role, provider) {
     const model = defaultModelForProvider(provider);
     const modelSelect = document.getElementById('s_model');
     const customInput = document.getElementById('s_model_custom');
+    const reasoningSelect = document.getElementById('s_reasoning_effort');
     if (modelSelect) {
         modelSelect.innerHTML = modelOptionsForProvider(provider, model).map(function(m) {
             const mid = m.id || m;
@@ -417,6 +497,25 @@ function updateSettingsProvider(role, provider) {
         }).join('');
     }
     if (customInput) customInput.value = model;
+    if (reasoningSelect) {
+        const options = reasoningOptionsForModel(model);
+        reasoningSelect.innerHTML = options.map(function(opt) {
+            const value = defaultReasoningForModel(model);
+            return '<option value="' + escapeHtml(opt) + '"' + (opt === value ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
+        }).join('');
+        reasoningSelect.parentElement.style.display = options.length ? '' : 'none';
+    }
+}
+
+function syncSettingsReasoningForModel(model) {
+    const reasoningSelect = document.getElementById('s_reasoning_effort');
+    if (!reasoningSelect) return;
+    const options = reasoningOptionsForModel(model);
+    const value = defaultReasoningForModel(model);
+    reasoningSelect.innerHTML = options.map(function(opt) {
+        return '<option value="' + escapeHtml(opt) + '"' + (opt === value ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
+    }).join('');
+    reasoningSelect.parentElement.style.display = options.length ? '' : 'none';
 }
 
 function renderSettingsTabs() {
@@ -439,9 +538,69 @@ function renderTeamSettings(c) {
     const t = settingsData.team || {};
     let html = '<div class="settings-field"><label>Team Name</label><input id="s_team_name" value="' + escapeHtml(t.name||'') + '"></div>';
     html += '<div class="settings-field"><label>Project Directory <span class="restart-badge">Requires restart</span></label><input id="s_project_dir" value="' + escapeHtml(t.project_dir||'') + '" readonly style="opacity:0.6"></div>';
-    html += '<div class="settings-field"><label>Default Model</label><input id="s_default_model" value="' + escapeHtml(t.default_model||'') + '"></div>';
+    html += renderSystemAgentSettings();
     html += '<div style="margin-top:16px"><button class="settings-save-btn" onclick="saveTeamSettings()">Save Team Settings</button><span class="settings-saved-msg" id="teamSavedMsg">Saved!</span></div>';
     c.innerHTML = html;
+}
+
+function ensureSystemAgentProfile() {
+    const t = settingsData.team || {};
+    const profile = t.system_agent || {};
+    const provider = profile.provider || t.cli_provider || 'claude';
+    const model = profile.model || defaultSystemModelForProvider(provider);
+    settingsData.team.system_agent = {
+        provider: provider,
+        model: model,
+        reasoning_effort: profile.reasoning_effort || defaultReasoningForModel(model),
+    };
+    return settingsData.team.system_agent;
+}
+
+function renderSystemAgentSettings() {
+    const profile = ensureSystemAgentProfile();
+    const models = modelOptionsForProvider(profile.provider, profile.model);
+    let modelOptions = '';
+    for (const m of models) {
+        const mid = m.id || m;
+        const name = m.name || m.label || mid;
+        modelOptions += '<option value="' + escapeHtml(mid) + '"' + (profile.model === mid ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+    }
+    const reasoningSelect = reasoningSelectHtml(
+        's_system_reasoning_effort',
+        profile.model,
+        profile.reasoning_effort,
+        'updateSystemAgentReasoning(this.value)'
+    );
+    let html = '<div class="settings-field"><label>System AI Profile</label>' +
+        '<select id="s_system_provider" onchange="updateSystemAgentProvider(this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">' +
+        '<option value="claude"' + (profile.provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
+        '<option value="gemini"' + (profile.provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
+        '<option value="codex"' + (profile.provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
+        '</select></div>';
+    html += '<div class="settings-field"><label>System Model</label><select id="s_system_model" onchange="updateSystemAgentModel(this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">' + modelOptions + '</select></div>';
+    html += '<div class="settings-field" style="' + (reasoningSelect ? '' : 'display:none') + '"><label>' + escapeHtml(reasoningLabelForModel(profile.model)) + '</label>' + reasoningSelect + '</div>';
+    return html;
+}
+
+function updateSystemAgentProvider(provider) {
+    const model = defaultSystemModelForProvider(provider);
+    settingsData.team.system_agent = {
+        provider: provider,
+        model: model,
+        reasoning_effort: defaultReasoningForModel(model),
+    };
+    renderTeamSettings(document.getElementById('settingsContent'));
+}
+
+function updateSystemAgentModel(model) {
+    const profile = ensureSystemAgentProfile();
+    profile.model = model;
+    profile.reasoning_effort = defaultReasoningForModel(model);
+    renderTeamSettings(document.getElementById('settingsContent'));
+}
+
+function updateSystemAgentReasoning(effort) {
+    ensureSystemAgentProfile().reasoning_effort = effort;
 }
 
 function renderRoleSettings(c, role) {
@@ -454,7 +613,7 @@ function renderRoleSettings(c, role) {
         '<option value="gemini"' + (provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
         '<option value="codex"' + (provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
         '</select></div>';
-    html += '<div class="settings-field"><label>Model Version</label><select id="s_model" onchange="document.getElementById(\'s_model_custom\').value=this.value" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">';
+    html += '<div class="settings-field"><label>Model Version</label><select id="s_model" onchange="document.getElementById(\'s_model_custom\').value=this.value;syncSettingsReasoningForModel(this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">';
     for (const m of models) {
         const mid = m.id || m;
         const name = m.name || m.label || mid;
@@ -462,6 +621,8 @@ function renderRoleSettings(c, role) {
     }
     html += '</select></div>';
     html += '<div class="settings-field"><label>Model ID</label><input id="s_model_custom" value="' + escapeHtml(r.model||'') + '"></div>';
+    const reasoningSelect = reasoningSelectHtml('s_reasoning_effort', r.model || '', r.reasoning_effort || '', '');
+    html += '<div class="settings-field" style="' + (reasoningSelect ? '' : 'display:none') + '"><label>' + escapeHtml(reasoningLabelForModel(r.model || '')) + '</label>' + reasoningSelect + '</div>';
     html += '<div class="settings-field"><label>System Prompt</label><textarea id="s_system_prompt" rows="6">' + escapeHtml(r.system_prompt||'') + '</textarea></div>';
     html += '<div class="settings-field"><label>Tools (comma-separated)</label><input id="s_tools" value="' + escapeHtml((r.tools||[]).join(', ')) + '"></div>';
     html += '<div class="settings-field"><label>Max Instances <span class="restart-badge">Requires restart</span></label><input id="s_max_instances" type="number" value="' + (r.max_instances||1) + '" readonly style="opacity:0.6"></div>';
@@ -470,14 +631,18 @@ function renderRoleSettings(c, role) {
 }
 
 async function saveTeamSettings() {
-    await fetch('/api/settings/team', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ name:document.getElementById('s_team_name').value, default_model:document.getElementById('s_default_model').value }) });
+    ensureSystemAgentProfile();
+    await fetch('/api/settings/team', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ name:document.getElementById('s_team_name').value, system_agent:settingsData.team.system_agent }) });
     const m = document.getElementById('teamSavedMsg'); m.classList.add('show'); setTimeout(() => m.classList.remove('show'), 2000);
 }
 
 async function saveRoleSettings(role) {
     const tools = document.getElementById('s_tools').value.split(',').map(s=>s.trim()).filter(Boolean);
     const model = document.getElementById('s_model_custom').value || document.getElementById('s_model').value;
-    await fetch('/api/settings/roles/' + role, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ system_prompt:document.getElementById('s_system_prompt').value, model:model, tools:tools }) });
+    const reasoningEl = document.getElementById('s_reasoning_effort');
+    const payload = { system_prompt:document.getElementById('s_system_prompt').value, model:model, tools:tools };
+    if (reasoningEl && reasoningEl.parentElement.style.display !== 'none') payload.reasoning_effort = reasoningEl.value;
+    await fetch('/api/settings/roles/' + role, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     const m = document.getElementById('roleSavedMsg'); m.classList.add('show'); setTimeout(() => m.classList.remove('show'), 2000);
     await loadSettings();
 }
@@ -561,8 +726,145 @@ function refreshAll() {
 // ================================================================
 // Project Management
 // ================================================================
-let projectWizardStep = 1;
-let projectWizardData = { name: '', directory: '', with_defaults: true };
+let projectWizardData = {
+    name: '',
+    directory: '',
+    with_defaults: true,
+    cli_provider: 'claude',
+    role_model_settings: {},
+    system_agent: {},
+};
+
+function initializeProjectWizardRoleModels(provider) {
+    projectWizardData.role_model_settings = {};
+    DEFAULT_PROJECT_ROLES.forEach(function(role) {
+        const model = defaultModelForRole(provider, role);
+        projectWizardData.role_model_settings[role] = {
+            model: model,
+            reasoning_effort: defaultReasoningForModel(model),
+        };
+    });
+}
+
+function initializeProjectWizardSystemAgent(provider) {
+    const model = defaultSystemModelForProvider(provider);
+    projectWizardData.system_agent = {
+        provider: provider,
+        model: model,
+        reasoning_effort: defaultReasoningForModel(model),
+    };
+}
+
+function setProjectWizardProvider(provider) {
+    projectWizardData.cli_provider = provider;
+    initializeProjectWizardRoleModels(provider);
+    initializeProjectWizardSystemAgent(provider);
+    renderWizardStep();
+}
+
+function setProjectWizardSystemProvider(provider) {
+    initializeProjectWizardSystemAgent(provider);
+    renderWizardStep();
+}
+
+function setProjectWizardSystemModel(model) {
+    if (!projectWizardData.system_agent) {
+        projectWizardData.system_agent = {};
+    }
+    projectWizardData.system_agent.model = model;
+    projectWizardData.system_agent.reasoning_effort = defaultReasoningForModel(model);
+    renderWizardStep();
+}
+
+function setProjectWizardSystemReasoning(effort) {
+    if (!projectWizardData.system_agent) {
+        projectWizardData.system_agent = {};
+    }
+    projectWizardData.system_agent.reasoning_effort = effort;
+}
+
+function setProjectWizardRoleModel(role, model) {
+    if (!projectWizardData.role_model_settings[role]) {
+        projectWizardData.role_model_settings[role] = {};
+    }
+    projectWizardData.role_model_settings[role].model = model;
+    projectWizardData.role_model_settings[role].reasoning_effort = defaultReasoningForModel(model);
+    renderWizardStep();
+}
+
+function setProjectWizardRoleReasoning(role, effort) {
+    if (!projectWizardData.role_model_settings[role]) {
+        projectWizardData.role_model_settings[role] = {};
+    }
+    projectWizardData.role_model_settings[role].reasoning_effort = effort;
+}
+
+function renderProjectRoleModelRows() {
+    const roleLabels = { pm: 'PM', architect: 'Architect', coder: 'Coder', verifier: 'Verifier' };
+    const models = modelOptionsForProvider(projectWizardData.cli_provider, '');
+    let html = '<div class="wizard-role-model-grid">';
+    DEFAULT_PROJECT_ROLES.forEach(function(role) {
+        const setting = projectWizardData.role_model_settings[role] || {};
+        const model = setting.model || defaultModelForRole(projectWizardData.cli_provider, role);
+        const reasoningOptions = reasoningOptionsForModel(model);
+        html += '<div class="wizard-role-model-row">' +
+            '<label>' + escapeHtml(roleLabels[role] || role) + '</label>' +
+            '<select onchange="setProjectWizardRoleModel(\'' + escapeHtml(role) + '\', this.value)">';
+        models.forEach(function(m) {
+            const mid = m.id || m;
+            const name = m.name || m.label || mid;
+            html += '<option value="' + escapeHtml(mid) + '"' + (mid === model ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+        });
+        html += '</select>';
+        if (reasoningOptions.length) {
+            const reasoning = setting.reasoning_effort || defaultReasoningForModel(model);
+            html += '<select onchange="setProjectWizardRoleReasoning(\'' + escapeHtml(role) + '\', this.value)">';
+            reasoningOptions.forEach(function(opt) {
+                html += '<option value="' + escapeHtml(opt) + '"' + (opt === reasoning ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
+            });
+            html += '</select>';
+        }
+        html += '</div>';
+    });
+    html += '</div>';
+    return html;
+}
+
+function renderProjectSystemAgentSection() {
+    const profile = projectWizardData.system_agent || {};
+    const provider = profile.provider || projectWizardData.cli_provider || 'claude';
+    const model = profile.model || defaultSystemModelForProvider(provider);
+    const reasoning = profile.reasoning_effort || defaultReasoningForModel(model);
+    const models = modelOptionsForProvider(provider, model);
+    const reasoningOptions = reasoningOptionsForModel(model);
+    let html = '<div class="wizard-role-model-grid">' +
+        '<div class="wizard-role-model-row">' +
+        '<label>Admin</label>' +
+        '<select onchange="setProjectWizardSystemProvider(this.value)">' +
+        '<option value="claude"' + (provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
+        '<option value="gemini"' + (provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
+        '<option value="codex"' + (provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
+        '</select>' +
+        '</div>' +
+        '<div class="wizard-role-model-row">' +
+        '<label>Model</label>' +
+        '<select onchange="setProjectWizardSystemModel(this.value)">';
+    models.forEach(function(m) {
+        const mid = m.id || m;
+        const name = m.name || m.label || mid;
+        html += '<option value="' + escapeHtml(mid) + '"' + (mid === model ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+    });
+    html += '</select>';
+    if (reasoningOptions.length) {
+        html += '<select onchange="setProjectWizardSystemReasoning(this.value)">';
+        reasoningOptions.forEach(function(opt) {
+            html += '<option value="' + escapeHtml(opt) + '"' + (opt === reasoning ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
+        });
+        html += '</select>';
+    }
+    html += '</div></div>';
+    return html;
+}
 
 async function checkProjectStatus() {
     try {
@@ -709,10 +1011,29 @@ async function browseForDirectory() {
 }
 
 function openCreateProjectWizard() {
-    projectWizardStep = 1;
-    projectWizardData = { name: '', directory: '', with_defaults: true, cli_provider: 'claude' };
+    projectWizardData = {
+        name: '',
+        directory: '',
+        with_defaults: true,
+        cli_provider: 'claude',
+        role_model_settings: {},
+        system_agent: {},
+    };
+    initializeProjectWizardRoleModels('claude');
+    initializeProjectWizardSystemAgent('claude');
     document.getElementById('createProjectOverlay').style.display = 'flex';
     renderWizardStep();
+    if (!projectWizardModels.length) {
+        fetch('/api/settings/models')
+            .then(function(resp) { return resp.ok ? resp.json() : []; })
+            .then(function(data) {
+                projectWizardModels = Array.isArray(data) ? data : (data.models || []);
+                initializeProjectWizardRoleModels(projectWizardData.cli_provider);
+                initializeProjectWizardSystemAgent(projectWizardData.cli_provider);
+                renderWizardStep();
+            })
+            .catch(function() {});
+    }
 }
 
 function closeCreateProjectWizard() {
@@ -721,158 +1042,145 @@ function closeCreateProjectWizard() {
 
 function renderWizardStep() {
     const content = document.getElementById('wizardProjectContent');
-    const prevBtn = document.getElementById('wizardPrevBtn');
     const nextBtn = document.getElementById('wizardNextBtn');
+    const activeProvider = projectWizardData.cli_provider;
+    const isClaude = activeProvider === 'claude';
+    const isGemini = activeProvider === 'gemini';
+    const isCodex = activeProvider === 'codex';
 
-    // Update step dots
-    document.querySelectorAll('.step-dot').forEach(function(d) {
-        d.classList.toggle('active', parseInt(d.dataset.step) <= projectWizardStep);
-    });
-
-    if (projectWizardStep === 1) {
-        prevBtn.style.display = 'none';
-        nextBtn.textContent = 'Next';
-        nextBtn.disabled = false;
-        content.innerHTML =
-            '<div class="wizard-step">' +
-            '<h3>Project Identity</h3>' +
-            '<p class="wizard-desc">Give your project a name and specify where it lives.</p>' +
-            '<div class="wizard-field">' +
-            '<label>Project Name</label>' +
-            '<input type="text" id="wizardProjectName" placeholder="My Awesome Project" value="' + escapeHtml(projectWizardData.name) + '" oninput="projectWizardData.name = this.value">' +
-            '</div>' +
-            '<div class="wizard-field">' +
-            '<label>Project Directory</label>' +
-            '<div style="display:flex;gap:8px;align-items:stretch">' +
-            '<input type="text" id="wizardProjectDir" placeholder="/Users/you/projects/my-project" value="' + escapeHtml(projectWizardData.directory) + '" oninput="projectWizardData.directory = this.value" style="flex:1">' +
-            '<button type="button" class="btn-secondary" onclick="browseForDirectory()" id="browseDirBtn" style="white-space:nowrap;padding:0 16px">Browse\u2026</button>' +
-            '</div>' +
-            '<span class="field-hint">Absolute path. Will be created if it doesn\'t exist.</span>' +
-            '</div>' +
-            '</div>';
-    } else if (projectWizardStep === 2) {
-        prevBtn.style.display = 'inline-flex';
-        nextBtn.textContent = 'Next';
-        nextBtn.disabled = false;
-        const activeProvider = projectWizardData.cli_provider;
-        const isClaude = activeProvider === 'claude';
-        const isGemini = activeProvider === 'gemini';
-        const isCodex = activeProvider === 'codex';
-        content.innerHTML =
-            '<div class="wizard-step">' +
-            '<h3>CLI Provider</h3>' +
-            '<p class="wizard-desc">Choose which AI CLI your agents will use.</p>' +
-            '<div class="wizard-options">' +
-            '<label class="wizard-option ' + (isClaude ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'claude\'; renderWizardStep();" style="border-color:' + (isClaude ? '#a855f7' : '') + '">' +
-            '<div class="option-radio ' + (isClaude ? 'checked' : '') + '" style="' + (isClaude ? 'border-color:#a855f7;background:#a855f7' : '') + '"></div>' +
-            '<div class="option-content">' +
-            '<strong>Claude Code</strong>' +
-            '<p>Opus for planning, Sonnet for implementation and verification. MCP tool servers included.</p>' +
-            '</div></label>' +
-            '<label class="wizard-option ' + (isGemini ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'gemini\'; renderWizardStep();" style="border-color:' + (isGemini ? '#4285f4' : '') + '">' +
-            '<div class="option-radio ' + (isGemini ? 'checked' : '') + '" style="' + (isGemini ? 'border-color:#4285f4;background:#4285f4' : '') + '"></div>' +
-            '<div class="option-content">' +
-            '<strong>Gemini CLI</strong>' +
-            '<p>Gemini models for every default agent. MCP tool servers included.</p>' +
-            '</div></label>' +
-            '<label class="wizard-option ' + (isCodex ? 'selected' : '') + '" onclick="projectWizardData.cli_provider = \'codex\'; renderWizardStep();" style="border-color:' + (isCodex ? '#10a37f' : '') + '">' +
-            '<div class="option-radio ' + (isCodex ? 'checked' : '') + '" style="' + (isCodex ? 'border-color:#10a37f;background:#10a37f' : '') + '"></div>' +
-            '<div class="option-content">' +
-            '<strong>Codex CLI</strong>' +
-            '<p>OpenAI GPT models via codex exec. MCP tool servers included.</p>' +
-            '</div></label>' +
-            '</div></div>';
-    } else {
-        prevBtn.style.display = 'inline-flex';
-        nextBtn.textContent = 'Create Project';
-        nextBtn.disabled = false;
-        content.innerHTML =
-            '<div class="wizard-step">' +
-            '<h3>Agent Setup</h3>' +
-            '<p class="wizard-desc">Choose how to set up your project\'s agents.</p>' +
-            '<div class="wizard-options">' +
-            '<label class="wizard-option ' + (projectWizardData.with_defaults ? 'selected' : '') + '" onclick="projectWizardData.with_defaults = true; renderWizardStep();">' +
-            '<div class="option-radio ' + (projectWizardData.with_defaults ? 'checked' : '') + '"></div>' +
-            '<div class="option-content">' +
-            '<strong>Start with default agents</strong>' +
-            '<p>Scaffolds PM, Architect, Coder, Tester, and Reviewer with a standard pipeline. Ready to use immediately.</p>' +
-            '</div></label>' +
-            '<label class="wizard-option ' + (!projectWizardData.with_defaults ? 'selected' : '') + '" onclick="projectWizardData.with_defaults = false; renderWizardStep();">' +
-            '<div class="option-radio ' + (!projectWizardData.with_defaults ? 'checked' : '') + '"></div>' +
-            '<div class="option-content">' +
-            '<strong>Start empty</strong>' +
-            '<p>Just creates the config directory. Add agents manually in Settings.</p>' +
-            '</div></label>' +
-            '</div></div>';
-    }
-}
-
-function wizardPrevStep() {
-    if (projectWizardStep > 1) {
-        projectWizardStep--;
-        renderWizardStep();
-    }
+    nextBtn.textContent = 'Create Project';
+    nextBtn.disabled = false;
+    content.innerHTML =
+        '<div class="wizard-step wizard-single-step">' +
+        '<section class="wizard-section">' +
+        '<div class="wizard-section-header">' +
+        '<h3>Project Identity</h3>' +
+        '<p class="wizard-desc">Give your project a name and specify where it lives.</p>' +
+        '</div>' +
+        '<div class="wizard-field">' +
+        '<label>Project Name</label>' +
+        '<input type="text" id="wizardProjectName" placeholder="My Awesome Project" value="' + escapeHtml(projectWizardData.name) + '" oninput="projectWizardData.name = this.value">' +
+        '</div>' +
+        '<div class="wizard-field">' +
+        '<label>Project Directory</label>' +
+        '<div class="wizard-directory-row">' +
+        '<input type="text" id="wizardProjectDir" placeholder="/Users/you/projects/my-project" value="' + escapeHtml(projectWizardData.directory) + '" oninput="projectWizardData.directory = this.value">' +
+        '<button type="button" class="btn-secondary wizard-browse-btn" onclick="browseForDirectory()" id="browseDirBtn">Browse\u2026</button>' +
+        '</div>' +
+        '<span class="field-hint">Absolute path. Will be created if it doesn\'t exist.</span>' +
+        '</div>' +
+        '</section>' +
+        '<section class="wizard-section">' +
+        '<div class="wizard-section-header">' +
+        '<h3>CLI Provider</h3>' +
+        '<p class="wizard-desc">Choose which AI CLI your agents will use.</p>' +
+        '</div>' +
+        '<div class="wizard-options wizard-provider-options">' +
+        '<label class="wizard-option ' + (isClaude ? 'selected' : '') + '" onclick="setProjectWizardProvider(\'claude\')" style="border-color:' + (isClaude ? '#a855f7' : '') + '">' +
+        '<div class="option-radio ' + (isClaude ? 'checked' : '') + '" style="' + (isClaude ? 'border-color:#a855f7;background:#a855f7' : '') + '"></div>' +
+        '<div class="option-content">' +
+        '<strong><span class="option-letter">C</span> Claude Code</strong>' +
+        '<p>Claude models with MCP tool servers included.</p>' +
+        '</div></label>' +
+        '<label class="wizard-option ' + (isGemini ? 'selected' : '') + '" onclick="setProjectWizardProvider(\'gemini\')" style="border-color:' + (isGemini ? '#4285f4' : '') + '">' +
+        '<div class="option-radio ' + (isGemini ? 'checked' : '') + '" style="' + (isGemini ? 'border-color:#4285f4;background:#4285f4' : '') + '"></div>' +
+        '<div class="option-content">' +
+        '<strong><span class="option-letter">G</span> Gemini CLI</strong>' +
+        '<p>Gemini models with MCP tool servers included.</p>' +
+        '</div></label>' +
+        '<label class="wizard-option ' + (isCodex ? 'selected' : '') + '" onclick="setProjectWizardProvider(\'codex\')" style="border-color:' + (isCodex ? '#10a37f' : '') + '">' +
+        '<div class="option-radio ' + (isCodex ? 'checked' : '') + '" style="' + (isCodex ? 'border-color:#10a37f;background:#10a37f' : '') + '"></div>' +
+        '<div class="option-content">' +
+        '<strong><span class="option-letter">O</span> Codex CLI</strong>' +
+        '<p>OpenAI models via codex exec, with MCP tool servers included.</p>' +
+        '</div></label>' +
+        '</div>' +
+        '</section>' +
+        '<section class="wizard-section">' +
+        '<div class="wizard-section-header">' +
+        '<h3>Default Agent Models</h3>' +
+        '<p class="wizard-desc">Choose the model and reasoning level for each scaffolded role.</p>' +
+        '</div>' +
+        renderProjectRoleModelRows() +
+        '</section>' +
+        '<section class="wizard-section">' +
+        '<div class="wizard-section-header">' +
+        '<h3>System AI Profile</h3>' +
+        '<p class="wizard-desc">Choose the TaskBrew admin model for project-wide AI features.</p>' +
+        '</div>' +
+        renderProjectSystemAgentSection() +
+        '</section>' +
+        '<section class="wizard-section">' +
+        '<div class="wizard-section-header">' +
+        '<h3>Agent Setup</h3>' +
+        '<p class="wizard-desc">Choose how to set up your project\'s agents.</p>' +
+        '</div>' +
+        '<div class="wizard-options wizard-agent-options">' +
+        '<label class="wizard-option ' + (projectWizardData.with_defaults ? 'selected' : '') + '" onclick="projectWizardData.with_defaults = true; renderWizardStep();">' +
+        '<div class="option-radio ' + (projectWizardData.with_defaults ? 'checked' : '') + '"></div>' +
+        '<div class="option-content">' +
+        '<strong>Start with default agents</strong>' +
+        '<p>Scaffolds PM, Architect, Coder, and Verifier with a standard pipeline.</p>' +
+        '</div></label>' +
+        '<label class="wizard-option ' + (!projectWizardData.with_defaults ? 'selected' : '') + '" onclick="projectWizardData.with_defaults = false; renderWizardStep();">' +
+        '<div class="option-radio ' + (!projectWizardData.with_defaults ? 'checked' : '') + '"></div>' +
+        '<div class="option-content">' +
+        '<strong>Start empty</strong>' +
+        '<p>Creates the config directory only. Add agents manually in Settings.</p>' +
+        '</div></label>' +
+        '</div></section></div>';
 }
 
 async function wizardNextStep() {
-    if (projectWizardStep === 1) {
-        // Validate
-        if (!projectWizardData.name.trim()) {
-            showToast('Please enter a project name', 'error');
-            return;
-        }
-        if (!projectWizardData.directory.trim()) {
-            showToast('Please enter a project directory', 'error');
-            return;
-        }
-        if (!projectWizardData.directory.startsWith('/')) {
-            showToast('Directory must be an absolute path (starting with /)', 'error');
-            return;
-        }
-        projectWizardStep = 2;
-        renderWizardStep();
-    } else if (projectWizardStep === 2) {
-        projectWizardStep = 3;
-        renderWizardStep();
-    } else {
-        // Create project
-        var nextBtn = document.getElementById('wizardNextBtn');
-        nextBtn.disabled = true;
-        nextBtn.textContent = 'Creating...';
+    if (!projectWizardData.name.trim()) {
+        showToast('Please enter a project name', 'error');
+        return;
+    }
+    if (!projectWizardData.directory.trim()) {
+        showToast('Please enter a project directory', 'error');
+        return;
+    }
+    if (!projectWizardData.directory.startsWith('/')) {
+        showToast('Directory must be an absolute path (starting with /)', 'error');
+        return;
+    }
 
-        try {
-            var resp = await fetch('/api/projects', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(projectWizardData),
-            });
-            if (!resp.ok) {
-                var err = await resp.json();
-                showToast(err.detail || 'Failed to create project', 'error');
-                nextBtn.disabled = false;
-                nextBtn.textContent = 'Create Project';
-                return;
-            }
-            var project = await resp.json();
+    var nextBtn = document.getElementById('wizardNextBtn');
+    nextBtn.disabled = true;
+    nextBtn.textContent = 'Creating...';
 
-            // Activate it
-            var actResp = await fetch('/api/projects/' + project.id + '/activate', { method: 'POST' });
-            if (!actResp.ok) {
-                showToast('Project created but failed to activate', 'error');
-            }
-
-            closeCreateProjectWizard();
-
-            if (!projectWizardData.with_defaults) {
-                window.location.href = '/settings';
-            } else {
-                window.location.reload();
-            }
-        } catch (e) {
-            showToast('Failed to create project', 'error');
+    try {
+        var resp = await fetch('/api/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(projectWizardData),
+        });
+        if (!resp.ok) {
+            var err = await resp.json();
+            showToast(err.detail || 'Failed to create project', 'error');
             nextBtn.disabled = false;
             nextBtn.textContent = 'Create Project';
+            return;
         }
+        var project = await resp.json();
+
+        // Activate it
+        var actResp = await fetch('/api/projects/' + project.id + '/activate', { method: 'POST' });
+        if (!actResp.ok) {
+            showToast('Project created but failed to activate', 'error');
+        }
+
+        closeCreateProjectWizard();
+
+        if (!projectWizardData.with_defaults) {
+            window.location.href = '/settings';
+        } else {
+            window.location.reload();
+        }
+    } catch (e) {
+        showToast('Failed to create project', 'error');
+        nextBtn.disabled = false;
+        nextBtn.textContent = 'Create Project';
     }
 }
 
@@ -1767,11 +2075,14 @@ function showOnboarding() {
             (currentStep === steps.length - 1 ? 'Get Started' : 'Next') + '</button>' +
             '</div></div></div>';
 
-        document.getElementById('onboardSkipBtn').addEventListener('click', () => {
+        const skipBtn = overlay.querySelector('#onboardSkipBtn');
+        const nextBtn = overlay.querySelector('#onboardNextBtn');
+        if (!skipBtn || !nextBtn) return;
+        skipBtn.addEventListener('click', () => {
             overlay.remove();
             localStorage.setItem('onboarding_done', '1');
         });
-        document.getElementById('onboardNextBtn').addEventListener('click', () => {
+        nextBtn.addEventListener('click', () => {
             if (currentStep < steps.length - 1) {
                 currentStep++;
                 renderStep();
@@ -1782,6 +2093,6 @@ function showOnboarding() {
         });
     }
 
-    renderStep();
     document.body.appendChild(overlay);
+    renderStep();
 }

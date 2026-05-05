@@ -290,17 +290,89 @@ class TestScaffolding:
     def test_default_roles_use_selected_provider_models(
         self, pm: ProjectManager, tmp_path: Path
     ):
+        claude_dir = tmp_path / "claude-defaults"
+        pm.create_project("Claude Defaults", str(claude_dir), cli_provider="claude")
+        with open(claude_dir / "config" / "roles" / "pm.yaml") as f:
+            claude_pm = yaml.safe_load(f)
+        with open(claude_dir / "config" / "roles" / "coder.yaml") as f:
+            claude_coder = yaml.safe_load(f)
+        assert claude_pm["model"] == "claude-opus-4-7"
+        assert claude_pm["reasoning_effort"] == "xhigh"
+        assert claude_coder["model"] == "claude-sonnet-4-6"
+        assert claude_coder["reasoning_effort"] == "high"
+
         gemini_dir = tmp_path / "gemini-defaults"
         pm.create_project("Gemini Defaults", str(gemini_dir), cli_provider="gemini")
+        with open(gemini_dir / "config" / "roles" / "pm.yaml") as f:
+            gemini_pm = yaml.safe_load(f)
         with open(gemini_dir / "config" / "roles" / "coder.yaml") as f:
             gemini_coder = yaml.safe_load(f)
+        assert gemini_pm["model"] == "gemini-3-pro-preview"
+        assert gemini_pm["reasoning_effort"] == "high"
         assert gemini_coder["model"] == "gemini-3-flash-preview"
+        assert gemini_coder["reasoning_effort"] == "medium"
 
         codex_dir = tmp_path / "codex-defaults"
         pm.create_project("Codex Defaults", str(codex_dir), cli_provider="codex")
         with open(codex_dir / "config" / "roles" / "coder.yaml") as f:
             codex_coder = yaml.safe_load(f)
-        assert codex_coder["model"] == "gpt-5.5"
+        assert codex_coder["model"] == "gpt-5.4"
+        assert codex_coder["reasoning_effort"] == "medium"
+        with open(codex_dir / "config" / "team.yaml") as f:
+            codex_team = yaml.safe_load(f)
+        assert codex_team["system_agent"] == {
+            "provider": "codex",
+            "model": "gpt-5.4",
+            "reasoning_effort": "medium",
+        }
+
+    def test_role_model_settings_override_scaffold_defaults(
+        self, pm: ProjectManager, tmp_path: Path
+    ):
+        d = tmp_path / "custom-models"
+        pm.create_project(
+            "Custom Models",
+            str(d),
+            cli_provider="codex",
+            role_model_settings={
+                "pm": {"model": "gpt-5.3-codex", "reasoning_effort": "xhigh"},
+                "coder": {"model": "gpt-5.4-mini", "reasoning_effort": "low"},
+            },
+        )
+
+        with open(d / "config" / "roles" / "pm.yaml") as f:
+            pm_role = yaml.safe_load(f)
+        with open(d / "config" / "roles" / "coder.yaml") as f:
+            coder_role = yaml.safe_load(f)
+
+        assert pm_role["model"] == "gpt-5.3-codex"
+        assert pm_role["reasoning_effort"] == "xhigh"
+        assert coder_role["model"] == "gpt-5.4-mini"
+        assert coder_role["reasoning_effort"] == "low"
+
+    def test_system_agent_settings_override_scaffold_defaults(
+        self, pm: ProjectManager, tmp_path: Path
+    ):
+        d = tmp_path / "custom-system-agent"
+        pm.create_project(
+            "Custom System Agent",
+            str(d),
+            cli_provider="claude",
+            system_agent_settings={
+                "provider": "gemini",
+                "model": "gemini-3-pro-preview",
+                "reasoning_effort": "high",
+            },
+        )
+
+        with open(d / "config" / "team.yaml") as f:
+            team_data = yaml.safe_load(f)
+
+        assert team_data["system_agent"] == {
+            "provider": "gemini",
+            "model": "gemini-3-pro-preview",
+            "reasoning_effort": "high",
+        }
 
     def test_pm_routes_to_architect(
         self, pm: ProjectManager, tmp_path: Path

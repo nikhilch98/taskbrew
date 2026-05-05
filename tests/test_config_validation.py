@@ -157,7 +157,7 @@ class TestRoleConfigValid:
         r = roles["tester"]
         assert r.role == "tester"
         assert r.display_name == "Tester"
-        assert r.model == "claude-opus-4-6"  # default
+        assert r.model == "claude-opus-4-7"  # default
         assert r.tools == []
         assert r.produces == []
         assert r.accepts == []
@@ -306,7 +306,7 @@ class TestInvalidModelNames:
         _write_role(roles_dir, "nomod.yaml", _minimal_role_yaml(role="nomod", prefix="NM"))
 
         roles = load_roles(roles_dir)
-        assert roles["nomod"].model == "claude-opus-4-6"
+        assert roles["nomod"].model == "claude-opus-4-7"
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import yaml
 from fastapi import APIRouter, HTTPException
 
 from taskbrew.config_loader import (
-    AutoScaleConfig, RouteTarget, _parse_role, validate_routing,
+    AutoScaleConfig, RouteTarget, SystemAgentConfig, _parse_role, validate_routing,
 )
 from taskbrew.dashboard.models import (
     CreateAbTestBody,
@@ -28,6 +28,7 @@ from taskbrew.dashboard.models import (
     UpdateTeamSettingsBody,
 )
 from taskbrew.dashboard.routers._deps import get_orch, get_orch_optional, set_orchestrator
+from taskbrew.model_catalog import available_models, system_agent_setting
 
 router = APIRouter()
 
@@ -162,9 +163,23 @@ async def create_project(body: CreateProjectBody):
     if not directory:
         raise HTTPException(400, "Project directory is required")
     cli_provider = getattr(body, "cli_provider", "claude") or "claude"
+    role_model_settings = {
+        role: setting.model_dump(exclude_none=True)
+        for role, setting in body.role_model_settings.items()
+    }
+    system_agent_settings = (
+        body.system_agent.model_dump(exclude_none=True)
+        if body.system_agent
+        else None
+    )
     try:
         result = _project_manager.create_project(
-            name, directory, with_defaults=with_defaults, cli_provider=cli_provider,
+            name,
+            directory,
+            with_defaults=with_defaults,
+            cli_provider=cli_provider,
+            role_model_settings=role_model_settings,
+            system_agent_settings=system_agent_settings,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -268,37 +283,6 @@ async def deactivate_project():
 # Settings
 # ------------------------------------------------------------------
 
-_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
-    "claude": [
-        {"id": "claude-opus-4-6", "label": "Flagship", "name": "Claude Opus 4.6"},
-        {"id": "claude-sonnet-4-6", "label": "Balanced", "name": "Claude Sonnet 4.6"},
-        {"id": "claude-haiku-4-5-20251001", "label": "Fast", "name": "Claude Haiku 4.5"},
-    ],
-    "gemini": [
-        {"id": "gemini-3.1-pro-preview", "label": "Flagship", "name": "Gemini 3.1 Pro"},
-        {"id": "gemini-3-flash-preview", "label": "Balanced", "name": "Gemini 3 Flash"},
-        {"id": "gemini-2.5-pro", "label": "Previous Pro", "name": "Gemini 2.5 Pro"},
-        {"id": "gemini-2.5-flash", "label": "Previous Flash", "name": "Gemini 2.5 Flash"},
-    ],
-    "codex": [
-        {"id": "gpt-5.5", "label": "Flagship", "name": "GPT-5.5"},
-        {"id": "gpt-5.3-codex", "label": "Balanced", "name": "GPT-5.3 Codex"},
-        {"id": "gpt-5.3-codex-spark", "label": "Fast", "name": "GPT-5.3 Codex Spark"},
-        {"id": "gpt-4o", "label": "Legacy", "name": "GPT-4o"},
-        {"id": "o3", "label": "Reasoning", "name": "o3"},
-    ],
-}
-
-
-def _available_models(provider: str = "") -> list[dict[str, str]]:
-    providers = [provider] if provider else ["claude", "gemini", "codex"]
-    models: list[dict[str, str]] = []
-    for provider_name in providers:
-        for model in _MODEL_CATALOG.get(provider_name, []):
-            models.append({"provider": provider_name, **model})
-    return models
-
-
 @router.get("/api/settings/team")
 async def get_team_settings():
     orch = get_orch_optional()
@@ -311,10 +295,24 @@ async def get_team_settings():
     # endpoint. Operators that need it can read it from team.yaml
     # directly.
     redact_secrets = bool(getattr(tc, "auth_enabled", False))
+    system_agent = getattr(tc, "system_agent", None)
+    if system_agent:
+        system_agent_profile = {
+            "provider": system_agent.provider,
+            "model": system_agent.model,
+            "reasoning_effort": system_agent.reasoning_effort,
+        }
+    else:
+        system_agent_profile = system_agent_setting(
+            getattr(tc, "cli_provider", "claude") or "claude",
+            {},
+        )
     return {
         "name": tc.team_name,
         "project_dir": pd,
         "db_path": "<redacted>" if redact_secrets else tc.db_path,
+        "cli_provider": getattr(tc, "cli_provider", "claude") or "claude",
+        "system_agent": system_agent_profile,
         "dashboard_host": tc.dashboard_host,
         "dashboard_port": tc.dashboard_port,
         "default_poll_interval": tc.default_poll_interval,
@@ -353,6 +351,16 @@ async def update_team_settings(body: UpdateTeamSettingsBody):
         tc_s.default_max_instances = body["default_max_instances"]
     if "group_prefixes" in body:
         tc_s.group_prefixes = body["group_prefixes"]
+    if "system_agent" in body:
+        resolved_system_agent = system_agent_setting(
+            getattr(tc_s, "cli_provider", "claude") or "claude",
+            body["system_agent"],
+        )
+        tc_s.system_agent = SystemAgentConfig(
+            provider=resolved_system_agent["provider"],
+            model=resolved_system_agent["model"],
+            reasoning_effort=resolved_system_agent.get("reasoning_effort"),
+        )
 
     # Persist to YAML file
     if pd:
@@ -376,6 +384,8 @@ async def update_team_settings(body: UpdateTeamSettingsBody):
             # Top-level fields
             if "group_prefixes" in body:
                 data["group_prefixes"] = body["group_prefixes"]
+            if "system_agent" in body:
+                data["system_agent"] = resolved_system_agent
 
             # Nested config sections
             if "auth_enabled" in body:
@@ -406,6 +416,7 @@ async def get_roles_settings():
             "display_name": rc.display_name,
             "system_prompt": rc.system_prompt,
             "model": rc.model,
+            "reasoning_effort": rc.reasoning_effort,
             "tools": rc.tools,
             "max_instances": rc.max_instances,
             "prefix": rc.prefix,
@@ -468,6 +479,8 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
         rc.system_prompt = body["system_prompt"]
     if "model" in body:
         rc.model = body["model"]
+    if "reasoning_effort" in body:
+        rc.reasoning_effort = body["reasoning_effort"]
     if "tools" in body:
         rc.tools = body["tools"]
 
@@ -552,7 +565,7 @@ async def update_role_settings(role_name: str, body: UpdateRoleSettingsBody):
             # Simple scalar/list fields that map directly
             direct_keys = (
                 "display_name", "prefix", "color", "emoji",
-                "system_prompt", "model", "tools",
+                "system_prompt", "model", "reasoning_effort", "tools",
                 "max_instances", "max_turns", "max_execution_time",
                 "produces", "accepts",
                 "context_includes", "can_create_groups", "group_type",
@@ -606,7 +619,7 @@ async def create_role(body: CreateRoleBody):
     # explicit allowlist of keys that correspond to real role fields.
     _PRESET_ROLE_KEYS = frozenset({
         "display_name", "prefix", "color", "emoji",
-        "system_prompt", "model", "tools",
+        "system_prompt", "model", "reasoning_effort", "tools",
         "max_instances", "max_turns", "max_execution_time",
         "produces", "accepts", "routes_to",
         "context_includes", "can_create_groups", "group_type",
@@ -664,6 +677,8 @@ async def create_role(body: CreateRoleBody):
         "uses_worktree": body.get("uses_worktree", False),
         "artifact_exclude_patterns": body.get("artifact_exclude_patterns", []),
     }
+    if body.get("reasoning_effort"):
+        yaml_data["reasoning_effort"] = body["reasoning_effort"]
     if body.get("group_type"):
         yaml_data["group_type"] = body["group_type"]
     if body.get("max_turns"):
@@ -826,7 +841,7 @@ async def get_available_models(provider: str = ""):
         # provider explicitly, but the settings UI needs all families so
         # existing team members can be moved across Claude/Gemini/Codex.
         active_provider = ""
-    return _available_models(active_provider)
+    return available_models(active_provider)
 
 
 # ------------------------------------------------------------------

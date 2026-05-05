@@ -953,12 +953,14 @@ async def test_create_project_with_cli_provider(app_client, tmp_path):
     assert pm_yaml.exists()
     with open(pm_yaml) as f:
         pm_data = yaml.safe_load(f)
-    assert pm_data["model"] == "gemini-3.1-pro-preview"
+    assert pm_data["model"] == "gemini-3-pro-preview"
+    assert pm_data["reasoning_effort"] == "high"
 
     coder_yaml = Path(project_dir) / "config" / "roles" / "coder.yaml"
     with open(coder_yaml) as f:
         coder_data = yaml.safe_load(f)
     assert coder_data["model"] == "gemini-3-flash-preview"
+    assert coder_data["reasoning_effort"] == "medium"
 
     # Verify team.yaml contains cli_provider
     team_yaml = Path(project_dir) / "config" / "team.yaml"
@@ -968,6 +970,175 @@ async def test_create_project_with_cli_provider(app_client, tmp_path):
 
     # Cleanup
     set_project_deps(None, None)
+
+
+async def test_create_project_with_role_model_settings(app_client, tmp_path):
+    """POST /api/projects should persist per-role model and reasoning choices."""
+    from taskbrew.dashboard.routers.system import set_project_deps
+
+    pm = ProjectManager(registry_path=tmp_path / "registry.yaml")
+    set_project_deps(pm, None)
+
+    project_dir = str(tmp_path / "codex-project")
+    resp = await app_client["client"].post(
+        "/api/projects",
+        json={
+            "name": "Codex Test",
+            "directory": project_dir,
+            "with_defaults": True,
+            "cli_provider": "codex",
+            "role_model_settings": {
+                "pm": {"model": "gpt-5.3-codex", "reasoning_effort": "xhigh"},
+                "coder": {"model": "gpt-5.4-mini", "reasoning_effort": "low"},
+            },
+        },
+    )
+    assert resp.status_code == 200
+
+    import yaml
+    from pathlib import Path
+
+    pm_yaml = Path(project_dir) / "config" / "roles" / "pm.yaml"
+    with open(pm_yaml) as f:
+        pm_data = yaml.safe_load(f)
+    assert pm_data["model"] == "gpt-5.3-codex"
+    assert pm_data["reasoning_effort"] == "xhigh"
+
+    coder_yaml = Path(project_dir) / "config" / "roles" / "coder.yaml"
+    with open(coder_yaml) as f:
+        coder_data = yaml.safe_load(f)
+    assert coder_data["model"] == "gpt-5.4-mini"
+    assert coder_data["reasoning_effort"] == "low"
+
+    set_project_deps(None, None)
+
+
+async def test_create_project_with_system_agent_profile(app_client, tmp_path):
+    """POST /api/projects should persist the per-project system agent profile."""
+    from taskbrew.dashboard.routers.system import set_project_deps
+
+    pm = ProjectManager(registry_path=tmp_path / "registry.yaml")
+    set_project_deps(pm, None)
+
+    project_dir = str(tmp_path / "system-agent-project")
+    resp = await app_client["client"].post(
+        "/api/projects",
+        json={
+            "name": "System Agent Test",
+            "directory": project_dir,
+            "with_defaults": True,
+            "cli_provider": "claude",
+            "system_agent": {
+                "provider": "gemini",
+                "model": "gemini-3-pro-preview",
+                "reasoning_effort": "high",
+            },
+        },
+    )
+    assert resp.status_code == 200
+
+    import yaml
+    from pathlib import Path
+
+    team_yaml = Path(project_dir) / "config" / "team.yaml"
+    with open(team_yaml) as f:
+        team_data = yaml.safe_load(f)
+
+    assert team_data["system_agent"] == {
+        "provider": "gemini",
+        "model": "gemini-3-pro-preview",
+        "reasoning_effort": "high",
+    }
+
+    set_project_deps(None, None)
+
+
+async def test_team_settings_system_agent_round_trip(tmp_path):
+    """GET/PUT /api/settings/team should expose and persist the system agent profile."""
+    import yaml
+
+    from taskbrew.config_loader import load_team_config
+    from taskbrew.dashboard.app import create_app
+    from taskbrew.dashboard.routers._deps import set_orchestrator
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    team_yaml = config_dir / "team.yaml"
+    team_yaml.write_text(
+        'team_name: "Settings Team"\n'
+        'cli_provider: "claude"\n'
+        'system_agent:\n'
+        '  provider: "claude"\n'
+        '  model: "claude-sonnet-4-6"\n'
+        '  reasoning_effort: "high"\n'
+        'database:\n'
+        '  path: "data/settings.db"\n'
+        'dashboard:\n'
+        '  host: "0.0.0.0"\n'
+        '  port: 8420\n'
+        'artifacts:\n'
+        '  base_dir: "artifacts"\n'
+        'defaults:\n'
+        '  max_instances: 1\n'
+        '  poll_interval_seconds: 5\n'
+        '  idle_timeout_minutes: 30\n'
+        '  auto_scale:\n'
+        '    enabled: false\n'
+    )
+    team_config = load_team_config(team_yaml)
+
+    db = Database(str(tmp_path / "settings.db"))
+    await db.initialize()
+    board = TaskBoard(db, group_prefixes={})
+    event_bus = EventBus()
+    instance_mgr = InstanceManager(db)
+
+    app = create_app(
+        event_bus=event_bus,
+        task_board=board,
+        instance_manager=instance_mgr,
+        team_config=team_config,
+        project_dir=str(tmp_path),
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/settings/team")
+        assert resp.status_code == 200
+        assert resp.json()["system_agent"] == {
+            "provider": "claude",
+            "model": "claude-sonnet-4-6",
+            "reasoning_effort": "high",
+        }
+
+        update = await client.put(
+            "/api/settings/team",
+            json={
+                "system_agent": {
+                    "provider": "codex",
+                    "model": "gpt-5.4-mini",
+                    "reasoning_effort": "low",
+                },
+            },
+        )
+        assert update.status_code == 200
+
+        resp = await client.get("/api/settings/team")
+        assert resp.json()["system_agent"] == {
+            "provider": "codex",
+            "model": "gpt-5.4-mini",
+            "reasoning_effort": "low",
+        }
+
+    with open(team_yaml) as f:
+        persisted = yaml.safe_load(f)
+    assert persisted["system_agent"] == {
+        "provider": "codex",
+        "model": "gpt-5.4-mini",
+        "reasoning_effort": "low",
+    }
+
+    set_orchestrator(None)
+    await db.close()
 
 
 # ---------------------------------------------------------------------------

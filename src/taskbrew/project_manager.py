@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from taskbrew.model_catalog import model_for_role, role_model_setting, system_agent_setting
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -48,14 +50,24 @@ def _default_team_yaml(
     project_name: str,
     project_id: str | None = None,
     cli_provider: str = "claude",
+    system_agent_settings: dict | None = None,
 ) -> str:
     """Return the default team.yaml content for a new project."""
     slug = project_id or _slugify(project_name)
     db_path = str(DEFAULT_DATA_DIR / f"{slug}.db")
+    system_agent = system_agent_setting(cli_provider, system_agent_settings)
+    reasoning_line = ""
+    if system_agent.get("reasoning_effort"):
+        reasoning_line = f'  reasoning_effort: "{system_agent["reasoning_effort"]}"\n'
     return (
         f'team_name: "{project_name}"\n'
         "\n"
         f'cli_provider: "{cli_provider}"\n'
+        "\n"
+        "system_agent:\n"
+        f'  provider: "{system_agent["provider"]}"\n'
+        f'  model: "{system_agent["model"]}"\n'
+        f"{reasoning_line}"
         "\n"
         "database:\n"
         f'  path: "{db_path}"\n'
@@ -96,33 +108,9 @@ def _default_team_yaml(
 # Provider-aware model mapping
 # ---------------------------------------------------------------------------
 
-_PROVIDER_MODEL_MAP: dict[str, dict[str, str]] = {
-    "claude": {
-        "flagship": "claude-opus-4-6",
-        "balanced": "claude-sonnet-4-6",
-    },
-    "gemini": {
-        "flagship": "gemini-3.1-pro-preview",
-        "balanced": "gemini-3-flash-preview",
-    },
-    "codex": {
-        "flagship": "gpt-5.5",
-        "balanced": "gpt-5.5",
-    },
-}
-
-_ROLE_MODEL_TIER: dict[str, str] = {
-    "pm": "flagship",
-    "architect": "flagship",
-    "coder": "balanced",
-    "verifier": "balanced",
-}
-
-
 def _model_for_role(role_name: str, provider: str) -> str:
     """Return the appropriate model ID for a role given the CLI provider."""
-    tier = _ROLE_MODEL_TIER.get(role_name, "balanced")
-    return _PROVIDER_MODEL_MAP.get(provider, _PROVIDER_MODEL_MAP["claude"])[tier]
+    return model_for_role(role_name, provider)
 
 
 _DEFAULT_ROLES: dict[str, dict] = {
@@ -360,6 +348,8 @@ class ProjectManager:
         *,
         with_defaults: bool = True,
         cli_provider: str = "claude",
+        role_model_settings: dict | None = None,
+        system_agent_settings: dict | None = None,
     ) -> dict:
         """Register a new project and scaffold its directory.
 
@@ -370,7 +360,7 @@ class ProjectManager:
         directory:
             Absolute path to the project directory.
         with_defaults:
-            If *True* (default), write the five default role YAML files.
+            If *True* (default), write the four default role YAML files.
 
         Returns
         -------
@@ -411,6 +401,8 @@ class ProjectManager:
             project_id=project_id,
             with_defaults=with_defaults,
             cli_provider=cli_provider,
+            role_model_settings=role_model_settings,
+            system_agent_settings=system_agent_settings,
         )
 
         # Initialize git repo if not already one
@@ -512,6 +504,8 @@ class ProjectManager:
         project_id: str | None = None,
         with_defaults: bool = True,
         cli_provider: str = "claude",
+        role_model_settings: dict | None = None,
+        system_agent_settings: dict | None = None,
     ) -> None:
         """Create config skeleton inside *project_dir* if it doesn't exist."""
         config_dir = project_dir / "config"
@@ -527,7 +521,12 @@ class ProjectManager:
         team_yaml = config_dir / "team.yaml"
         if not team_yaml.exists():
             team_yaml.write_text(
-                _default_team_yaml(project_name, project_id, cli_provider=cli_provider)
+                _default_team_yaml(
+                    project_name,
+                    project_id,
+                    cli_provider=cli_provider,
+                    system_agent_settings=system_agent_settings,
+                )
             )
 
         # Default roles — swap model IDs based on CLI provider
@@ -536,7 +535,14 @@ class ProjectManager:
                 role_file = roles_dir / f"{role_name}.yaml"
                 if not role_file.exists():
                     data = dict(role_data)
-                    data["model"] = _model_for_role(role_name, cli_provider)
+                    resolved_model = role_model_setting(
+                        role_name,
+                        cli_provider,
+                        role_model_settings,
+                    )
+                    data["model"] = resolved_model["model"]
+                    if "reasoning_effort" in resolved_model:
+                        data["reasoning_effort"] = resolved_model["reasoning_effort"]
                     with open(role_file, "w") as f:
                         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
