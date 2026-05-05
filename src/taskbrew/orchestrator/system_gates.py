@@ -322,7 +322,7 @@ class SystemGateManager:
             result = await self._analyzer.review_completed_task(
                 await self._review_context(running_task)
             )
-            await self._handle_review_result(task_id, result)
+            return await self._handle_review_result(task_id, result)
         except asyncio.CancelledError as exc:
             await self._board.mark_review_failed(task_id, str(exc))
             raise
@@ -390,25 +390,29 @@ class SystemGateManager:
     def stop(self) -> None:
         self._stop_requested = True
 
-    async def _handle_review_result(self, task_id: str, result: ReviewResult) -> None:
+    async def _handle_review_result(self, task_id: str, result: ReviewResult) -> bool:
         outcome = result.outcome
         if outcome == "approved":
             await self._restore_pending_review_status(task_id)
             await self._board.approve_review_gate(task_id, reason=result.reason)
+            return True
         elif outcome == "rejected":
             await self._board.reject_review_gate(task_id, reason=result.reason)
+            return True
         elif outcome == "needs_revision":
             if not await self._review_gate_still_running(task_id):
-                return
+                return False
             revisions = result.revisions or [
                 RevisionRequest(description=result.reason)
             ]
-            await self._board.create_review_revision_tasks(
+            created = await self._board.create_review_revision_tasks(
                 task_id,
                 [self._revision_to_dict(revision) for revision in revisions],
             )
+            return bool(created)
         elif outcome == "failed_review":
             await self._board.mark_review_failed(task_id, result.reason)
+            return True
         else:
             raise SystemGateAnalysisError(f"Unsupported review outcome: {outcome}")
 

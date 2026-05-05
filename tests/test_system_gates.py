@@ -82,6 +82,23 @@ class BlockingReviewAnalyzer(SystemGateAnalyzer):
         return ReviewResult(outcome="needs_revision", reason="Add the missing test.")
 
 
+class TwoCallerReviewAnalyzer(SystemGateAnalyzer):
+    def __init__(self) -> None:
+        self.entered = 0
+        self.both_entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def decide_needs_review(self, context: dict) -> BacklogIntakeResult:
+        raise AssertionError("backlog analysis should not run")
+
+    async def review_completed_task(self, context: dict) -> ReviewResult:
+        self.entered += 1
+        if self.entered == 2:
+            self.both_entered.set()
+        await self.release.wait()
+        return ReviewResult(outcome="needs_revision", reason="Add the missing test.")
+
+
 def _agent_analyzer(text: str) -> AgentRunnerSystemGateAnalyzer:
     analyzer = AgentRunnerSystemGateAnalyzer.__new__(AgentRunnerSystemGateAnalyzer)
     analyzer._runner = FakeRunner(text)
@@ -393,6 +410,41 @@ async def test_overlapping_review_tasks_create_one_revision(board: TaskBoard):
     assert len(revision_ids) == 1
     assert len(needs_revision_runs) == 1
     assert analyzer.entered == 1
+
+
+async def test_overlapping_stale_review_retries_create_one_revision(
+    board: TaskBoard,
+):
+    review_task = await _create_review_task(board)
+    await board._db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (review_task["id"],),
+    )
+    analyzer = TwoCallerReviewAnalyzer()
+    manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=0,
+    )
+
+    first = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    second = asyncio.create_task(manager.process_review_task(review_task["id"]))
+    await analyzer.both_entered.wait()
+    analyzer.release.set()
+
+    results = await asyncio.gather(first, second)
+
+    updated = await board.get_task(review_task["id"])
+    revision_ids = json.loads(updated["revision_task_ids"])
+    gate_runs = json.loads(updated["system_gate_runs"])
+    needs_revision_runs = [
+        run for run in gate_runs if run.get("outcome") == "needs_revision"
+    ]
+    assert results.count(True) == 1
+    assert results.count(False) == 1
+    assert analyzer.entered == 2
+    assert len(revision_ids) == 1
+    assert len(needs_revision_runs) == 1
 
 
 async def test_backlog_analyzer_exception_marks_intake_failed(board: TaskBoard):

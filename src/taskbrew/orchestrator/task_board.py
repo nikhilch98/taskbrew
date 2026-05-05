@@ -767,6 +767,20 @@ class TaskBoard:
         if not revisions:
             raise ValueError("At least one revision is required")
 
+        rows = await self._db.execute_returning(
+            "UPDATE tasks SET review_status = 'waiting_revision' "
+            "WHERE id = ? AND status = 'review' "
+            "AND review_status IN ('pending', 'running') "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM task_dependencies "
+            "  WHERE task_id = ? AND resolved = 0"
+            ") RETURNING *",
+            (original_task_id, original_task_id),
+        )
+        if not rows:
+            return []
+        original = rows[0]
+
         created: list[dict] = []
         for index, revision in enumerate(revisions, start=1):
             revision_task = await self.create_task(
@@ -790,8 +804,7 @@ class TaskBoard:
         revision_task_ids = self._json_list(original.get("revision_task_ids"))
         revision_task_ids.extend(task["id"] for task in created)
         await self._db.execute(
-            "UPDATE tasks SET review_status = 'waiting_revision', "
-            "revision_task_ids = ? WHERE id = ?",
+            "UPDATE tasks SET revision_task_ids = ? WHERE id = ?",
             (json.dumps(revision_task_ids), original_task_id),
         )
         await self._append_system_gate_run(
