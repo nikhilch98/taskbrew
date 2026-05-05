@@ -68,6 +68,16 @@ class FakeRunner:
         return self.text
 
 
+class FakeSystemGateManager:
+    def __init__(self) -> None:
+        self.run_count = 0
+        self.release = asyncio.Event()
+
+    async def run(self) -> None:
+        self.run_count += 1
+        await self.release.wait()
+
+
 class BlockingReviewAnalyzer(SystemGateAnalyzer):
     def __init__(self) -> None:
         self.entered = 0
@@ -1240,3 +1250,54 @@ async def test_system_gate_manager_exposes_stop_method(board: TaskBoard):
     manager.stop()
 
     assert manager._stop_requested is True
+
+
+async def test_start_system_gate_manager_skips_existing_live_task() -> None:
+    from taskbrew.main import _start_system_gate_manager
+
+    manager = FakeSystemGateManager()
+    orch = SimpleNamespace(
+        system_gate_manager=manager,
+        _system_gate_task=None,
+        agent_tasks=[],
+    )
+
+    _start_system_gate_manager(orch)
+    first_task = orch._system_gate_task
+    await asyncio.sleep(0)
+    _start_system_gate_manager(orch)
+
+    assert orch._system_gate_task is first_task
+    assert orch.agent_tasks == [first_task]
+    assert manager.run_count == 1
+
+    manager.release.set()
+    await first_task
+
+
+async def test_start_system_gate_manager_restarts_done_task() -> None:
+    from taskbrew.main import _start_system_gate_manager
+
+    manager = FakeSystemGateManager()
+    orch = SimpleNamespace(
+        system_gate_manager=manager,
+        _system_gate_task=None,
+        agent_tasks=[],
+    )
+
+    _start_system_gate_manager(orch)
+    first_task = orch._system_gate_task
+    manager.release.set()
+    await first_task
+    manager.release = asyncio.Event()
+
+    _start_system_gate_manager(orch)
+    second_task = orch._system_gate_task
+    await asyncio.sleep(0)
+
+    assert second_task is not first_task
+    assert orch.agent_tasks == [first_task, second_task]
+    assert manager.run_count == 2
+
+    manager.release.set()
+    await second_task

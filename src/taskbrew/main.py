@@ -545,6 +545,16 @@ async def _orphan_recovery_loop(
             _logger.exception("Error in orphan recovery loop")
 
 
+def _start_system_gate_manager(orch: Orchestrator) -> None:
+    if not orch.system_gate_manager:
+        return
+    if orch._system_gate_task is not None and not orch._system_gate_task.done():
+        return
+    system_gate_task = asyncio.create_task(orch.system_gate_manager.run())
+    orch._system_gate_task = system_gate_task
+    orch.agent_tasks.append(system_gate_task)
+
+
 # Tools that mutate filesystem state and therefore justify a worktree.
 # Kept conservative: read-only tools (Grep, Glob, Read) don't need isolation.
 _FILE_MUTATING_TOOLS = frozenset({"Bash", "Edit", "Write", "NotebookEdit"})
@@ -604,10 +614,7 @@ async def start_agents(orch: Orchestrator):
         broker_task = asyncio.create_task(orch.merge_broker.run())
         orch.agent_tasks.append(broker_task)
 
-    if orch.system_gate_manager:
-        system_gate_task = asyncio.create_task(orch.system_gate_manager.run())
-        orch._system_gate_task = system_gate_task
-        orch.agent_tasks.append(system_gate_task)
+    _start_system_gate_manager(orch)
 
     # Spawn agent loops
     # Map bind host to connect host (0.0.0.0 binds all interfaces but can't be connected to)
