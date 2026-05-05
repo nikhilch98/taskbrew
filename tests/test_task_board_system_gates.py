@@ -1785,3 +1785,60 @@ async def test_add_dependency_failed_blocker_cascades_from_non_review_target(
     assert stored_target["status"] == "failed"
     stored_downstream = await board.get_task(downstream["id"])
     assert stored_downstream["status"] == "failed"
+
+
+async def test_add_dependency_blocks_pending_target_until_blocker_completes(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    target = await board.create_task(
+        group_id=group["id"],
+        title="Target work",
+        task_type="qa_verification",
+        assigned_to="tester",
+    )
+    await board.apply_backlog_intake_decision(
+        blocker["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    await board.apply_backlog_intake_decision(
+        target["id"],
+        needs_review=False,
+        reason="Ready.",
+    )
+    event_bus.events.clear()
+
+    await board.add_dependency(target["id"], blocker["id"])
+
+    stored_target = await board.get_task(target["id"])
+    assert stored_target["status"] == "blocked"
+    deps = await board._db.execute_fetchall(
+        "SELECT resolved FROM task_dependencies WHERE task_id = ? AND blocked_by = ?",
+        (target["id"], blocker["id"]),
+    )
+    assert deps == [{"resolved": 0}]
+    assert await board.claim_task("tester", "tester-1") is None
+    assert event_bus.events == []
+
+    claimed_blocker = await board.claim_task("coder", "coder-1")
+    assert claimed_blocker["id"] == blocker["id"]
+    await board.complete_task(blocker["id"])
+
+    stored_target = await board.get_task(target["id"])
+    assert stored_target["status"] == "pending"
+    assert event_bus.events == [
+        (
+            "task.available",
+            {"task_id": target["id"], "role": "tester", "group_id": group["id"]},
+        )
+    ]
+    claimed_target = await board.claim_task("tester", "tester-1")
+    assert claimed_target["id"] == target["id"]

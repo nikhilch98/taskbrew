@@ -1257,6 +1257,12 @@ class TaskBoard:
                 "WHERE task_id = ? AND blocked_by = ?",
                 (now, task_id, blocked_by_id),
             )
+        elif not blocker or blocker["status"] not in ("failed", "rejected"):
+            await self._db.execute(
+                "UPDATE tasks SET status = 'blocked' "
+                "WHERE id = ? AND status = 'pending'",
+                (task_id,),
+            )
         if blocker and blocker["status"] in ("failed", "rejected"):
             target = await self.get_task(task_id)
             if target and target["status"] == REVIEW_STATUS:
