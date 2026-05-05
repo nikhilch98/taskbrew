@@ -151,6 +151,9 @@ async def test_apply_backlog_intake_decision_moves_pending_task_and_emits_availa
     decision = json.loads(updated["needs_review_decision"])
     assert decision["decision"] is True
     assert decision["signals"] == ["shared_orchestration_logic"]
+    assert decision["confidence"] == "medium"
+    assert decision["decided_by"] == "system_agent"
+    assert decision["decided_at"]
     assert updated["backlog_intake_status"] == "completed"
     assert event_bus.events[-1] == (
         "task.available",
