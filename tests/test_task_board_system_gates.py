@@ -287,3 +287,79 @@ async def test_apply_backlog_intake_decision_corrects_stale_blocked_target(
             {"task_id": dependent["id"], "role": "tester", "group_id": group["id"]},
         )
     ]
+
+
+async def test_blocked_intent_without_dependency_rows_stays_blocked(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Blocked before dependency rows exist",
+        task_type="qa_verification",
+        assigned_to="tester",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET intended_status = 'blocked' WHERE id = ?",
+        (task["id"],),
+    )
+
+    updated = await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Intake raced with dependency creation.",
+    )
+
+    assert updated["status"] == "blocked"
+    assert event_bus.events == []
+
+
+async def test_apply_backlog_intake_decision_refreshes_after_promotion_race(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    blocker = await board.create_task(
+        group_id=group["id"],
+        title="Blocking work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    dependent = await board.create_task(
+        group_id=group["id"],
+        title="Blocked work",
+        task_type="qa_verification",
+        assigned_to="tester",
+        blocked_by=[blocker["id"]],
+    )
+    await board._db.execute(
+        "UPDATE task_dependencies SET resolved = 1 WHERE task_id = ?",
+        (dependent["id"],),
+    )
+
+    async def stale_target_status(task_id: str, intended_status: str) -> str:
+        return "blocked"
+
+    original_execute_returning = board._db.execute_returning
+
+    async def execute_returning_promotion_race(
+        sql: str, params: tuple = ()
+    ) -> list[dict]:
+        rows = await original_execute_returning(sql, params)
+        if "UPDATE tasks SET status = 'pending'" in sql:
+            return []
+        return rows
+
+    monkeypatch.setattr(board, "_target_status_after_intake", stale_target_status)
+    monkeypatch.setattr(board._db, "execute_returning", execute_returning_promotion_race)
+
+    updated = await board.apply_backlog_intake_decision(
+        dependent["id"],
+        needs_review=False,
+        reason="Dependency resolver won promotion race.",
+    )
+
+    assert updated["status"] == "pending"
+    assert event_bus.events == []

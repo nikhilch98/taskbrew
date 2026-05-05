@@ -305,10 +305,19 @@ class TaskBoard:
         )
         return row is not None
 
+    async def _has_dependency_rows(self, task_id: str) -> bool:
+        row = await self._db.execute_fetchone(
+            "SELECT 1 FROM task_dependencies WHERE task_id = ? LIMIT 1",
+            (task_id,),
+        )
+        return row is not None
+
     async def _target_status_after_intake(
         self, task_id: str, intended_status: str
     ) -> str:
         if await self._has_unresolved_dependencies(task_id):
+            return "blocked"
+        if intended_status == "blocked" and not await self._has_dependency_rows(task_id):
             return "blocked"
         return "pending" if intended_status in ("pending", "blocked") else intended_status
 
@@ -358,10 +367,14 @@ class TaskBoard:
         )
         updated = rows[0] if rows else await self.get_task(task_id)
         did_transition = bool(rows)
+        emit_available = bool(
+            did_transition and updated and updated["status"] == CLAIMABLE_STATUS
+        )
         if (
             did_transition
             and updated
             and updated["status"] == "blocked"
+            and await self._has_dependency_rows(task_id)
             and not await self._has_unresolved_dependencies(task_id)
         ):
             pending_rows = await self._db.execute_returning(
@@ -371,11 +384,14 @@ class TaskBoard:
             )
             if pending_rows:
                 updated = pending_rows[0]
+                emit_available = True
+            else:
+                updated = await self.get_task(task_id) or updated
+                emit_available = False
         if (
-            did_transition
+            emit_available
             and updated
             and self._event_bus is not None
-            and updated["status"] == CLAIMABLE_STATUS
         ):
             await self._event_bus.emit(
                 "task.available",
