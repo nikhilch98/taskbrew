@@ -106,6 +106,31 @@ Package and continue to use existing task statuses. A task is responsible for do
 recording checks, and producing output. By default, task completion feeds package progress; it
 does not create a system review gate unless the system explicitly chose task-level review.
 
+## Status Model
+
+Work Packages should have their own status rather than deriving everything from child task rows at
+render time:
+
+```text
+backlog | pending | in_progress | blocked | review | waiting_revision | completed | rejected | failed
+```
+
+The package status should still be reconciled from child tasks and package dependencies:
+
+- `backlog`: package has been created but has not passed package intake
+- `pending`: package is ready for tasks to be claimed or created
+- `in_progress`: at least one required child task is active or completed while more remain
+- `blocked`: package dependencies or required child tasks are unresolved
+- `review`: package is waiting on an active system review gate
+- `waiting_revision`: review found fixable gaps and created revision work
+- `completed`: package review passed, or review was not required and all required work completed
+- `rejected`: package should not continue as requested
+- `failed`: package processing failed in a way that needs operator/user attention
+
+Failed, rejected, or cancelled child tasks must not silently count as successful package
+completion. They either block package review, reject the package, or require an explicit system
+decision that they are no longer required.
+
 ## Adaptive Review Scope
 
 Replace the task-only `needs_review` mindset with an explicit review scope:
@@ -144,9 +169,12 @@ Task-level review is reserved for high-risk exceptions:
 
 - auth, permissions, payments, data deletion, migrations, deployment, or security-sensitive work
 - cross-cutting orchestration or state-machine changes
-- tasks with failed or missing self-checks
+- tasks with missing self-checks when the package policy says checks are required
 - tasks that touch shared infrastructure in a way the package review may not isolate well
 - tasks whose output cannot be safely judged from package-level context alone
+
+Failed self-checks should not be treated as review evidence to judge. They should block task or
+package readiness until retry/escalation resolves the failure.
 
 No-review is valid for low-risk work:
 
@@ -200,15 +228,17 @@ Task failures and blocked dependencies still behave like normal task-board state
 
 A Work Package becomes ready for review when:
 
-- all required tasks are terminal
+- all required tasks are completed or explicitly marked no longer required
 - required dependencies are resolved
 - all package branches or task branches needed for review are integrated into the package review
   target, when branch metadata is available
 - no package-blocking merge queue entry remains open
 - required task checks are passing or explicitly skipped with reasons
 
-If a task is terminal but has failed checks, the package should not advance to review until the
-task retry/escalation policy resolves that failure.
+If a required task is failed, rejected, cancelled, or has failed checks, the package should not
+advance to review until task retry/escalation or a system decision resolves whether that task is
+still required. Skipped checks are allowed only when the package policy permits them and the skip
+reason is visible to the review gate.
 
 ### Review Gate
 
@@ -236,7 +266,7 @@ The system agent reviews the active entity against:
 
 The review result is one of:
 
-- `approved`: mark the package, milestone, task, or goal review as complete
+- `approved`: mark the package, milestone, task, or goal review as complete and advance its status
 - `needs_revision`: create targeted revision tasks or packages
 - `rejected`: reject the entity only when it should not continue as requested
 - `failed_review`: retryable system-review failure
@@ -255,8 +285,10 @@ For a Milestone review failure, the system may create:
 For a Goal review failure, the system should prefer creating a new Work Package or Milestone-level
 revision rather than scattering unrelated task revisions.
 
-Review rounds must be capped. When a gate reaches `max_review_rounds`, TaskBrew should reject or
-escalate the reviewable entity with a visible reason instead of looping.
+Review rounds must be capped. The default behavior at `max_review_rounds` is to mark the
+reviewable entity `rejected` with a visible reason that it failed to pass review after the allowed
+revision rounds. A later policy can add manual escalation, but the default implementation should
+choose one deterministic outcome instead of looping.
 
 ## Branch and Integration Strategy
 
@@ -273,6 +305,12 @@ inside the deliverable slice.
 For the first implementation, TaskBrew can preserve the existing task-branch behavior and review
 package context from task branches, outputs, and artifacts. The package integration branch can be
 introduced incrementally as the merge broker grows package awareness.
+
+Even before package integration branches exist, package review must inspect an explicit integration
+target. That target can be the project root after brokered task merges or a synthetic review bundle
+that includes every relevant task branch and artifact. A package should not be approved only
+because isolated task branches look correct if the deliverable is missing from the final target
+where the user expects it.
 
 ## Dashboard
 
@@ -317,8 +355,8 @@ review_gates(id, entity_type, entity_id, status, outcome, round, max_rounds, ...
 ```
 
 Existing `tasks.group_id` remains required for initiative-level filtering. Existing tasks without
-a Work Package can be assigned to a generated default package per group during migration or when
-first rendered.
+a Work Package should be assigned to a generated default package during migration or project
+activation. Dashboard rendering should not create persistent package records as a side effect.
 
 API responses should support:
 
@@ -360,12 +398,14 @@ Add focused tests for:
 - Work Package creation and nested task creation
 - package status derives from child task states
 - package review starts only after required tasks and dependencies are resolved
+- failed, rejected, or unresolved required tasks block package review
 - task-level review still works for high-risk overrides
 - Review column includes package/milestone gates and excludes covered child tasks
 - revision tasks stay attached to the package being reviewed
 - max review rounds prevent infinite loops
 - migration creates default packages for existing task groups
 - dashboard API returns package cards with progress and review metadata
+- package review cannot approve work that is absent from the integration target
 
 Browser verification should cover:
 
