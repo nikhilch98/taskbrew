@@ -130,13 +130,15 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "4. You NEVER write code — only analysis and documentation\n"
             "\n"
             "Task creation guidelines:\n"
-            "- Create ONE architect task per major component or logical work unit\n"
-            "- Aim for 3-7 architect tasks total. More means your decomposition is too granular\n"
-            "- Each task should represent a meaningful chunk of work\n"
+            "- Create a PRD that identifies whether the goal is tiny, small, medium, or large.\n"
+            "- For tiny goals, create one minimal architect task or one minimal Work Package.\n"
+            "- For small and medium goals, describe reviewable Work Packages in the PRD.\n"
+            "- For large goals, describe Milestones first, then the Work Packages inside each Milestone.\n"
+            "- Create architect tasks that ask for Work Package designs, not isolated implementation fragments.\n"
             '- Use the group_id from your task context (shown as "Group: GRP-XXX")\n'
             '- Set assigned_to: "architect", task_type: "tech_design"\n'
-            "- Include full PRD content with acceptance criteria in the description\n"
-            '- Set priority: "high" for core features, "medium" for enhancements\n'
+            "- Include full PRD content, proposed package boundaries, and acceptance criteria in the description.\n"
+            '- Set priority: "high" for core packages, "medium" for enhancements.\n'
         ),
         "tools": ["Read", "Glob", "Grep", "WebSearch", "mcp__task-tools__create_task"],
         "model": "claude-opus-4-6",
@@ -162,6 +164,13 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "2. Break designs into implementable coder tasks\n"
             "3. You do NOT write implementation code\n"
             "\n"
+            "Work Package responsibilities:\n"
+            "- Turn PRDs into coherent Work Packages that can be reviewed independently.\n"
+            "- Keep a Work Package focused on a deliverable slice, not a single implementation step.\n"
+            "- When creating coder tasks, include the Work Package ID once the package exists.\n"
+            "- Prefer package-level system review unless a specific task is high risk.\n"
+            "- Include expected build, test, lint, and manual verification commands for each package.\n"
+            "\n"
             "Task creation guidelines:\n"
             "- Create 3-10 coder tasks per design. Each task should modify 1-3 closely related files\n"
             "- If a task touches more than 3 files, split it. If it touches only a few lines, combine with related work\n"
@@ -170,8 +179,25 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "- Use blocked_by for true data dependencies only — do NOT chain tasks just for ordering\n"
             "- Include: technical approach, specific files to modify, acceptance criteria\n"
             "- Include expected tests or verification commands for each coder task\n"
+            "\n"
+            "Handling ambiguity:\n"
+            "- When the design choice is ambiguous, use `ask_question(question,\n"
+            "  options, preferred_answer, reasoning)` instead of guessing. List\n"
+            "  2-5 candidate answers; record your best guess in `preferred_answer`\n"
+            "  and explain the choice in `reasoning`. The system returns the\n"
+            "  selected answer (your own pick in auto mode, or the user's in\n"
+            "  manual mode). Do not call this for trivial decisions; you have\n"
+            "  a budget per task.\n"
         ),
-        "tools": ["Read", "Glob", "Grep", "Write", "WebSearch", "mcp__task-tools__create_task"],
+        "tools": [
+            "Read",
+            "Glob",
+            "Grep",
+            "Write",
+            "WebSearch",
+            "mcp__task-tools__create_task",
+            "mcp__task-tools__ask_question",
+        ],
         "model": "claude-opus-4-6",
         "produces": ["tech_design", "tech_debt", "architecture_review"],
         "accepts": ["tech_design", "architecture_review", "rejection"],
