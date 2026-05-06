@@ -46,6 +46,8 @@ DEFAULT_MAX_REVIEW_ROUNDS = 3
 DEFAULT_PACKAGE_REVIEW_SCOPE = "work_package"
 NO_REVIEW_SCOPE = "none"
 TASK_REVIEW_SCOPE = "task"
+PACKAGE_GATE_STALE_PENDING_SECONDS = 30 * 60
+PACKAGE_GATE_STALE_RUNNING_SECONDS = 20 * 60
 PACKAGE_STATUSES = (
     "backlog",
     "pending",
@@ -221,7 +223,7 @@ class TaskBoard:
         )
 
     async def get_work_package_board(self, group_id: str | None = None) -> dict:
-        """Return work packages grouped by package status with task counts."""
+        """Return work packages grouped by package status with dashboard metadata."""
         clauses: list[str] = []
         params: list[str] = []
         if group_id is not None:
@@ -234,31 +236,447 @@ class TaskBoard:
         )
 
         package_ids = [package["id"] for package in package_rows]
-        counts_by_package: dict[str, dict[str, int]] = {}
+        tasks_by_package: dict[str, list[dict]] = {package_id: [] for package_id in package_ids}
+        gates_by_package: dict[str, dict] = {}
         if package_ids:
             placeholders = ",".join("?" * len(package_ids))
-            count_rows = await self._db.execute_fetchall(
-                "SELECT work_package_id, status, COUNT(*) AS count "
+            task_rows = await self._db.execute_fetchall(
+                "SELECT * "
                 "FROM tasks "
                 f"WHERE work_package_id IN ({placeholders}) "
-                "GROUP BY work_package_id, status",
+                "ORDER BY created_at",
                 tuple(package_ids),
             )
-            for row in count_rows:
-                package_counts = counts_by_package.setdefault(row["work_package_id"], {})
-                package_counts[row["status"]] = int(row["count"] or 0)
+            for row in task_rows:
+                tasks_by_package.setdefault(row["work_package_id"], []).append(row)
+
+            gate_rows = await self._db.execute_fetchall(
+                "SELECT * FROM review_gates "
+                "WHERE entity_type = 'work_package' "
+                f"AND entity_id IN ({placeholders})",
+                tuple(package_ids),
+            )
+            gates_by_package = {row["entity_id"]: row for row in gate_rows}
 
         columns: dict[str, list[dict]] = {status: [] for status in PACKAGE_STATUSES}
         packages: list[dict] = []
+        now = datetime.now(timezone.utc)
         for package in package_rows:
-            status_counts = counts_by_package.get(package["id"], {})
-            task_counts = dict(status_counts)
-            task_counts["total"] = sum(status_counts.values())
-            card = dict(package)
-            card["task_counts"] = task_counts
+            card = self._enrich_work_package_card(
+                package,
+                tasks_by_package.get(package["id"], []),
+                gates_by_package.get(package["id"]),
+                now,
+            )
             columns.setdefault(card["status"], []).append(card)
             packages.append(card)
         return {"columns": columns, "packages": packages}
+
+    async def get_work_package_detail(self, package_id: str) -> dict | None:
+        """Return package detail data for dashboard drilldown surfaces."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            return None
+
+        tasks = await self._db.execute_fetchall(
+            "SELECT * FROM tasks WHERE work_package_id = ? ORDER BY created_at",
+            (package_id,),
+        )
+        gate = await self._db.execute_fetchone(
+            "SELECT * FROM review_gates "
+            "WHERE entity_type = 'work_package' AND entity_id = ?",
+            (package_id,),
+        )
+
+        now = datetime.now(timezone.utc)
+        detail = self._enrich_work_package_card(package, tasks, gate, now)
+        normalized_gate = detail.get("review_gate")
+        normalized_tasks = [self._normalize_task_for_detail(task) for task in tasks]
+        task_ids = [task["id"] for task in normalized_tasks]
+        detail["tasks"] = normalized_tasks
+        detail["review_runs"] = (
+            normalized_gate.get("system_gate_runs", []) if normalized_gate else []
+        )
+        detail["revision_tasks"] = [
+            task
+            for task in normalized_tasks
+            if task.get("revision_of")
+            or task.get("review_parent_task_id")
+            or task.get("task_type") == "revision"
+        ]
+        detail["artifacts"] = self._package_artifact_summaries(normalized_tasks)
+        detail["dependencies"] = await self._package_dependencies(task_ids)
+        detail["timeline"] = self._package_timeline(
+            package,
+            normalized_tasks,
+            normalized_gate,
+        )
+        detail["recent_agent_activity"] = []
+        return detail
+
+    async def get_operations_summary(self, group_id: str | None = None) -> dict:
+        """Return command-center counts and action queues."""
+        board = await self.get_work_package_board(group_id=group_id)
+        packages = board["packages"]
+
+        def queue_item(package: dict) -> dict:
+            return {
+                "id": package["id"],
+                "title": package.get("title"),
+                "group_id": package.get("group_id"),
+                "status": package.get("status"),
+                "review_status": package.get("review_status"),
+                "risk_level": package.get("risk_level"),
+                "review_gate": package.get("review_gate"),
+                "attention_reasons": package.get("attention_reasons", []),
+                "waiting_age_seconds": package.get("waiting_age_seconds"),
+            }
+
+        review_queue = [
+            queue_item(package)
+            for package in packages
+            if package.get("status") == "review"
+            or (package.get("review_gate") or {}).get("status")
+            in {"pending", "running", "failed"}
+        ]
+        blocked_queue = [
+            queue_item(package) for package in packages if package.get("status") == "blocked"
+        ]
+        revision_queue = [
+            queue_item(package)
+            for package in packages
+            if package.get("status") == "waiting_revision"
+            or package.get("review_status") == "waiting_revision"
+        ]
+        stale_queue = [
+            queue_item(package) for package in packages if package.get("stale") is True
+        ]
+        attention_queue = [
+            queue_item(package)
+            for package in packages
+            if package.get("needs_attention") is True
+        ]
+
+        return {
+            "counts": {
+                "packages_total": len(packages),
+                "packages_active": sum(
+                    1
+                    for package in packages
+                    if package.get("status") in {"backlog", "pending", "in_progress"}
+                ),
+                "packages_blocked": len(blocked_queue),
+                "packages_review": sum(
+                    1 for package in packages if package.get("status") == "review"
+                ),
+                "packages_waiting_revision": len(revision_queue),
+                "packages_attention": len(attention_queue),
+                "stale_gates": len(stale_queue),
+            },
+            "queues": {
+                "review": review_queue,
+                "blocked": blocked_queue,
+                "revision": revision_queue,
+                "stale": stale_queue,
+                "attention": attention_queue,
+            },
+            "system_agent": self._system_agent_summary(packages),
+            "recent_decisions": self._recent_package_review_decisions(packages),
+        }
+
+    def _enrich_work_package_card(
+        self,
+        package: dict,
+        tasks: list[dict],
+        gate: dict | None,
+        now: datetime,
+    ) -> dict:
+        status_counts: dict[str, int] = {}
+        for task in tasks:
+            status = task.get("status") or "unknown"
+            status_counts[status] = status_counts.get(status, 0) + 1
+        task_counts = dict(status_counts)
+        task_counts["total"] = sum(status_counts.values())
+
+        card = dict(package)
+        normalized_gate = self._normalize_review_gate(gate, now)
+        attention_reasons = self._package_attention_reasons(
+            card,
+            tasks,
+            normalized_gate,
+        )
+        card["task_counts"] = task_counts
+        card["review_gate"] = normalized_gate
+        card["needs_attention"] = bool(attention_reasons)
+        card["attention_reasons"] = attention_reasons
+        card["stale"] = any(
+            reason.get("type") == "stale_gate" for reason in attention_reasons
+        )
+        card["active_gate"] = (
+            "package_review"
+            if normalized_gate and normalized_gate.get("status") == "running"
+            else None
+        )
+        card["latest_review_reason_summary"] = self._summary_text(
+            card.get("review_reason")
+            or (normalized_gate or {}).get("reason")
+            or self._latest_run_reason(normalized_gate)
+        )
+        card["waiting_age_seconds"] = self._age_seconds(
+            card.get("updated_at") or card.get("created_at"),
+            now,
+        )
+        return card
+
+    def _normalize_review_gate(self, gate: dict | None, now: datetime) -> dict | None:
+        if gate is None:
+            return None
+        normalized = dict(gate)
+        runs = self._json_list(normalized.get("system_gate_runs"))
+        age_seconds = self._age_seconds(
+            normalized.get("updated_at") or normalized.get("created_at"),
+            now,
+        )
+        status = normalized.get("status") or "pending"
+        threshold = (
+            PACKAGE_GATE_STALE_RUNNING_SECONDS
+            if status == "running"
+            else PACKAGE_GATE_STALE_PENDING_SECONDS
+        )
+        normalized["system_gate_runs"] = runs
+        normalized["latest_run"] = runs[-1] if runs else None
+        normalized["age_seconds"] = age_seconds
+        normalized["stale"] = bool(
+            status in {"pending", "running"} and age_seconds is not None
+            and age_seconds > threshold
+        )
+        return normalized
+
+    def _package_attention_reasons(
+        self,
+        package: dict,
+        tasks: list[dict],
+        gate: dict | None,
+    ) -> list[dict]:
+        reasons: list[dict] = []
+        status = package.get("status")
+        review_status = package.get("review_status")
+
+        if status == "blocked":
+            reasons.append({
+                "type": "blocked",
+                "severity": "high",
+                "message": "Package is blocked by child task state.",
+            })
+        if status == "waiting_revision" or review_status == "waiting_revision":
+            reasons.append({
+                "type": "revision_needed",
+                "severity": "high",
+                "message": "System review requested revision work.",
+            })
+        if status == "review":
+            gate_status = (gate or {}).get("status") or review_status or "pending"
+            reasons.append({
+                "type": "review_gate",
+                "severity": "medium",
+                "message": f"Package review gate is {gate_status}.",
+            })
+        if gate and gate.get("status") == "failed":
+            reasons.append({
+                "type": "review_failed",
+                "severity": "high",
+                "message": "System review attempt failed and needs retry.",
+            })
+        if gate and gate.get("stale"):
+            reasons.append({
+                "type": "stale_gate",
+                "severity": "high",
+                "message": "System review gate has been waiting too long.",
+            })
+
+        failed_statuses = {"failed", "rejected", "cancelled"}
+        failed_tasks = [task for task in tasks if task.get("status") in failed_statuses]
+        if failed_tasks:
+            reasons.append({
+                "type": "failed_child_task",
+                "severity": "high",
+                "message": f"{len(failed_tasks)} child task(s) are terminal failures.",
+            })
+        return reasons
+
+    def _normalize_task_for_detail(self, task: dict) -> dict:
+        normalized = dict(task)
+        normalized["revision_task_ids"] = self._json_list(
+            normalized.get("revision_task_ids")
+        )
+        normalized["system_gate_runs"] = self._json_list(
+            normalized.get("system_gate_runs")
+        )
+        normalized["completion_checks"] = self._json_dict(
+            normalized.get("completion_checks")
+        )
+        return normalized
+
+    def _json_dict(self, value) -> dict:
+        if value in (None, ""):
+            return {}
+        if isinstance(value, dict):
+            return value
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _parse_timestamp(self, value) -> datetime | None:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            raw = str(value)
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(raw)
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _age_seconds(self, value, now: datetime) -> int | None:
+        parsed = self._parse_timestamp(value)
+        if parsed is None:
+            return None
+        return max(0, int((now - parsed).total_seconds()))
+
+    def _summary_text(self, value, limit: int = 180) -> str:
+        if not value:
+            return ""
+        text = " ".join(str(value).split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip() + "…"
+
+    def _latest_run_reason(self, gate: dict | None) -> str:
+        if not gate:
+            return ""
+        latest = gate.get("latest_run") or {}
+        return str(latest.get("reason") or "")
+
+    def _package_artifact_summaries(self, tasks: list[dict]) -> list[dict]:
+        artifacts: list[dict] = []
+        for task in tasks:
+            artifacts.append({
+                "task_id": task.get("id"),
+                "title": task.get("title"),
+                "status": task.get("status"),
+                "branch_name": task.get("branch_name"),
+                "merge_status": task.get("merge_status"),
+                "has_output": bool(task.get("output_text")),
+                "completion_checks": task.get("completion_checks") or {},
+            })
+        return artifacts
+
+    async def _package_dependencies(self, task_ids: list[str]) -> list[dict]:
+        if not task_ids:
+            return []
+        placeholders = ",".join("?" * len(task_ids))
+        rows = await self._db.execute_fetchall(
+            "SELECT task_id, blocked_by, resolved, resolved_at "
+            "FROM task_dependencies "
+            f"WHERE task_id IN ({placeholders}) "
+            "ORDER BY task_id, blocked_by",
+            tuple(task_ids),
+        )
+        return [dict(row) for row in rows]
+
+    def _package_timeline(
+        self,
+        package: dict,
+        tasks: list[dict],
+        gate: dict | None,
+    ) -> list[dict]:
+        events: list[dict] = [
+            {
+                "type": "package.created",
+                "at": package.get("created_at"),
+                "label": "Package created",
+            }
+        ]
+        if package.get("updated_at") and package.get("updated_at") != package.get("created_at"):
+            events.append({
+                "type": "package.updated",
+                "at": package.get("updated_at"),
+                "label": f"Package moved to {package.get('status')}",
+            })
+        if gate:
+            events.append({
+                "type": "review_gate.status",
+                "at": gate.get("updated_at") or gate.get("created_at"),
+                "label": f"Review gate {gate.get('status')}",
+            })
+            for run in gate.get("system_gate_runs", []):
+                events.append({
+                    "type": f"review_gate.{run.get('outcome', 'run')}",
+                    "at": run.get("finished_at") or run.get("started_at"),
+                    "label": str(run.get("outcome") or "Review gate run"),
+                })
+        for task in tasks:
+            events.append({
+                "type": "task.created",
+                "at": task.get("created_at"),
+                "task_id": task.get("id"),
+                "label": f"{task.get('id')} created",
+            })
+            events.append({
+                "type": "task.status",
+                "at": task.get("completed_at") or task.get("started_at") or task.get("created_at"),
+                "task_id": task.get("id"),
+                "label": f"{task.get('id')} is {task.get('status')}",
+            })
+        return sorted(events, key=lambda event: event.get("at") or "")
+
+    def _system_agent_summary(self, packages: list[dict]) -> dict:
+        for package in packages:
+            gate = package.get("review_gate") or {}
+            if gate.get("status") == "running":
+                return {
+                    "status": "working",
+                    "current_gate": "package_review",
+                    "current_entity_id": package.get("id"),
+                    "current_task": None,
+                    "status_detail": "reviewing package",
+                    "label": f"Reviewing {package.get('id')}",
+                }
+        return {
+            "status": "idle",
+            "current_gate": None,
+            "current_entity_id": None,
+            "current_task": None,
+            "status_detail": "idle",
+            "label": "System agent idle",
+        }
+
+    def _recent_package_review_decisions(self, packages: list[dict]) -> list[dict]:
+        decisions: list[dict] = []
+        for package in packages:
+            gate = package.get("review_gate") or {}
+            for run in gate.get("system_gate_runs", []):
+                at = run.get("finished_at") or run.get("started_at")
+                decisions.append({
+                    "package_id": package.get("id"),
+                    "title": package.get("title"),
+                    "outcome": run.get("outcome"),
+                    "reason": run.get("reason"),
+                    "at": at,
+                })
+        return sorted(
+            decisions,
+            key=lambda decision: decision.get("at") or "",
+            reverse=True,
+        )[:8]
 
     async def ensure_review_gate(
         self,

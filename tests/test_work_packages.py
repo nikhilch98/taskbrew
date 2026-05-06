@@ -421,3 +421,120 @@ async def test_completed_no_review_package_reopens_for_new_child_work(
     package = await board.get_work_package(package["id"])
     assert package["status"] == "in_progress"
     assert package["review_status"] is None
+
+
+async def test_work_package_board_surfaces_review_gate_attention_metadata(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Reviewable package",
+        created_by="architect-1",
+        risk_level="high",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build reviewable widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(claimed["id"], "Done.")
+
+    board_data = await board.get_work_package_board(group_id=group["id"])
+    card = next(pkg for pkg in board_data["packages"] if pkg["id"] == package["id"])
+
+    assert card["status"] == "review"
+    assert card["task_counts"]["total"] == 1
+    assert card["review_gate"]["entity_id"] == package["id"]
+    assert card["review_gate"]["status"] == "pending"
+    assert card["needs_attention"] is True
+    assert any(reason["type"] == "review_gate" for reason in card["attention_reasons"])
+    assert card["waiting_age_seconds"] >= 0
+    assert "latest_review_reason_summary" in card
+
+
+async def test_work_package_detail_includes_tasks_review_gate_and_timeline(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Detailed package",
+        description="Package detail should expose review context.",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build detailed widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(claimed["id"], "Done.")
+
+    detail = await board.get_work_package_detail(package["id"])
+
+    assert detail is not None
+    assert detail["id"] == package["id"]
+    assert detail["tasks"][0]["id"] == task["id"]
+    assert detail["review_gate"]["entity_id"] == package["id"]
+    assert isinstance(detail["review_runs"], list)
+    assert "artifacts" in detail
+    assert any(item["type"] == "package.created" for item in detail["timeline"])
+
+
+async def test_operations_summary_classifies_package_review_queue(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Queued package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build queued widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(claimed["id"], "Done.")
+
+    summary = await board.get_operations_summary(group_id=group["id"])
+
+    assert summary["counts"]["packages_total"] == 1
+    assert summary["counts"]["packages_review"] == 1
+    assert summary["counts"]["packages_attention"] == 1
+    assert summary["system_agent"]["status"] == "idle"
+    assert summary["queues"]["review"][0]["id"] == package["id"]
+    assert summary["queues"]["attention"][0]["id"] == package["id"]

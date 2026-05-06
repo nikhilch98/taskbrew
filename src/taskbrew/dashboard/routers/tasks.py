@@ -162,6 +162,21 @@ async def get_work_package_board(group_id: str | None = None):
     return await orch.task_board.get_work_package_board(group_id=group_id)
 
 
+@router.get("/api/work-packages/{package_id}")
+async def get_work_package_detail(package_id: str):
+    orch = get_orch()
+    detail = await orch.task_board.get_work_package_detail(package_id)
+    if detail is None:
+        raise HTTPException(404, f"Work package not found: {package_id}")
+    return detail
+
+
+@router.get("/api/operations/summary")
+async def get_operations_summary(group_id: str | None = None):
+    orch = get_orch()
+    return await orch.task_board.get_operations_summary(group_id=group_id)
+
+
 @router.get("/api/groups/{group_id}/graph")
 async def get_group_graph(group_id: str):
     orch = get_orch()

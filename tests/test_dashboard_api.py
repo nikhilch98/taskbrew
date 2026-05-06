@@ -284,6 +284,56 @@ async def test_work_package_api_round_trip(app_client):
     assert data["columns"]["pending"][0]["task_counts"]["total"] == 1
 
 
+async def test_work_package_detail_and_operations_summary_api(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(
+        title="Package command center",
+        origin="pm",
+        created_by="pm",
+    )
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Reviewable dashboard package",
+        description="Expose command center detail.",
+        created_by="architect-1",
+        risk_level="high",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        title="Implement package detail",
+        assigned_to="coder",
+        created_by="architect-1",
+        task_type="implementation",
+        priority="high",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(claimed["id"], "Done.")
+
+    detail_resp = await client.get(f"/api/work-packages/{package['id']}")
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["id"] == package["id"]
+    assert detail["tasks"][0]["id"] == task["id"]
+    assert detail["review_gate"]["entity_id"] == package["id"]
+    assert detail["needs_attention"] is True
+
+    summary_resp = await client.get(f"/api/operations/summary?group_id={group['id']}")
+    assert summary_resp.status_code == 200
+    summary = summary_resp.json()
+    assert summary["counts"]["packages_total"] == 1
+    assert summary["counts"]["packages_review"] == 1
+    assert summary["queues"]["review"][0]["id"] == package["id"]
+    assert summary["system_agent"]["status"] in {"idle", "working"}
+
+
 async def test_create_work_package_rejects_missing_group(app_client):
     resp = await app_client["client"].post(
         "/api/work-packages",
