@@ -1581,6 +1581,16 @@ class TaskBoard:
         as still active). Returns False when skipped — no verification needed
         or already performed.
         """
+        # Package-backed groups are verified by Work Package review gates.
+        # Keep the older PM goal-verification fallback only for legacy groups
+        # that do not have package records.
+        has_package = await self._db.execute_fetchone(
+            "SELECT 1 FROM work_packages WHERE group_id = ? LIMIT 1",
+            (group_id,),
+        )
+        if has_package:
+            return False
+
         # Dedup: never spawn more than one goal_verification per group.
         already = await self._db.execute_fetchone(
             "SELECT id FROM tasks WHERE group_id = ? "

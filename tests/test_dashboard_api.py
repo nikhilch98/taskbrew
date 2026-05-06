@@ -1757,7 +1757,7 @@ async def test_list_all_artifacts_merges_flat_and_output_text(artifact_client):
 # ---------------------------------------------------------------------------
 # Stage-1 Fix #3: architect -> coder tasks must include parent_id
 # Stage-1 Fix #12: reject duplicate verification tasks for the same parent
-# Stage-1 Fix #4: group completion triggers PM goal_verification
+# Stage-1 Fix #4: legacy group completion, now superseded by package review
 # ---------------------------------------------------------------------------
 
 
@@ -2054,9 +2054,8 @@ async def test_fix12_cancelled_verifier_allows_new_one(stage1_client):
     assert second.status_code == 200
 
 
-async def test_fix4_group_completion_spawns_goal_verification(stage1_client):
-    """Fix #4: when the last task in a >=5-task group goes terminal, a PM
-    goal_verification task is auto-created and blocks the group from sealing."""
+async def test_fix4_group_completion_waits_for_package_review(stage1_client):
+    """Package-backed groups wait for system package review instead of PM GV."""
     board = stage1_client["board"]
     db = stage1_client["db"]
 
@@ -2084,29 +2083,42 @@ async def test_fix4_group_completion_spawns_goal_verification(stage1_client):
     for t in tasks:
         await board.complete_task(t["id"])
 
-    # The goal_verification task should now exist in backlog for PM intake.
+    packages = await board.get_group_work_packages(group["id"])
+    assert len(packages) == 1
+    package = await board.get_work_package(packages[0]["id"])
+    assert package["status"] == "review"
+    assert package["review_status"] == "pending"
+    gate = await db.execute_fetchone(
+        "SELECT status FROM review_gates "
+        "WHERE entity_type = 'work_package' AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate["status"] == "pending"
+
+    # Package review replaces the old PM goal_verification pass.
     gv = await db.execute_fetchone(
         "SELECT id, status, assigned_to, parent_id, requires_fanout "
         "FROM tasks WHERE group_id = ? AND task_type = 'goal_verification'",
         (group["id"],),
     )
-    assert gv is not None
-    assert gv["assigned_to"] == "pm"
-    assert gv["status"] == "backlog"
-    assert gv["parent_id"] == pm_goal["id"]
-    # Goal-verify should NOT be subject to the fan-out gate itself.
-    assert gv["requires_fanout"] == 0
+    assert gv is None
 
-    # The group must stay active while goal verification is pending.
+    # The group must stay active while package review is pending.
     grp = await db.execute_fetchone(
         "SELECT status FROM groups WHERE id = ?", (group["id"],),
     )
     assert grp["status"] == "active"
 
+    await board.approve_work_package_review(package["id"], reason="Package review passed.")
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "completed"
 
-async def test_fix4_small_group_skips_goal_verification(stage1_client):
+
+async def test_fix4_small_group_uses_package_review_gate(stage1_client):
     """Fix #4: groups with <5 tasks (e.g. FEAT-002 README) don't need a
-    second PM pass — avoids token waste on trivial goals."""
+    second PM pass, but package review still gates final completion."""
     board = stage1_client["board"]
     db = stage1_client["db"]
 
@@ -2134,15 +2146,24 @@ async def test_fix4_small_group_skips_goal_verification(stage1_client):
         (group["id"],),
     )
     assert gv is None
+    packages = await board.get_group_work_packages(group["id"])
+    assert len(packages) == 1
+    package = await board.get_work_package(packages[0]["id"])
+    assert package["status"] == "review"
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "active"
+
+    await board.approve_work_package_review(package["id"], reason="Small package passed.")
     grp = await db.execute_fetchone(
         "SELECT status FROM groups WHERE id = ?", (group["id"],),
     )
     assert grp["status"] == "completed"
 
 
-async def test_fix4_only_fires_once_per_group(stage1_client):
-    """Fix #4: completing the auto-generated goal_verification task shouldn't
-    spawn a second one — that would loop forever."""
+async def test_fix4_package_approval_does_not_spawn_goal_verification(stage1_client):
+    """Package approval should seal the group without the old PM GV loop."""
     board = stage1_client["board"]
     db = stage1_client["db"]
 
@@ -2172,21 +2193,25 @@ async def test_fix4_only_fires_once_per_group(stage1_client):
         "AND task_type = 'goal_verification'",
         (group["id"],),
     )
-    assert len(gv_rows) == 1
+    assert len(gv_rows) == 0
 
-    # Complete the goal_verification task — group should seal, no second GV.
-    gv_id = gv_rows[0]["id"]
-    await db.execute(
-        "UPDATE tasks SET status = 'in_progress' WHERE id = ?", (gv_id,),
-    )
-    await board.complete_task(gv_id)
+    packages = await board.get_group_work_packages(group["id"])
+    assert len(packages) == 1
+    package = await board.get_work_package(packages[0]["id"])
+    assert package["status"] == "review"
+
+    await board.approve_work_package_review(package["id"], reason="Package review passed.")
 
     gv_after = await db.execute_fetchall(
         "SELECT id FROM tasks WHERE group_id = ? "
         "AND task_type = 'goal_verification'",
         (group["id"],),
     )
-    assert len(gv_after) == 1  # still just the one
+    assert len(gv_after) == 0
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "completed"
 
     grp = await db.execute_fetchone(
         "SELECT status FROM groups WHERE id = ?", (group["id"],),
