@@ -1492,6 +1492,93 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_tasks_review_parent
             ON tasks(review_parent_task_id);
     """),
+    (35, "add_work_packages_and_review_gates", """
+        CREATE TABLE IF NOT EXISTS milestones (
+            id             TEXT PRIMARY KEY,
+            group_id       TEXT NOT NULL REFERENCES groups(id),
+            title          TEXT NOT NULL,
+            description    TEXT,
+            status         TEXT NOT NULL DEFAULT 'pending',
+            review_scope   TEXT NOT NULL DEFAULT 'milestone',
+            review_status  TEXT,
+            review_reason  TEXT,
+            review_round   INTEGER NOT NULL DEFAULT 0,
+            max_review_rounds INTEGER NOT NULL DEFAULT 3,
+            created_by     TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT,
+            completed_at   TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS work_packages (
+            id             TEXT PRIMARY KEY,
+            group_id       TEXT NOT NULL REFERENCES groups(id),
+            milestone_id   TEXT REFERENCES milestones(id),
+            title          TEXT NOT NULL,
+            description    TEXT,
+            status         TEXT NOT NULL DEFAULT 'pending',
+            risk_level     TEXT NOT NULL DEFAULT 'medium',
+            review_scope   TEXT NOT NULL DEFAULT 'work_package',
+            review_status  TEXT,
+            review_reason  TEXT,
+            review_round   INTEGER NOT NULL DEFAULT 0,
+            max_review_rounds INTEGER NOT NULL DEFAULT 3,
+            branch_name    TEXT,
+            created_by     TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT,
+            completed_at   TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS review_gates (
+            id             TEXT PRIMARY KEY,
+            entity_type    TEXT NOT NULL,
+            entity_id      TEXT NOT NULL,
+            group_id       TEXT NOT NULL REFERENCES groups(id),
+            status         TEXT NOT NULL DEFAULT 'pending',
+            outcome        TEXT,
+            reason         TEXT,
+            review_round   INTEGER NOT NULL DEFAULT 0,
+            max_review_rounds INTEGER NOT NULL DEFAULT 3,
+            system_gate_runs TEXT DEFAULT '[]',
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT,
+            completed_at   TEXT,
+            UNIQUE(entity_type, entity_id)
+        );
+
+        ALTER TABLE tasks ADD COLUMN work_package_id TEXT REFERENCES work_packages(id);
+        ALTER TABLE tasks ADD COLUMN milestone_id TEXT REFERENCES milestones(id);
+        ALTER TABLE tasks ADD COLUMN review_scope TEXT;
+
+        CREATE INDEX IF NOT EXISTS idx_milestones_group_status
+            ON milestones(group_id, status);
+        CREATE INDEX IF NOT EXISTS idx_work_packages_group_status
+            ON work_packages(group_id, status);
+        CREATE INDEX IF NOT EXISTS idx_work_packages_milestone
+            ON work_packages(milestone_id, status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_work_package
+            ON tasks(work_package_id, status);
+        CREATE INDEX IF NOT EXISTS idx_review_gates_entity
+            ON review_gates(entity_type, entity_id);
+        CREATE INDEX IF NOT EXISTS idx_review_gates_status
+            ON review_gates(status, created_at);
+    """),
+    (36, "make_merge_queue_sources_first_class", """
+        ALTER TABLE merge_queue ADD COLUMN source_type TEXT DEFAULT 'verifier_approval';
+        ALTER TABLE merge_queue ADD COLUMN source_entity_id TEXT;
+        ALTER TABLE merge_queue ADD COLUMN work_package_id TEXT REFERENCES work_packages(id);
+
+        UPDATE merge_queue
+        SET source_type = COALESCE(source_type, 'verifier_approval'),
+            source_entity_id = COALESCE(source_entity_id, verifier_task_id)
+        WHERE source_entity_id IS NULL OR source_type IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_merge_queue_source
+            ON merge_queue(source_type, source_entity_id, status);
+        CREATE INDEX IF NOT EXISTS idx_merge_queue_package
+            ON merge_queue(work_package_id, status);
+    """),
 ]
 
 

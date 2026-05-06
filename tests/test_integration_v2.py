@@ -83,26 +83,26 @@ async def test_full_task_flow(system):
     rv_updated = await board.get_task(rv_task["id"])
     assert rv_updated["status"] == "pending"
 
-    # 6. Reviewer completes -> Stage-1 Fix #4: group completion triggers
-    # an auto-generated PM goal_verification task (group has 5+ tasks, so it
-    # is not considered trivial).
+    # 6. Reviewer completes. Package-backed groups now wait on the
+    # package-level system review gate instead of spawning legacy PM
+    # goal_verification work.
     await board.claim_task("reviewer", "reviewer-1")
     await board.complete_task(rv_task["id"])
 
     all_tasks = await board.get_group_tasks(group["id"])
-    assert len(all_tasks) == 6
-    gv = [t for t in all_tasks if t["task_type"] == "goal_verification"]
-    assert len(gv) == 1
-    gv_task = await _release_task(board, gv[0])
-    assert gv[0]["assigned_to"] == "pm"
-    assert gv_task["status"] == "pending"
+    assert len(all_tasks) == 5
+    assert [t for t in all_tasks if t["task_type"] == "goal_verification"] == []
+    package = await system["db"].execute_fetchone(
+        "SELECT * FROM work_packages WHERE group_id = ?",
+        (group["id"],),
+    )
+    assert package["status"] == "review"
 
-    # 7. PM completes the goal verification -> group seals.
-    await board.claim_task("pm", "pm-1")
-    await board.complete_task(gv_task["id"])
+    # 7. System package review approves the full deliverable slice -> group seals.
+    await board.approve_work_package_review(package["id"], reason="Package meets goal.")
 
     all_tasks = await board.get_group_tasks(group["id"])
-    assert len(all_tasks) == 6
+    assert len(all_tasks) == 5
     assert all(t["status"] == "completed" for t in all_tasks)
     assert all(t["group_id"] == group["id"] for t in all_tasks)
 

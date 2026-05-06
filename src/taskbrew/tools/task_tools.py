@@ -62,6 +62,107 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
     mcp = FastMCP("task-tools")
 
     @mcp.tool()
+    def create_work_package(
+        group_id: str,
+        title: str,
+        created_by: str,
+        description: str = "",
+        risk_level: str = "medium",
+        review_scope: str = "work_package",
+    ) -> str:
+        """Create a visible Work Package for a goal group.
+
+        Args:
+            group_id: ID of the group this package belongs to.
+            title: Short package name visible in the package board.
+            created_by: Your agent instance ID.
+            description: Package spec, acceptance criteria, and boundaries.
+            risk_level: low, medium, high, or critical.
+            review_scope: work_package (default) or none.
+        """
+        denial = gate_or_error("create_work_package")
+        if denial:
+            return denial
+        ok, err = _check_assigned_by(created_by)
+        if not ok:
+            return f"Error: {err}"
+        payload = {
+            "group_id": group_id,
+            "title": title,
+            "created_by": created_by,
+            "risk_level": risk_level,
+            "review_scope": review_scope,
+        }
+        if description:
+            payload["description"] = description
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{api_url}/api/work-packages",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+                return (
+                    f"Work package created: {result.get('id', '<unknown>')} — "
+                    f"{result.get('title', '<unknown>')}"
+                )
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            return f"Error creating work package (HTTP {e.code}): {body}"
+        except urllib.error.URLError as e:
+            return f"Error creating work package (connection failed): {e.reason}"
+        except Exception as e:
+            return f"Error creating work package (unexpected error): {e}"
+
+    @mcp.tool()
+    def update_work_package(
+        work_package_id: str,
+        title: str = "",
+        description: str = "",
+    ) -> str:
+        """Update the visible title or description of a Work Package.
+
+        Args:
+            work_package_id: Work Package ID to update, e.g. WP-001.
+            title: New package title. Leave empty to keep current.
+            description: New package description. Leave empty to keep current.
+        """
+        denial = gate_or_error("update_work_package")
+        if denial:
+            return denial
+        payload: dict = {}
+        if title:
+            payload["title"] = title
+        if description:
+            payload["description"] = description
+        if not payload:
+            return "No fields to update — specify title or description."
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{api_url}/api/work-packages/{work_package_id}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="PATCH",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+                return (
+                    f"Work package updated: {result.get('id', work_package_id)} — "
+                    f"{result.get('title', title or '<unchanged>')}"
+                )
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            return f"Error updating work package (HTTP {e.code}): {body}"
+        except urllib.error.URLError as e:
+            return f"Error updating work package (connection failed): {e.reason}"
+        except Exception as e:
+            return f"Error updating work package (unexpected error): {e}"
+
+    @mcp.tool()
     def create_task(
         group_id: str,
         title: str,
@@ -73,6 +174,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         parent_id: str = "",
         blocked_by: str = "",
         requires_fanout: str = "",
+        work_package_id: str = "",
+        work_package_title: str = "",
+        work_package_description: str = "",
     ) -> str:
         """Create a new task on the task board and assign it to an agent role.
 
@@ -93,6 +197,9 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
                 receives your design as context via parent_artifact. Omitting
                 it on an architect->coder route returns HTTP 400.
             blocked_by: Comma-separated list of task IDs that must complete before this one starts. Leave empty if not blocked.
+            work_package_id: Optional Work Package ID to attach this task to.
+            work_package_title: Optional title to apply to that Work Package when your design names it.
+            work_package_description: Optional description to apply to that Work Package.
             requires_fanout: Optional override for the fan-out gate.
                 - Leave empty ("") to use the task_type default (tech_design
                   requires fan-out; everything else does not).
@@ -116,6 +223,12 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             payload["parent_id"] = parent_id
         if blocked_by:
             payload["blocked_by"] = [t.strip() for t in blocked_by.split(",") if t.strip()]
+        if work_package_id:
+            payload["work_package_id"] = work_package_id
+        if work_package_title:
+            payload["work_package_title"] = work_package_title
+        if work_package_description:
+            payload["work_package_description"] = work_package_description
         denial = gate_or_error("create_task")
         if denial:
             return denial

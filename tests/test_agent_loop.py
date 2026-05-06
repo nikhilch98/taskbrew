@@ -114,6 +114,27 @@ def _make_loop(
     )
 
 
+class FailingWorktreeManager:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def create_worktree(
+        self,
+        *,
+        agent_name: str,
+        branch_name: str,
+        base_branch: str,
+    ) -> str:
+        self.calls.append(
+            {
+                "agent_name": agent_name,
+                "branch_name": branch_name,
+                "base_branch": base_branch,
+            }
+        )
+        raise RuntimeError("fatal: invalid reference")
+
+
 async def _release_task(board: TaskBoard, task: dict) -> dict:
     """Run the system intake gate for tests that need a claimable task."""
     return await board.apply_backlog_intake_decision(
@@ -147,6 +168,34 @@ async def test_poll_claims_task(
     assert task is not None
     assert task["claimed_by"] == "coder-1"
     assert task["status"] == "in_progress"
+
+
+async def test_run_once_fails_task_when_worktree_creation_fails(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager
+):
+    role = _make_role()
+    await instance_mgr.register_instance("coder-1", role)
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Implement endpoint",
+        task_type="implementation",
+        assigned_to="coder",
+        parent_branch="missing-branch",
+    )
+    await _release_task(board, task)
+    loop = _make_loop(board, event_bus, instance_mgr, role_config=role)
+    loop.worktree_manager = FailingWorktreeManager()
+
+    processed = await loop.run_once()
+
+    assert processed is True
+    updated = await board.get_task(task["id"])
+    assert updated["status"] == "failed"
+    assert "fatal: invalid reference" in updated["rejection_reason"]
+    instance = await instance_mgr.get_instance("coder-1")
+    assert instance["status"] == "idle"
+    assert instance["current_task"] is None
 
 
 async def test_poll_returns_none_when_empty(

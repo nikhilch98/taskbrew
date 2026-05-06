@@ -369,6 +369,10 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
     from taskbrew.orchestrator.merge_queue import MergeQueue
 
     orch.merge_queue = MergeQueue(db)
+    task_board.configure_package_integration(
+        merge_queue=orch.merge_queue,
+        repo_dir=str(project_dir),
+    )
     orch.merge_broker = MergeBroker(
         merge_queue=orch.merge_queue,
         task_board=task_board,
@@ -582,7 +586,7 @@ def _resolve_needs_worktree(role_config: RoleConfig) -> bool:
     return any(t in _FILE_MUTATING_TOOLS for t in role_config.tools)
 
 
-async def start_agents(orch: Orchestrator):
+async def start_agents(orch: Orchestrator, *, start_paused: bool = True):
     """Start agent loops, recovery tasks, and auto-scaler for *orch*.
 
     This is a module-level function so that ``app.py`` can import and call it
@@ -665,9 +669,10 @@ async def start_agents(orch: Orchestrator):
             orch.agent_tasks.append(task)
             orch._agent_tasks_by_id[instance_id] = (loop, task)
 
-    # Start all agents in paused state — user must click Resume on the dashboard
-    all_role_names = list(orch.roles.keys())
-    orch.instance_manager.pause_all(all_role_names)
+    if start_paused:
+        # Start all agents in paused state — user must click Resume on the dashboard.
+        all_role_names = list(orch.roles.keys())
+        orch.instance_manager.pause_all(all_role_names)
 
     # Start auto-scaler if any role has auto_scale enabled
     has_auto_scale = any(

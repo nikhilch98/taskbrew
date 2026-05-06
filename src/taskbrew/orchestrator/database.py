@@ -23,9 +23,65 @@ CREATE TABLE IF NOT EXISTS groups (
     completed_at  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS milestones (
+    id             TEXT PRIMARY KEY,
+    group_id       TEXT NOT NULL REFERENCES groups(id),
+    title          TEXT NOT NULL,
+    description    TEXT,
+    status         TEXT NOT NULL DEFAULT 'pending',
+    review_scope   TEXT NOT NULL DEFAULT 'milestone',
+    review_status  TEXT,
+    review_reason  TEXT,
+    review_round   INTEGER NOT NULL DEFAULT 0,
+    max_review_rounds INTEGER NOT NULL DEFAULT 3,
+    created_by     TEXT,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT,
+    completed_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS work_packages (
+    id             TEXT PRIMARY KEY,
+    group_id       TEXT NOT NULL REFERENCES groups(id),
+    milestone_id   TEXT REFERENCES milestones(id),
+    title          TEXT NOT NULL,
+    description    TEXT,
+    status         TEXT NOT NULL DEFAULT 'pending',
+    risk_level     TEXT NOT NULL DEFAULT 'medium',
+    review_scope   TEXT NOT NULL DEFAULT 'work_package',
+    review_status  TEXT,
+    review_reason  TEXT,
+    review_round   INTEGER NOT NULL DEFAULT 0,
+    max_review_rounds INTEGER NOT NULL DEFAULT 3,
+    branch_name    TEXT,
+    created_by     TEXT,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT,
+    completed_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS review_gates (
+    id             TEXT PRIMARY KEY,
+    entity_type    TEXT NOT NULL,
+    entity_id      TEXT NOT NULL,
+    group_id       TEXT NOT NULL REFERENCES groups(id),
+    status         TEXT NOT NULL DEFAULT 'pending',
+    outcome        TEXT,
+    reason         TEXT,
+    review_round   INTEGER NOT NULL DEFAULT 0,
+    max_review_rounds INTEGER NOT NULL DEFAULT 3,
+    system_gate_runs TEXT DEFAULT '[]',
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT,
+    completed_at   TEXT,
+    UNIQUE(entity_type, entity_id)
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
     id               TEXT PRIMARY KEY,
     group_id         TEXT REFERENCES groups(id),
+    work_package_id  TEXT REFERENCES work_packages(id),
+    milestone_id     TEXT REFERENCES milestones(id),
     parent_id        TEXT REFERENCES tasks(id),
     title            TEXT NOT NULL,
     description      TEXT,
@@ -74,6 +130,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     needs_review                 INTEGER,
     needs_review_reason          TEXT,
     needs_review_decision        TEXT,
+    review_scope                 TEXT,
     backlog_intake_status        TEXT DEFAULT 'pending',
     backlog_intake_processed_at  TEXT,
     review_status                TEXT,
@@ -305,6 +362,9 @@ CREATE TABLE IF NOT EXISTS merge_queue (
     group_id            TEXT NOT NULL,
     parent_task_id      TEXT NOT NULL REFERENCES tasks(id),
     verifier_task_id    TEXT NOT NULL REFERENCES tasks(id),
+    source_type         TEXT NOT NULL DEFAULT 'verifier_approval',
+    source_entity_id    TEXT,
+    work_package_id     TEXT REFERENCES work_packages(id),
     source_branch       TEXT NOT NULL,
     target_branch       TEXT NOT NULL DEFAULT 'main',
     status              TEXT NOT NULL DEFAULT 'queued',
@@ -323,6 +383,24 @@ CREATE TABLE IF NOT EXISTS merge_queue (
 """
 
 _INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_milestones_group_status
+    ON milestones(group_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_work_packages_group_status
+    ON work_packages(group_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_work_packages_milestone
+    ON work_packages(milestone_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_work_package
+    ON tasks(work_package_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_review_gates_entity
+    ON review_gates(entity_type, entity_id);
+
+CREATE INDEX IF NOT EXISTS idx_review_gates_status
+    ON review_gates(status, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status
     ON tasks(assigned_to, status)
     WHERE status = 'pending' AND claimed_by IS NULL;
@@ -380,6 +458,12 @@ CREATE INDEX IF NOT EXISTS idx_merge_queue_group_status
 
 CREATE INDEX IF NOT EXISTS idx_merge_queue_ready
     ON merge_queue(status, next_attempt_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_merge_queue_source
+    ON merge_queue(source_type, source_entity_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_merge_queue_package
+    ON merge_queue(work_package_id, status);
 
 """
 

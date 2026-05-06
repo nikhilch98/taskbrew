@@ -6,8 +6,10 @@ import asyncio
 import json
 import logging
 import re
+import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from time import monotonic
 from typing import Any
 
@@ -25,10 +27,19 @@ _GATE_LOCKS: dict[tuple[str, str], tuple[asyncio.AbstractEventLoop, asyncio.Lock
 _GATE_RECENT_ATTEMPTS: dict[
     tuple[str, str], tuple[asyncio.AbstractEventLoop, float]
 ] = {}
+_PLANNING_ROLES = {"pm", "architect"}
+_PLANNING_TASK_TYPES = {"goal", "tech_design", "architecture_review"}
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_planning_task(task: dict) -> bool:
+    return (
+        str(task.get("assigned_to") or "").lower() in _PLANNING_ROLES
+        or str(task.get("task_type") or "").lower() in _PLANNING_TASK_TYPES
+    )
 
 
 @dataclass(frozen=True)
@@ -142,6 +153,11 @@ class AgentRunnerSystemGateAnalyzer(SystemGateAnalyzer):
             "You are running TaskBrew backlog intake for exactly one task.\n"
             "Decide only whether the task should require system review after completion.\n"
             "Do not rewrite, split, reprioritize, or modify the task.\n"
+            "Review the task against its own role and task type, not against the "
+            "final group goal. PM goal and Architect tech_design tasks usually "
+            "produce planning artifacts; their implementation output is validated "
+            "later through downstream task or work-package review, so do not mark "
+            "them needs_review only because the final deliverable is code.\n"
             "Return only strict JSON with this shape:\n"
             '{"needs_review": true, "reason": "string", '
             '"signals": ["string"], "confidence": "low|medium|high"}\n\n'
@@ -157,6 +173,10 @@ class AgentRunnerSystemGateAnalyzer(SystemGateAnalyzer):
             "Choose exactly one outcome: approved, needs_revision, rejected, failed_review.\n"
             "Use rejected only when the task should not continue; fixable work must become "
             "revision tasks.\n"
+            "Review the completed task against the task's own role contract. If a PM "
+            "or Architect planning task needs revision, create a planning revision "
+            "for the same role; do not create implementation/coder revisions from a "
+            "planning-task review.\n"
             "Return only strict JSON with this shape:\n"
             '{"outcome": "approved|needs_revision|rejected|failed_review", '
             '"reason": "string", "revisions": [{"title": "string", '
@@ -271,6 +291,88 @@ class SystemGateManager:
             "output_text": task.get("output_text") or "",
         }
 
+    async def _package_review_context(self, package_id: str) -> dict:
+        package = await self._board.get_work_package(package_id)
+        group = None
+        tasks: list[dict] = []
+        if package is not None:
+            group = await self._board._db.execute_fetchone(
+                "SELECT * FROM groups WHERE id = ?", (package["group_id"],)
+            )
+            tasks = await self._board._db.execute_fetchall(
+                "SELECT id, title, description, status, task_type, assigned_to, "
+                "priority, output_text, completion_checks, branch_name, "
+                "parent_branch, created_by, created_at, completed_at "
+                "FROM tasks WHERE work_package_id = ? ORDER BY created_at",
+                (package_id,),
+            )
+        integration_queue = await self._board._db.execute_fetchall(
+            "SELECT * FROM merge_queue WHERE work_package_id = ? ORDER BY created_at",
+            (package_id,),
+        )
+        return {
+            "entity_type": "work_package",
+            "package": package,
+            "group": group,
+            "tasks": tasks,
+            "integration_queue": integration_queue,
+            "branch_diffs": await self._package_branch_diffs(tasks),
+        }
+
+    async def _package_branch_diffs(self, tasks: list[dict]) -> list[dict]:
+        repo_dir = getattr(self._board, "_package_repo_dir", None)
+        if repo_dir is None:
+            return []
+        result: list[dict] = []
+        for task in tasks:
+            source_branch = task.get("branch_name")
+            if not source_branch:
+                continue
+            target_branch = self._package_target_branch(task)
+            if source_branch == target_branch:
+                continue
+            diff_stat = self._git_text(
+                repo_dir,
+                "diff",
+                "--stat",
+                f"{target_branch}...{source_branch}",
+            )
+            commit_log = self._git_text(
+                repo_dir,
+                "log",
+                "--oneline",
+                "--decorate=no",
+                f"{target_branch}..{source_branch}",
+            )
+            result.append(
+                {
+                    "task_id": task["id"],
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "diff_stat": diff_stat[:4000],
+                    "commit_log": commit_log[:4000],
+                }
+            )
+        return result
+
+    def _package_target_branch(self, task: dict) -> str:
+        target_fn = getattr(self._board, "_package_target_branch", None)
+        if callable(target_fn):
+            return target_fn(task)
+        return task.get("parent_branch") or "main"
+
+    def _git_text(self, repo_dir: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=repo_dir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return (proc.stderr or proc.stdout).strip()
+        return proc.stdout.strip()
+
     async def process_backlog_task(self, task_id: str) -> bool:
         async with self._gate_lock("backlog", task_id):
             return await self._process_backlog_task(task_id)
@@ -307,12 +409,20 @@ class SystemGateManager:
 
         self._mark_gate_attempt("backlog", task_id)
         await self._append_running_gate_run(task_id, "backlog")
+        await self._emit_task_event(
+            "task.system_gate_started",
+            task_id,
+            gate="backlog",
+            backlog_intake_status="running",
+        )
         running_task = rows[0]
         try:
-            result = await self._analyzer.decide_needs_review(
-                await self._backlog_context(running_task)
-            )
-            await self._board.apply_backlog_intake_decision(
+            result = self._backlog_intake_override(running_task)
+            if result is None:
+                result = await self._analyzer.decide_needs_review(
+                    await self._backlog_context(running_task)
+                )
+            updated = await self._board.apply_backlog_intake_decision(
                 task_id,
                 needs_review=result.needs_review,
                 reason=result.reason,
@@ -321,14 +431,66 @@ class SystemGateManager:
             )
         except asyncio.CancelledError as exc:
             await self._board.mark_backlog_intake_failed(task_id, str(exc))
+            await self._emit_task_event(
+                "task.system_gate_finished",
+                task_id,
+                gate="backlog",
+                outcome="cancelled",
+                backlog_intake_status="failed",
+            )
             raise
         except Exception as exc:
             logger.exception("Backlog intake failed for task %s", task_id)
             await self._board.mark_backlog_intake_failed(task_id, str(exc))
+            await self._emit_task_event(
+                "task.system_gate_finished",
+                task_id,
+                gate="backlog",
+                outcome="failed",
+                backlog_intake_status="failed",
+            )
             return False
         finally:
             self._mark_gate_attempt("backlog", task_id)
+        await self._board._append_system_gate_run(
+            task_id,
+            {
+                "gate": "backlog",
+                "outcome": "completed",
+                "reason": result.reason,
+                "signals": result.signals,
+                "confidence": result.confidence,
+                "needs_review": result.needs_review,
+                "finished_at": _utcnow(),
+            },
+        )
+        await self._emit_task_event(
+            "task.system_gate_finished",
+            task_id,
+            gate="backlog",
+            outcome="completed",
+            status=updated.get("status") if updated else None,
+            needs_review=bool(result.needs_review),
+            backlog_intake_status="completed",
+        )
         return True
+
+    def _backlog_intake_override(self, task: dict) -> BacklogIntakeResult | None:
+        if not _is_planning_task(task):
+            return None
+        return BacklogIntakeResult(
+            needs_review=False,
+            reason=(
+                "Planning tasks are validated through their downstream task and "
+                "work-package review flow; task-level review would duplicate the "
+                "final system gate and can create premature revision work."
+            ),
+            signals=[
+                "planning_role_or_task_type",
+                "downstream_work_package_review_is_primary_gate",
+            ],
+            confidence="high",
+        )
 
     async def process_review_task(self, task_id: str) -> bool:
         async with self._gate_lock("review", task_id):
@@ -371,28 +533,135 @@ class SystemGateManager:
 
         self._mark_gate_attempt("review", task_id)
         await self._append_running_gate_run(task_id, "review")
+        await self._emit_task_event(
+            "task.system_gate_started",
+            task_id,
+            gate="review",
+            review_status="running",
+        )
         running_task = rows[0]
         try:
             result = await self._analyzer.review_completed_task(
                 await self._review_context(running_task)
             )
-            return await self._handle_review_result(task_id, result)
+            handled = await self._handle_review_result(task_id, result)
         except asyncio.CancelledError as exc:
             await self._board.mark_review_failed(task_id, str(exc))
+            await self._emit_task_event(
+                "task.system_gate_finished",
+                task_id,
+                gate="review",
+                outcome="cancelled",
+                review_status="failed",
+            )
             raise
         except Exception as exc:
             logger.exception("Review gate failed for task %s", task_id)
             await self._board.mark_review_failed(task_id, str(exc))
+            await self._emit_task_event(
+                "task.system_gate_finished",
+                task_id,
+                gate="review",
+                outcome="failed_review",
+                review_status="failed",
+            )
             return False
         finally:
             self._mark_gate_attempt("review", task_id)
-        return True
+        updated = await self._board.get_task(task_id)
+        await self._emit_task_event(
+            "task.system_gate_finished",
+            task_id,
+            gate="review",
+            outcome=result.outcome,
+            status=updated.get("status") if updated else None,
+            review_status=updated.get("review_status") if updated else None,
+        )
+        return handled
+
+    async def process_package_review_gate(self, gate_id: str) -> bool:
+        async with self._gate_lock("package_review", gate_id):
+            return await self._process_package_review_gate(gate_id)
+
+    async def _process_package_review_gate(self, gate_id: str) -> bool:
+        gate = await self._board._db.execute_fetchone(
+            "SELECT * FROM review_gates WHERE id = ?", (gate_id,)
+        )
+        if gate is None or gate.get("entity_type") != "work_package":
+            return False
+        package_id = gate["entity_id"]
+        package = await self._board.get_work_package(package_id)
+        if package is None or package["status"] != "review":
+            return False
+        gate_status = gate.get("status") or "pending"
+        if gate_status == "failed" and self._recent_attempt_blocks_retry(
+            "package_review", gate_id
+        ):
+            return False
+        include_running = gate_status == "running" and self._is_running_stale(
+            gate, "package_review"
+        )
+        if gate_status == "running" and not include_running:
+            return False
+        status_predicate = (
+            "AND status IN ('pending', 'failed', 'running') "
+            if include_running
+            else "AND status IN ('pending', 'failed') "
+        )
+
+        rows = await self._board._db.execute_returning(
+            "UPDATE review_gates SET status = 'running', updated_at = ? "
+            "WHERE id = ? AND entity_type = 'work_package' "
+            f"{status_predicate}"
+            "AND EXISTS ("
+            "  SELECT 1 FROM work_packages "
+            "  WHERE id = review_gates.entity_id AND status = 'review'"
+            ") RETURNING *",
+            (_utcnow(), gate_id),
+        )
+        if not rows:
+            return False
+
+        self._mark_gate_attempt("package_review", gate_id)
+        await self._board._append_review_gate_run(
+            gate_id,
+            {
+                "gate": "package_review",
+                "outcome": "running",
+                "started_at": _utcnow(),
+            },
+        )
+        running_gate = rows[0]
+        try:
+            result = await self._analyzer.review_completed_task(
+                await self._package_review_context(running_gate["entity_id"])
+            )
+            handled = await self._handle_package_review_result(
+                gate_id,
+                running_gate["entity_id"],
+                result,
+            )
+        except SystemGateAnalysisError as exc:
+            logger.exception("Package review gate analysis failed for %s", gate_id)
+            await self._mark_package_review_failed(gate_id, str(exc))
+            return False
+        except asyncio.CancelledError as exc:
+            await self._mark_package_review_failed(gate_id, str(exc))
+            raise
+        except Exception as exc:
+            logger.exception("Package review gate failed for %s", gate_id)
+            await self._mark_package_review_failed(gate_id, str(exc))
+            return False
+        finally:
+            self._mark_gate_attempt("package_review", gate_id)
+        return handled
 
     async def process_pending_once(self) -> dict[str, int]:
-        counts = {"backlog": 0, "review": 0}
+        counts = {"backlog": 0, "review": 0, "package_review": 0}
         if self._batch_size <= 0:
             return counts
 
+        pass_started_at = _utcnow()
         backlog_rows = await self._board._db.execute_fetchall(
             "SELECT id, backlog_intake_status, system_gate_runs "
             "FROM tasks WHERE status = 'backlog' "
@@ -461,6 +730,45 @@ class SystemGateManager:
                 if counts["review"] >= remaining:
                     break
 
+        remaining = self._batch_size - counts["backlog"] - counts["review"]
+        if remaining <= 0:
+            return counts
+
+        package_review_rows = await self._board._db.execute_fetchall(
+            "SELECT rg.id, rg.status, rg.system_gate_runs "
+            "FROM review_gates rg "
+            "JOIN work_packages wp ON wp.id = rg.entity_id "
+            "WHERE rg.entity_type = 'work_package' "
+            "AND rg.status IN ('pending', 'failed') "
+            "AND wp.status = 'review' "
+            "AND rg.created_at <= ? "
+            "ORDER BY rg.created_at LIMIT ?",
+            (pass_started_at, remaining),
+        )
+        for row in package_review_rows:
+            if await self.process_package_review_gate(row["id"]):
+                counts["package_review"] += 1
+            if counts["package_review"] >= remaining:
+                break
+
+        if counts["package_review"] < remaining:
+            package_review_running_rows = await self._board._db.execute_fetchall(
+                "SELECT rg.id, rg.status, rg.system_gate_runs "
+                "FROM review_gates rg "
+                "JOIN work_packages wp ON wp.id = rg.entity_id "
+                "WHERE rg.entity_type = 'work_package' "
+                "AND rg.status = 'running' "
+                "AND wp.status = 'review' "
+                "ORDER BY rg.created_at",
+            )
+            for row in package_review_running_rows:
+                if not self._is_running_stale(row, "package_review"):
+                    continue
+                if await self.process_package_review_gate(row["id"]):
+                    counts["package_review"] += 1
+                if counts["package_review"] >= remaining:
+                    break
+
         return counts
 
     async def run(self) -> None:
@@ -493,16 +801,98 @@ class SystemGateManager:
             revisions = result.revisions or [
                 RevisionRequest(description=result.reason)
             ]
+            original = await self._board.get_task(task_id)
+            if original is not None:
+                revisions = self._normalize_review_revisions(original, revisions)
             created = await self._board.create_review_revision_tasks(
                 task_id,
                 [self._revision_to_dict(revision) for revision in revisions],
             )
+            if created:
+                for task in created:
+                    await self._emit_task_event(
+                        "task.created",
+                        task["id"],
+                        group_id=task.get("group_id"),
+                        created_by="system",
+                    )
             return bool(created)
         elif outcome == "failed_review":
             await self._board.mark_review_failed(task_id, result.reason)
             return True
         else:
             raise SystemGateAnalysisError(f"Unsupported review outcome: {outcome}")
+
+    async def _handle_package_review_result(
+        self, gate_id: str, package_id: str, result: ReviewResult
+    ) -> bool:
+        outcome = result.outcome
+        if outcome == "approved":
+            await self._board.approve_work_package_review(
+                package_id,
+                reason=result.reason,
+            )
+            return True
+        if outcome == "rejected":
+            await self._board.reject_work_package_review(
+                package_id,
+                reason=result.reason,
+            )
+            return True
+        if outcome == "failed_review":
+            await self._mark_package_review_failed(gate_id, result.reason)
+            return True
+        if outcome == "needs_revision":
+            await self._mark_package_review_needs_revision(
+                gate_id,
+                package_id,
+                result.reason,
+            )
+            return True
+        raise SystemGateAnalysisError(f"Unsupported review outcome: {outcome}")
+
+    async def _mark_package_review_failed(self, gate_id: str, reason: str) -> None:
+        now = _utcnow()
+        await self._board._db.execute(
+            "UPDATE review_gates SET status = 'failed', outcome = 'failed_review', "
+            "reason = ?, updated_at = ? WHERE id = ? AND status = 'running'",
+            (reason[:1000], now, gate_id),
+        )
+        await self._board._append_review_gate_run(
+            gate_id,
+            {
+                "gate": "package_review",
+                "outcome": "failed_review",
+                "reason": reason[:1000],
+                "finished_at": now,
+            },
+        )
+
+    async def _mark_package_review_needs_revision(
+        self, gate_id: str, package_id: str, reason: str
+    ) -> None:
+        now = _utcnow()
+        await self._board._db.execute(
+            "UPDATE work_packages SET status = 'waiting_revision', "
+            "review_status = 'waiting_revision', review_reason = ?, updated_at = ? "
+            "WHERE id = ? AND status = 'review'",
+            (reason, now, package_id),
+        )
+        await self._board._db.execute(
+            "UPDATE review_gates SET status = 'waiting_revision', "
+            "outcome = 'needs_revision', reason = ?, updated_at = ? "
+            "WHERE id = ? AND status = 'running'",
+            (reason, now, gate_id),
+        )
+        await self._board._append_review_gate_run(
+            gate_id,
+            {
+                "gate": "package_review",
+                "outcome": "needs_revision",
+                "reason": reason,
+                "finished_at": now,
+            },
+        )
 
     async def _review_round_limit_reached(self, task_id: str) -> bool:
         task = await self._board.get_task(task_id)
@@ -558,6 +948,16 @@ class SystemGateManager:
                 "started_at": _utcnow(),
             },
         )
+
+    async def _emit_task_event(self, event_type: str, task_id: str, **data) -> None:
+        event_bus = getattr(self._board, "_event_bus", None)
+        if event_bus is None:
+            return
+        payload = {"task_id": task_id, **data}
+        try:
+            await event_bus.emit(event_type, payload)
+        except Exception:
+            logger.debug("System gate event emit failed", exc_info=True)
 
     def _gate_lock(self, gate: str, task_id: str) -> asyncio.Lock:
         key = (gate, task_id)
@@ -619,6 +1019,27 @@ class SystemGateManager:
             for key, value in asdict(revision).items()
             if value not in (None, "")
         }
+
+    def _normalize_review_revisions(
+        self,
+        original: dict,
+        revisions: list[RevisionRequest],
+    ) -> list[RevisionRequest]:
+        if not _is_planning_task(original):
+            return revisions
+        assigned_to = original.get("assigned_to") or "pm"
+        normalized: list[RevisionRequest] = []
+        for index, revision in enumerate(revisions, start=1):
+            normalized.append(
+                RevisionRequest(
+                    title=revision.title or f"Revise planning output for {original['id']}",
+                    description=revision.description,
+                    assigned_to=assigned_to,
+                    task_type="revision",
+                    priority=revision.priority or original.get("priority") or "medium",
+                )
+            )
+        return normalized
 
     async def _dependencies(self, task_id: str) -> list[dict]:
         return await self._board._db.execute_fetchall(

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 
 from taskbrew.orchestrator.database import Database
 
@@ -43,6 +45,36 @@ CLAIMABLE_STATUS = "pending"
 BACKLOG_STATUS = "backlog"
 REVIEW_STATUS = "review"
 DEFAULT_MAX_REVIEW_ROUNDS = 3
+DEFAULT_PACKAGE_REVIEW_SCOPE = "work_package"
+NO_REVIEW_SCOPE = "none"
+TASK_REVIEW_SCOPE = "task"
+PACKAGE_GATE_STALE_PENDING_SECONDS = 30 * 60
+PACKAGE_GATE_STALE_RUNNING_SECONDS = 20 * 60
+PACKAGE_STATUSES = (
+    "backlog",
+    "pending",
+    "in_progress",
+    "blocked",
+    "review",
+    "waiting_revision",
+    "integrating",
+    "completed",
+    "rejected",
+    "failed",
+)
+PACKAGE_INTEGRATING_STATUS = "integrating"
+PACKAGE_INTEGRATION_TASK_TYPES = frozenset({"implementation", "bug_fix", "revision"})
+DEFAULT_PACKAGE_DESCRIPTION = "Automatically created to keep existing tasks grouped."
+MERGE_QUEUE_OPEN_STATUSES = (
+    "queued",
+    "running",
+    "retry_pending",
+    "blocked",
+    "conflict",
+    "root_refresh_blocked",
+    "failed",
+)
+MERGE_QUEUE_SUCCESS_STATUSES = ("merged", "already_merged")
 
 
 class TaskBoard:
@@ -74,6 +106,20 @@ class TaskBoard:
         # optional for backwards compatibility with test fixtures
         # that construct TaskBoard without one.
         self._event_bus = event_bus
+        self._package_merge_queue = None
+        self._package_repo_dir: Path | None = None
+
+    def configure_package_integration(self, *, merge_queue=None, repo_dir: str | None = None) -> None:
+        """Wire package approval to the durable merge queue.
+
+        Tests and legacy callers may construct ``TaskBoard`` without a repo
+        or queue. In that mode package approval keeps the old in-memory
+        semantics. Production orchestrators call this during startup so
+        approved package deliverables must land on the intended branch before
+        the package/group can close.
+        """
+        self._package_merge_queue = merge_queue
+        self._package_repo_dir = Path(repo_dir).resolve() if repo_dir else None
 
     # ------------------------------------------------------------------
     # Prefix helpers
@@ -145,6 +191,756 @@ class TaskBoard:
         )
 
     # ------------------------------------------------------------------
+    # Work Packages
+    # ------------------------------------------------------------------
+
+    async def create_work_package(
+        self,
+        group_id: str,
+        title: str,
+        description: str | None = None,
+        *,
+        milestone_id: str | None = None,
+        created_by: str | None = None,
+        risk_level: str = "medium",
+        review_scope: str = DEFAULT_PACKAGE_REVIEW_SCOPE,
+    ) -> dict:
+        """Create a work package for a group."""
+        group = await self._db.execute_fetchone(
+            "SELECT 1 FROM groups WHERE id = ?", (group_id,)
+        )
+        if group is None:
+            raise ValueError(f"Group not found: {group_id}")
+
+        await self._db.register_prefix("WP")
+        package_id = await self._db.generate_task_id("WP")
+        now = _utcnow()
+        await self._db.execute(
+            "INSERT INTO work_packages "
+            "(id, group_id, milestone_id, title, description, status, risk_level, "
+            "review_scope, max_review_rounds, created_by, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+            (
+                package_id,
+                group_id,
+                milestone_id,
+                title,
+                description,
+                risk_level,
+                review_scope,
+                DEFAULT_MAX_REVIEW_ROUNDS,
+                created_by,
+                now,
+                now,
+            ),
+        )
+        package = await self.get_work_package(package_id)
+        if package is None:
+            raise ValueError(f"Work package not found after create: {package_id}")
+        return package
+
+    async def get_work_package(self, package_id: str) -> dict | None:
+        """Return a single work package by ID, or None."""
+        return await self._db.execute_fetchone(
+            "SELECT * FROM work_packages WHERE id = ?", (package_id,)
+        )
+
+    async def update_work_package_metadata(
+        self,
+        package_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        only_if_default: bool = False,
+    ) -> dict | None:
+        """Update a package title/description from PM or Architect design output."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            return None
+        if only_if_default and not self._is_default_work_package(package):
+            return package
+
+        clean_title = title.strip() if isinstance(title, str) else None
+        clean_description = (
+            description.strip() if isinstance(description, str) else None
+        )
+        if not clean_title and not clean_description:
+            return package
+
+        next_title = clean_title or package["title"]
+        next_description = clean_description or package.get("description")
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET title = ?, description = ?, updated_at = ? "
+            "WHERE id = ? RETURNING *",
+            (next_title, next_description, _utcnow(), package_id),
+        )
+        return rows[0] if rows else await self.get_work_package(package_id)
+
+    def _is_default_work_package(self, package: dict) -> bool:
+        title = str(package.get("title") or "")
+        return (
+            package.get("created_by") == "system"
+            and title.startswith("Default package for ")
+            and (package.get("description") in (None, "", DEFAULT_PACKAGE_DESCRIPTION))
+        )
+
+    async def get_group_work_packages(self, group_id: str) -> list[dict]:
+        """Return all work packages belonging to a group."""
+        return await self._db.execute_fetchall(
+            "SELECT * FROM work_packages WHERE group_id = ? ORDER BY created_at",
+            (group_id,),
+        )
+
+    async def get_work_package_board(self, group_id: str | None = None) -> dict:
+        """Return work packages grouped by package status with dashboard metadata."""
+        clauses: list[str] = []
+        params: list[str] = []
+        if group_id is not None:
+            clauses.append("group_id = ?")
+            params.append(group_id)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        package_rows = await self._db.execute_fetchall(
+            f"SELECT * FROM work_packages{where} ORDER BY created_at",
+            tuple(params),
+        )
+
+        package_ids = [package["id"] for package in package_rows]
+        tasks_by_package: dict[str, list[dict]] = {package_id: [] for package_id in package_ids}
+        gates_by_package: dict[str, dict] = {}
+        integration_by_package: dict[str, list[dict]] = {
+            package_id: [] for package_id in package_ids
+        }
+        if package_ids:
+            placeholders = ",".join("?" * len(package_ids))
+            task_rows = await self._db.execute_fetchall(
+                "SELECT * "
+                "FROM tasks "
+                f"WHERE work_package_id IN ({placeholders}) "
+                "ORDER BY created_at",
+                tuple(package_ids),
+            )
+            for row in task_rows:
+                tasks_by_package.setdefault(row["work_package_id"], []).append(row)
+
+            gate_rows = await self._db.execute_fetchall(
+                "SELECT * FROM review_gates "
+                "WHERE entity_type = 'work_package' "
+                f"AND entity_id IN ({placeholders})",
+                tuple(package_ids),
+            )
+            gates_by_package = {row["entity_id"]: row for row in gate_rows}
+
+            integration_rows = await self._db.execute_fetchall(
+                "SELECT * FROM merge_queue "
+                f"WHERE work_package_id IN ({placeholders}) "
+                "ORDER BY created_at",
+                tuple(package_ids),
+            )
+            for row in integration_rows:
+                integration_by_package.setdefault(row["work_package_id"], []).append(row)
+
+        columns: dict[str, list[dict]] = {status: [] for status in PACKAGE_STATUSES}
+        packages: list[dict] = []
+        now = datetime.now(timezone.utc)
+        for package in package_rows:
+            card = self._enrich_work_package_card(
+                package,
+                tasks_by_package.get(package["id"], []),
+                gates_by_package.get(package["id"]),
+                integration_by_package.get(package["id"], []),
+                now,
+            )
+            columns.setdefault(card["status"], []).append(card)
+            packages.append(card)
+        return {"columns": columns, "packages": packages}
+
+    async def get_work_package_detail(self, package_id: str) -> dict | None:
+        """Return package detail data for dashboard drilldown surfaces."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            return None
+
+        tasks = await self._db.execute_fetchall(
+            "SELECT * FROM tasks WHERE work_package_id = ? ORDER BY created_at",
+            (package_id,),
+        )
+        gate = await self._db.execute_fetchone(
+            "SELECT * FROM review_gates "
+            "WHERE entity_type = 'work_package' AND entity_id = ?",
+            (package_id,),
+        )
+        integration_rows = await self._db.execute_fetchall(
+            "SELECT * FROM merge_queue WHERE work_package_id = ? ORDER BY created_at",
+            (package_id,),
+        )
+
+        now = datetime.now(timezone.utc)
+        detail = self._enrich_work_package_card(package, tasks, gate, integration_rows, now)
+        normalized_gate = detail.get("review_gate")
+        normalized_tasks = [self._normalize_task_for_detail(task) for task in tasks]
+        task_ids = [task["id"] for task in normalized_tasks]
+        detail["tasks"] = normalized_tasks
+        detail["review_runs"] = (
+            normalized_gate.get("system_gate_runs", []) if normalized_gate else []
+        )
+        detail["revision_tasks"] = [
+            task
+            for task in normalized_tasks
+            if task.get("revision_of")
+            or task.get("review_parent_task_id")
+            or task.get("task_type") == "revision"
+        ]
+        detail["artifacts"] = self._package_artifact_summaries(normalized_tasks)
+        detail["dependencies"] = await self._package_dependencies(task_ids)
+        detail["timeline"] = self._package_timeline(
+            package,
+            normalized_tasks,
+            normalized_gate,
+        )
+        detail["recent_agent_activity"] = []
+        return detail
+
+    async def get_operations_summary(self, group_id: str | None = None) -> dict:
+        """Return command-center counts and action queues."""
+        board = await self.get_work_package_board(group_id=group_id)
+        packages = board["packages"]
+
+        def queue_item(package: dict) -> dict:
+            return {
+                "id": package["id"],
+                "title": package.get("title"),
+                "group_id": package.get("group_id"),
+                "status": package.get("status"),
+                "review_status": package.get("review_status"),
+                "risk_level": package.get("risk_level"),
+                "review_gate": package.get("review_gate"),
+                "attention_reasons": package.get("attention_reasons", []),
+                "waiting_age_seconds": package.get("waiting_age_seconds"),
+            }
+
+        review_queue = [
+            queue_item(package)
+            for package in packages
+            if package.get("status") == "review"
+            or (package.get("review_gate") or {}).get("status")
+            in {"pending", "running", "failed"}
+        ]
+        blocked_queue = [
+            queue_item(package) for package in packages if package.get("status") == "blocked"
+        ]
+        revision_queue = [
+            queue_item(package)
+            for package in packages
+            if package.get("status") == "waiting_revision"
+            or package.get("review_status") == "waiting_revision"
+        ]
+        stale_queue = [
+            queue_item(package) for package in packages if package.get("stale") is True
+        ]
+        attention_queue = [
+            queue_item(package)
+            for package in packages
+            if package.get("needs_attention") is True
+        ]
+
+        return {
+            "counts": {
+                "packages_total": len(packages),
+                "packages_active": sum(
+                    1
+                    for package in packages
+                    if package.get("status")
+                    in {"backlog", "pending", "in_progress", PACKAGE_INTEGRATING_STATUS}
+                ),
+                "packages_blocked": len(blocked_queue),
+                "packages_review": sum(
+                    1 for package in packages if package.get("status") == "review"
+                ),
+                "packages_integrating": sum(
+                    1
+                    for package in packages
+                    if package.get("status") == PACKAGE_INTEGRATING_STATUS
+                ),
+                "packages_waiting_revision": len(revision_queue),
+                "packages_attention": len(attention_queue),
+                "stale_gates": len(stale_queue),
+            },
+            "queues": {
+                "review": review_queue,
+                "blocked": blocked_queue,
+                "revision": revision_queue,
+                "stale": stale_queue,
+                "attention": attention_queue,
+            },
+            "system_agent": self._system_agent_summary(packages),
+            "recent_decisions": self._recent_package_review_decisions(packages),
+        }
+
+    def _enrich_work_package_card(
+        self,
+        package: dict,
+        tasks: list[dict],
+        gate: dict | None,
+        integration_rows: list[dict] | None,
+        now: datetime,
+    ) -> dict:
+        status_counts: dict[str, int] = {}
+        for task in tasks:
+            status = task.get("status") or "unknown"
+            status_counts[status] = status_counts.get(status, 0) + 1
+        task_counts = dict(status_counts)
+        task_counts["total"] = sum(status_counts.values())
+
+        card = dict(package)
+        normalized_gate = self._normalize_review_gate(gate, now)
+        normalized_integration = [dict(row) for row in (integration_rows or [])]
+        attention_reasons = self._package_attention_reasons(
+            card,
+            tasks,
+            normalized_gate,
+            normalized_integration,
+        )
+        card["task_counts"] = task_counts
+        card["review_gate"] = normalized_gate
+        card["integration_queue"] = normalized_integration
+        card["latest_integration"] = (
+            normalized_integration[-1] if normalized_integration else None
+        )
+        card["needs_attention"] = bool(attention_reasons)
+        card["attention_reasons"] = attention_reasons
+        card["stale"] = any(
+            reason.get("type") == "stale_gate" for reason in attention_reasons
+        )
+        card["active_gate"] = (
+            "package_review"
+            if normalized_gate and normalized_gate.get("status") == "running"
+            else None
+        )
+        card["latest_review_reason_summary"] = self._summary_text(
+            card.get("review_reason")
+            or (normalized_gate or {}).get("reason")
+            or self._latest_run_reason(normalized_gate)
+        )
+        card["waiting_age_seconds"] = self._age_seconds(
+            card.get("updated_at") or card.get("created_at"),
+            now,
+        )
+        return card
+
+    def _normalize_review_gate(self, gate: dict | None, now: datetime) -> dict | None:
+        if gate is None:
+            return None
+        normalized = dict(gate)
+        runs = self._json_list(normalized.get("system_gate_runs"))
+        age_seconds = self._age_seconds(
+            normalized.get("updated_at") or normalized.get("created_at"),
+            now,
+        )
+        status = normalized.get("status") or "pending"
+        threshold = (
+            PACKAGE_GATE_STALE_RUNNING_SECONDS
+            if status == "running"
+            else PACKAGE_GATE_STALE_PENDING_SECONDS
+        )
+        normalized["system_gate_runs"] = runs
+        normalized["latest_run"] = runs[-1] if runs else None
+        normalized["age_seconds"] = age_seconds
+        normalized["stale"] = bool(
+            status in {"pending", "running"} and age_seconds is not None
+            and age_seconds > threshold
+        )
+        return normalized
+
+    def _package_attention_reasons(
+        self,
+        package: dict,
+        tasks: list[dict],
+        gate: dict | None,
+        integration_rows: list[dict] | None = None,
+    ) -> list[dict]:
+        reasons: list[dict] = []
+        status = package.get("status")
+        review_status = package.get("review_status")
+
+        if status == "blocked":
+            reasons.append({
+                "type": "blocked",
+                "severity": "high",
+                "message": "Package is blocked by child task state.",
+            })
+        if status == "waiting_revision" or review_status == "waiting_revision":
+            reasons.append({
+                "type": "revision_needed",
+                "severity": "high",
+                "message": "System review requested revision work.",
+            })
+        if status == "review":
+            gate_status = (gate or {}).get("status") or review_status or "pending"
+            reasons.append({
+                "type": "review_gate",
+                "severity": "medium",
+                "message": f"Package review gate is {gate_status}.",
+            })
+        if status == PACKAGE_INTEGRATING_STATUS:
+            latest = (integration_rows or [])[-1] if integration_rows else {}
+            integration_status = latest.get("status") or "pending"
+            reasons.append({
+                "type": "integration_pending",
+                "severity": "medium",
+                "message": (
+                    "Approved package integration is "
+                    f"{integration_status}."
+                ),
+            })
+        for row in integration_rows or []:
+            if row.get("status") in {"conflict", "blocked", "failed", "root_refresh_blocked"}:
+                reasons.append({
+                    "type": "integration_blocked",
+                    "severity": "high",
+                    "message": (
+                        f"Integration {row.get('id')} is {row.get('status')}: "
+                        f"{self._summary_text(row.get('last_error'))}"
+                    ),
+                })
+                break
+        if gate and gate.get("status") == "failed":
+            reasons.append({
+                "type": "review_failed",
+                "severity": "high",
+                "message": "System review attempt failed and needs retry.",
+            })
+        if gate and gate.get("stale"):
+            reasons.append({
+                "type": "stale_gate",
+                "severity": "high",
+                "message": "System review gate has been waiting too long.",
+            })
+
+        failed_statuses = {"failed", "rejected", "cancelled"}
+        failed_tasks = [task for task in tasks if task.get("status") in failed_statuses]
+        if failed_tasks:
+            reasons.append({
+                "type": "failed_child_task",
+                "severity": "high",
+                "message": f"{len(failed_tasks)} child task(s) are terminal failures.",
+            })
+        return reasons
+
+    def _normalize_task_for_detail(self, task: dict) -> dict:
+        normalized = dict(task)
+        normalized["revision_task_ids"] = self._json_list(
+            normalized.get("revision_task_ids")
+        )
+        normalized["system_gate_runs"] = self._json_list(
+            normalized.get("system_gate_runs")
+        )
+        normalized["completion_checks"] = self._json_dict(
+            normalized.get("completion_checks")
+        )
+        return normalized
+
+    def _json_dict(self, value) -> dict:
+        if value in (None, ""):
+            return {}
+        if isinstance(value, dict):
+            return value
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _parse_timestamp(self, value) -> datetime | None:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            raw = str(value)
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(raw)
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _age_seconds(self, value, now: datetime) -> int | None:
+        parsed = self._parse_timestamp(value)
+        if parsed is None:
+            return None
+        return max(0, int((now - parsed).total_seconds()))
+
+    def _summary_text(self, value, limit: int = 180) -> str:
+        if not value:
+            return ""
+        text = " ".join(str(value).split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip() + "…"
+
+    def _latest_run_reason(self, gate: dict | None) -> str:
+        if not gate:
+            return ""
+        latest = gate.get("latest_run") or {}
+        return str(latest.get("reason") or "")
+
+    def _package_artifact_summaries(self, tasks: list[dict]) -> list[dict]:
+        artifacts: list[dict] = []
+        for task in tasks:
+            artifacts.append({
+                "task_id": task.get("id"),
+                "title": task.get("title"),
+                "status": task.get("status"),
+                "branch_name": task.get("branch_name"),
+                "merge_status": task.get("merge_status"),
+                "has_output": bool(task.get("output_text")),
+                "completion_checks": task.get("completion_checks") or {},
+            })
+        return artifacts
+
+    async def _package_dependencies(self, task_ids: list[str]) -> list[dict]:
+        if not task_ids:
+            return []
+        placeholders = ",".join("?" * len(task_ids))
+        rows = await self._db.execute_fetchall(
+            "SELECT task_id, blocked_by, resolved, resolved_at "
+            "FROM task_dependencies "
+            f"WHERE task_id IN ({placeholders}) "
+            "ORDER BY task_id, blocked_by",
+            tuple(task_ids),
+        )
+        return [dict(row) for row in rows]
+
+    def _package_timeline(
+        self,
+        package: dict,
+        tasks: list[dict],
+        gate: dict | None,
+    ) -> list[dict]:
+        events: list[dict] = [
+            {
+                "type": "package.created",
+                "at": package.get("created_at"),
+                "label": "Package created",
+            }
+        ]
+        if package.get("updated_at") and package.get("updated_at") != package.get("created_at"):
+            events.append({
+                "type": "package.updated",
+                "at": package.get("updated_at"),
+                "label": f"Package moved to {package.get('status')}",
+            })
+        if gate:
+            events.append({
+                "type": "review_gate.status",
+                "at": gate.get("updated_at") or gate.get("created_at"),
+                "label": f"Review gate {gate.get('status')}",
+            })
+            for run in gate.get("system_gate_runs", []):
+                events.append({
+                    "type": f"review_gate.{run.get('outcome', 'run')}",
+                    "at": run.get("finished_at") or run.get("started_at"),
+                    "label": str(run.get("outcome") or "Review gate run"),
+                })
+        for task in tasks:
+            events.append({
+                "type": "task.created",
+                "at": task.get("created_at"),
+                "task_id": task.get("id"),
+                "label": f"{task.get('id')} created",
+            })
+            events.append({
+                "type": "task.status",
+                "at": task.get("completed_at") or task.get("started_at") or task.get("created_at"),
+                "task_id": task.get("id"),
+                "label": f"{task.get('id')} is {task.get('status')}",
+            })
+        return sorted(events, key=lambda event: event.get("at") or "")
+
+    def _system_agent_summary(self, packages: list[dict]) -> dict:
+        for package in packages:
+            gate = package.get("review_gate") or {}
+            if gate.get("status") == "running":
+                return {
+                    "status": "working",
+                    "current_gate": "package_review",
+                    "current_entity_id": package.get("id"),
+                    "current_task": None,
+                    "status_detail": "reviewing package",
+                    "label": f"Reviewing {package.get('id')}",
+                }
+        return {
+            "status": "idle",
+            "current_gate": None,
+            "current_entity_id": None,
+            "current_task": None,
+            "status_detail": "idle",
+            "label": "System agent idle",
+        }
+
+    def _recent_package_review_decisions(self, packages: list[dict]) -> list[dict]:
+        decisions: list[dict] = []
+        for package in packages:
+            gate = package.get("review_gate") or {}
+            for run in gate.get("system_gate_runs", []):
+                at = run.get("finished_at") or run.get("started_at")
+                decisions.append({
+                    "package_id": package.get("id"),
+                    "title": package.get("title"),
+                    "outcome": run.get("outcome"),
+                    "reason": run.get("reason"),
+                    "at": at,
+                })
+        return sorted(
+            decisions,
+            key=lambda decision: decision.get("at") or "",
+            reverse=True,
+        )[:8]
+
+    async def ensure_review_gate(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        group_id: str,
+        max_rounds: int | None = None,
+    ) -> dict:
+        """Return or create the review gate for an entity."""
+        existing = await self._db.execute_fetchone(
+            "SELECT * FROM review_gates WHERE entity_type = ? AND entity_id = ?",
+            (entity_type, entity_id),
+        )
+        if existing is not None:
+            return existing
+
+        await self._db.register_prefix("RG")
+        gate_id = await self._db.generate_task_id("RG")
+        now = _utcnow()
+        await self._db.execute(
+            "INSERT INTO review_gates "
+            "(id, entity_type, entity_id, group_id, status, review_round, "
+            "max_review_rounds, system_gate_runs, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'pending', 0, ?, '[]', ?, ?)",
+            (
+                gate_id,
+                entity_type,
+                entity_id,
+                group_id,
+                max_rounds or DEFAULT_MAX_REVIEW_ROUNDS,
+                now,
+                now,
+            ),
+        )
+        gate = await self._db.execute_fetchone(
+            "SELECT * FROM review_gates WHERE id = ?", (gate_id,)
+        )
+        if gate is None:
+            raise ValueError(f"Review gate not found after create: {gate_id}")
+        return gate
+
+    async def reconcile_work_package_status(self, package_id: str) -> dict | None:
+        """Recompute a work package status from its child task statuses."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            return None
+        if package["status"] in ("review", "waiting_revision", PACKAGE_INTEGRATING_STATUS):
+            return package
+
+        tasks = await self._db.execute_fetchall(
+            "SELECT id, status, completion_checks FROM tasks "
+            "WHERE work_package_id = ? ORDER BY created_at",
+            (package_id,),
+        )
+
+        next_status = package["status"]
+        next_review_status = package.get("review_status")
+        task_statuses = [task["status"] for task in tasks]
+
+        if not tasks:
+            next_status = "pending"
+            next_review_status = None
+        elif all(status == "rejected" for status in task_statuses):
+            next_status = "rejected"
+            next_review_status = "rejected"
+        elif any(status in ("failed", "rejected", "cancelled") for status in task_statuses):
+            next_status = "blocked"
+            next_review_status = None
+        elif "blocked" in task_statuses:
+            next_status = "blocked"
+            next_review_status = None
+        elif "in_progress" in task_statuses:
+            next_status = "in_progress"
+            next_review_status = None
+        elif any(status in ("backlog", "pending") for status in task_statuses):
+            next_status = "pending"
+            next_review_status = None
+        elif all(status == "completed" for status in task_statuses):
+            if package.get("review_scope") == NO_REVIEW_SCOPE:
+                next_status = "completed"
+                next_review_status = "skipped"
+            else:
+                next_status = "review"
+                next_review_status = "pending"
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET status = ?, review_status = ?, updated_at = ? "
+            "WHERE id = ? RETURNING *",
+            (next_status, next_review_status, now, package_id),
+        )
+        updated = rows[0] if rows else await self.get_work_package(package_id)
+        if updated and updated["status"] == "review":
+            await self.ensure_review_gate(
+                entity_type="work_package",
+                entity_id=package_id,
+                group_id=updated["group_id"],
+                max_rounds=int(
+                    updated.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+                ),
+            )
+        return updated
+
+    async def reconcile_task_package(self, task_id: str) -> None:
+        """Reconcile the package containing a task, if any."""
+        task = await self._db.execute_fetchone(
+            "SELECT work_package_id FROM tasks WHERE id = ?", (task_id,)
+        )
+        if task and task.get("work_package_id"):
+            await self.reconcile_work_package_status(task["work_package_id"])
+
+    async def ensure_default_work_package(self, group_id: str) -> dict:
+        """Return or create the group's default work package."""
+        group = await self._db.execute_fetchone(
+            "SELECT * FROM groups WHERE id = ?", (group_id,)
+        )
+        if group is None:
+            raise ValueError(f"Group not found: {group_id}")
+
+        default_title = f"Default package for {group['title']}"
+        default_description = DEFAULT_PACKAGE_DESCRIPTION
+        package = await self._db.execute_fetchone(
+            "SELECT * FROM work_packages "
+            "WHERE group_id = ? AND milestone_id IS NULL "
+            "AND created_by = 'system' AND title = ? AND description = ? "
+            "ORDER BY created_at LIMIT 1",
+            (group_id, default_title, default_description),
+        )
+        if package is not None:
+            return package
+
+        return await self.create_work_package(
+            group_id=group_id,
+            title=default_title,
+            description=default_description,
+            created_by="system",
+            risk_level="medium",
+            review_scope=DEFAULT_PACKAGE_REVIEW_SCOPE,
+        )
+
+    # ------------------------------------------------------------------
     # Tasks
     # ------------------------------------------------------------------
 
@@ -164,6 +960,11 @@ class TaskBoard:
         requires_fanout: bool | None = None,
         branch_name: str | None = None,
         parent_branch: str | None = None,
+        work_package_id: str | None = None,
+        work_package_title: str | None = None,
+        work_package_description: str | None = None,
+        milestone_id: str | None = None,
+        review_scope: str | None = None,
     ) -> dict:
         """Create a new task with an auto-generated ID.
 
@@ -182,6 +983,26 @@ class TaskBoard:
         the integrator role will want to pass ``parent_branch`` set
         to ``integration/<group_id>`` once that layer exists.
         """
+        if work_package_id is None:
+            package = await self.ensure_default_work_package(group_id)
+            work_package_id = package["id"]
+            milestone_id = milestone_id or package.get("milestone_id")
+        else:
+            package = await self.get_work_package(work_package_id)
+            if package is None:
+                raise ValueError(f"Work package not found: {work_package_id}")
+            if package["group_id"] != group_id:
+                raise ValueError(
+                    f"Work package {work_package_id} does not belong to group {group_id}"
+                )
+            if work_package_title or work_package_description:
+                package = await self.update_work_package_metadata(
+                    work_package_id,
+                    title=work_package_title,
+                    description=work_package_description,
+                ) or package
+            milestone_id = milestone_id or package.get("milestone_id")
+
         prefix = self._role_to_prefix.get(assigned_to, assigned_to.upper()[:2])
         # Ensure the prefix is registered.
         await self._db.register_prefix(prefix)
@@ -208,7 +1029,7 @@ class TaskBoard:
                 "SELECT branch_name FROM tasks WHERE id = ?",
                 (revision_of,),
             )
-            if orig and orig.get("branch_name"):
+            if orig and orig.get("branch_name") and self._branch_ref_exists(orig["branch_name"]):
                 parent_branch = orig["branch_name"]
         if parent_branch is None:
             parent_branch = "main"
@@ -219,8 +1040,8 @@ class TaskBoard:
             " priority, assigned_to, status, created_by, created_at, "
             " revision_of, requires_fanout, branch_name, parent_branch, "
             " intended_status, backlog_intake_status, max_review_rounds, "
-            " review_parent_task_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " review_parent_task_id, work_package_id, milestone_id, review_scope) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 group_id,
@@ -241,6 +1062,9 @@ class TaskBoard:
                 "pending",
                 DEFAULT_MAX_REVIEW_ROUNDS,
                 review_parent_task_id,
+                work_package_id,
+                milestone_id,
+                review_scope,
             ),
         )
 
@@ -267,6 +1091,8 @@ class TaskBoard:
         task = {
             "id": task_id,
             "group_id": group_id,
+            "work_package_id": work_package_id,
+            "milestone_id": milestone_id,
             "parent_id": parent_id,
             "title": title,
             "description": description,
@@ -288,6 +1114,7 @@ class TaskBoard:
             "backlog_intake_status": "pending",
             "backlog_intake_processed_at": None,
             "review_status": None,
+            "review_scope": review_scope,
             "review_round": 0,
             "max_review_rounds": DEFAULT_MAX_REVIEW_ROUNDS,
             "review_parent_task_id": review_parent_task_id,
@@ -301,6 +1128,8 @@ class TaskBoard:
             fresh = reconciled or await self.get_task(task_id)
             if fresh:
                 task.update(fresh)
+        if task.get("work_package_id"):
+            await self.reconcile_work_package_status(task["work_package_id"])
         return self._normalize_task_return(task)
 
     def _normalize_task_return(self, task: dict) -> dict:
@@ -318,6 +1147,11 @@ class TaskBoard:
         except (TypeError, json.JSONDecodeError):
             return []
         return parsed if isinstance(parsed, list) else []
+
+    def _branch_ref_exists(self, branch_name: str) -> bool:
+        if self._package_repo_dir is None:
+            return True
+        return self._git("rev-parse", "--verify", branch_name) == 0
 
     async def _has_unresolved_dependencies(self, task_id: str) -> bool:
         row = await self._db.execute_fetchone(
@@ -468,6 +1302,8 @@ class TaskBoard:
                     "group_id": updated["group_id"],
                 },
             )
+        if updated and updated.get("work_package_id"):
+            await self.reconcile_work_package_status(updated["work_package_id"])
         return updated
 
     async def mark_backlog_intake_failed(self, task_id: str, error: str) -> dict:
@@ -572,6 +1408,8 @@ class TaskBoard:
         if not rows:
             return None
         result = rows[0]
+        if result.get("work_package_id"):
+            await self.reconcile_work_package_status(result["work_package_id"])
         logger.info("Task %s claimed by %s", result["id"], instance_id)
         return result
 
@@ -594,6 +1432,8 @@ class TaskBoard:
                 task_id,
                 task["status"],
             )
+            if task["status"] in ("completed", REVIEW_STATUS):
+                await self.reconcile_task_package(task_id)
             return task
 
         now = _utcnow()
@@ -613,10 +1453,15 @@ class TaskBoard:
                 task_id,
                 existing["status"],
             )
+            if existing["status"] in ("completed", REVIEW_STATUS):
+                await self.reconcile_task_package(task_id)
             return existing
         if target_status == "completed":
+            await self.reconcile_task_package(task_id)
             await self._resolve_dependencies(task_id)
             await self._check_group_completion(task_id)
+        else:
+            await self.reconcile_task_package(task_id)
         logger.info("Task %s completed", task_id)
         return rows[0]
 
@@ -653,6 +1498,7 @@ class TaskBoard:
                     "WHERE id = ? RETURNING *",
                     (next_output, task_id),
                 )
+                await self.reconcile_task_package(task_id)
                 return completed_rows[0] if completed_rows else existing
             logger.warning(
                 "complete_task_with_output(%s) skipped: task is in status '%s', "
@@ -662,8 +1508,11 @@ class TaskBoard:
             )
             return existing
         if target_status == "completed":
+            await self.reconcile_task_package(task_id)
             await self._resolve_dependencies(task_id)
             await self._check_group_completion(task_id)
+        else:
+            await self.reconcile_task_package(task_id)
         return rows[0]
 
     async def approve_review_gate(self, task_id: str, *, reason: str) -> dict:
@@ -703,6 +1552,7 @@ class TaskBoard:
                 "finished_at": now,
             },
         )
+        await self.reconcile_task_package(task_id)
         await self._resolve_dependencies(task_id)
         await self._check_group_completion(task_id)
         fresh = await self.get_task(task_id)
@@ -746,6 +1596,7 @@ class TaskBoard:
             },
         )
         await self._cascade_failure(task_id)
+        await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         fresh = await self.get_task(task_id)
         if fresh is None:
@@ -925,7 +1776,226 @@ class TaskBoard:
             if fresh is None:
                 raise ValueError(f"Task not found: {task_id}")
             return fresh
+        await self.reconcile_task_package(task_id)
         return rows[0]
+
+    async def _queue_work_package_integration(self, package_id: str) -> list[dict]:
+        if self._package_merge_queue is None:
+            return []
+        rows: list[dict] = []
+        for task in await self._package_integration_tasks(package_id):
+            source_branch = task.get("branch_name")
+            if not source_branch:
+                continue
+            target_branch = self._package_target_branch(task)
+            if source_branch == target_branch:
+                continue
+            if await self._branch_is_integrated(
+                source_branch,
+                target_branch,
+                task_id=task["id"],
+            ):
+                continue
+            rows.append(
+                await self._package_merge_queue.enqueue_package_integration(
+                    group_id=task["group_id"],
+                    work_package_id=package_id,
+                    parent_task_id=task["id"],
+                    source_branch=source_branch,
+                    target_branch=target_branch,
+                )
+            )
+        return rows
+
+    async def _package_integration_ready(self, package_id: str) -> bool:
+        tasks = await self._package_integration_tasks(package_id)
+        if not tasks:
+            return True
+
+        task_ids = [task["id"] for task in tasks]
+        placeholders = ",".join("?" for _ in task_ids)
+        open_statuses = ",".join("?" for _ in MERGE_QUEUE_OPEN_STATUSES)
+        open_row = await self._db.execute_fetchone(
+            "SELECT 1 FROM merge_queue "
+            f"WHERE parent_task_id IN ({placeholders}) "
+            f"AND status IN ({open_statuses}) LIMIT 1",
+            (*task_ids, *MERGE_QUEUE_OPEN_STATUSES),
+        )
+        if open_row is not None:
+            return False
+
+        for task in tasks:
+            source_branch = task.get("branch_name")
+            if not source_branch:
+                continue
+            target_branch = self._package_target_branch(task)
+            if source_branch == target_branch:
+                continue
+            if not await self._branch_is_integrated(
+                source_branch,
+                target_branch,
+                task_id=task["id"],
+            ):
+                return False
+        return True
+
+    async def _package_integration_tasks(self, package_id: str) -> list[dict]:
+        if self._package_repo_dir is None:
+            return []
+        task_type_placeholders = ",".join("?" for _ in PACKAGE_INTEGRATION_TASK_TYPES)
+        return await self._db.execute_fetchall(
+            "SELECT id, group_id, task_type, status, branch_name, parent_branch "
+            "FROM tasks WHERE work_package_id = ? AND status = 'completed' "
+            "AND branch_name IS NOT NULL AND branch_name != '' "
+            f"AND task_type IN ({task_type_placeholders}) "
+            "ORDER BY created_at",
+            (package_id, *sorted(PACKAGE_INTEGRATION_TASK_TYPES)),
+        )
+
+    def _package_target_branch(self, task: dict) -> str:
+        parent_branch = task.get("parent_branch") or "main"
+        if parent_branch.startswith(("feat/", "fix/", "bugfix/")):
+            return "main"
+        return parent_branch
+
+    async def _branch_is_integrated(
+        self,
+        source_branch: str,
+        target_branch: str,
+        *,
+        task_id: str,
+    ) -> bool:
+        if self._package_repo_dir is None:
+            return True
+
+        if self._git("merge-base", "--is-ancestor", source_branch, target_branch) == 0:
+            return True
+
+        if self._git("rev-parse", "--verify", source_branch) == 0:
+            return False
+
+        success_statuses = ",".join("?" for _ in MERGE_QUEUE_SUCCESS_STATUSES)
+        row = await self._db.execute_fetchone(
+            "SELECT 1 FROM merge_queue "
+            "WHERE parent_task_id = ? AND source_branch = ? AND target_branch = ? "
+            f"AND status IN ({success_statuses}) LIMIT 1",
+            (task_id, source_branch, target_branch, *MERGE_QUEUE_SUCCESS_STATUSES),
+        )
+        return row is not None
+
+    def _git(self, *args: str) -> int:
+        if self._package_repo_dir is None:
+            return 1
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=self._package_repo_dir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return proc.returncode
+
+    async def approve_work_package_review(
+        self, package_id: str, *, reason: str
+    ) -> dict:
+        """Approve a work package waiting at the system review gate."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            raise ValueError(f"Work package not found: {package_id}")
+        if package["status"] != "review":
+            return package
+
+        await self._queue_work_package_integration(package_id)
+        integration_ready = await self._package_integration_ready(package_id)
+        next_status = "completed" if integration_ready else PACKAGE_INTEGRATING_STATUS
+        now = _utcnow()
+        completed_at = now if integration_ready else None
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET status = ?, "
+            "review_status = 'approved', review_reason = ?, completed_at = ?, "
+            "updated_at = ? WHERE id = ? AND status = 'review' RETURNING *",
+            (next_status, reason, completed_at, now, package_id),
+        )
+        if not rows:
+            fresh = await self.get_work_package(package_id)
+            if fresh is None:
+                raise ValueError(f"Work package not found: {package_id}")
+            return fresh
+
+        gate = await self._db.execute_fetchone(
+            "SELECT id FROM review_gates "
+            "WHERE entity_type = 'work_package' AND entity_id = ?",
+            (package_id,),
+        )
+        if gate is not None:
+            await self._db.execute(
+                "UPDATE review_gates SET status = 'completed', outcome = 'approved', "
+                "reason = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+                (reason, now, now, gate["id"]),
+            )
+            await self._append_review_gate_run(
+                gate["id"],
+                {
+                    "gate": "package_review",
+                    "outcome": "approved",
+                    "reason": reason,
+                    "finished_at": now,
+                },
+            )
+        await self._check_group_completion_for_group(rows[0]["group_id"])
+        fresh = await self.get_work_package(package_id)
+        if fresh is None:
+            raise ValueError(f"Work package not found after review approval: {package_id}")
+        return fresh
+
+    async def reject_work_package_review(
+        self, package_id: str, *, reason: str
+    ) -> dict:
+        """Reject a work package waiting at the system review gate."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            raise ValueError(f"Work package not found: {package_id}")
+        if package["status"] not in ("review", "waiting_revision"):
+            return package
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET status = 'rejected', "
+            "review_status = 'rejected', review_reason = ?, updated_at = ? "
+            "WHERE id = ? AND status IN ('review', 'waiting_revision') RETURNING *",
+            (reason, now, package_id),
+        )
+        if not rows:
+            fresh = await self.get_work_package(package_id)
+            if fresh is None:
+                raise ValueError(f"Work package not found: {package_id}")
+            return fresh
+
+        gate = await self._db.execute_fetchone(
+            "SELECT id FROM review_gates "
+            "WHERE entity_type = 'work_package' AND entity_id = ?",
+            (package_id,),
+        )
+        if gate is not None:
+            await self._db.execute(
+                "UPDATE review_gates SET status = 'completed', outcome = 'rejected', "
+                "reason = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+                (reason, now, now, gate["id"]),
+            )
+            await self._append_review_gate_run(
+                gate["id"],
+                {
+                    "gate": "package_review",
+                    "outcome": "rejected",
+                    "reason": reason,
+                    "finished_at": now,
+                },
+            )
+        await self._check_group_completion_for_group(rows[0]["group_id"])
+        fresh = await self.get_work_package(package_id)
+        if fresh is None:
+            raise ValueError(f"Work package not found after review rejection: {package_id}")
+        return fresh
 
     async def _append_system_gate_run(self, task_id: str, entry: dict) -> None:
         task = await self.get_task(task_id)
@@ -938,6 +2008,19 @@ class TaskBoard:
             (json.dumps(runs), task_id),
         )
 
+    async def _append_review_gate_run(self, gate_id: str, run: dict) -> None:
+        gate = await self._db.execute_fetchone(
+            "SELECT system_gate_runs FROM review_gates WHERE id = ?", (gate_id,)
+        )
+        if gate is None:
+            raise ValueError(f"Review gate not found: {gate_id}")
+        runs = self._json_list(gate.get("system_gate_runs"))
+        runs.append(run)
+        await self._db.execute(
+            "UPDATE review_gates SET system_gate_runs = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(runs), _utcnow(), gate_id),
+        )
+
     async def reject_task(self, task_id: str, reason: str) -> dict:
         """Mark a task as rejected with a reason."""
         rows = await self._db.execute_returning(
@@ -948,19 +2031,20 @@ class TaskBoard:
         if not rows:
             raise ValueError(f"Task not found: {task_id}")
         await self._cascade_failure(task_id)
+        await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         return rows[0]
 
-    async def fail_task(self, task_id: str) -> dict:
+    async def fail_task(self, task_id: str, reason: str | None = None) -> dict:
         """Mark a task as failed and cascade failure to blocked dependents."""
         rows = await self._db.execute_returning(
-            "UPDATE tasks SET status = 'failed' "
+            "UPDATE tasks SET status = 'failed', rejection_reason = ? "
             "WHERE id = ? AND status = 'in_progress' RETURNING *",
-            (task_id,),
+            (reason, task_id),
         )
         if not rows:
             existing = await self._db.execute_fetchone(
-                "SELECT id, status FROM tasks WHERE id = ?", (task_id,)
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
             )
             if existing is None:
                 raise ValueError(f"Task not found: {task_id}")
@@ -970,6 +2054,7 @@ class TaskBoard:
                 task_id,
                 existing["status"],
             )
+            await self.reconcile_task_package(task_id)
             return existing
         await self._cascade_failure(task_id)
         # audit 03 F#16: previously this only cancelled 'pending' children,
@@ -981,6 +2066,7 @@ class TaskBoard:
             "WHERE parent_id = ? AND status IN ('backlog', 'pending', 'blocked')",
             (task_id,),
         )
+        await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         logger.info("Task %s failed", task_id)
         return rows[0]
@@ -1106,6 +2192,11 @@ class TaskBoard:
 
         group_id = task["group_id"]
 
+        await self._check_group_completion_for_group(group_id)
+
+    async def _check_group_completion_for_group(self, group_id: str) -> None:
+        """Check if all tasks and packages in a group are terminal."""
+
         # Check whether any task in this group is NOT in a terminal state.
         non_terminal = await self._db.execute_fetchone(
             "SELECT 1 FROM tasks WHERE group_id = ? "
@@ -1113,6 +2204,16 @@ class TaskBoard:
             (group_id,),
         )
         if non_terminal:
+            return
+
+        await self._finalize_integrated_work_packages_for_group(group_id)
+
+        open_package = await self._db.execute_fetchone(
+            "SELECT 1 FROM work_packages WHERE group_id = ? "
+            "AND status NOT IN ('completed', 'rejected') LIMIT 1",
+            (group_id,),
+        )
+        if open_package:
             return
 
         # Durable merge queue gate. A task can be terminal while its
@@ -1148,6 +2249,21 @@ class TaskBoard:
             (now, group_id),
         )
 
+    async def _finalize_integrated_work_packages_for_group(self, group_id: str) -> None:
+        packages = await self._db.execute_fetchall(
+            "SELECT id FROM work_packages WHERE group_id = ? AND status = ?",
+            (group_id, PACKAGE_INTEGRATING_STATUS),
+        )
+        for package in packages:
+            if not await self._package_integration_ready(package["id"]):
+                continue
+            now = _utcnow()
+            await self._db.execute(
+                "UPDATE work_packages SET status = 'completed', completed_at = ?, "
+                "updated_at = ? WHERE id = ? AND status = ?",
+                (now, now, package["id"], PACKAGE_INTEGRATING_STATUS),
+            )
+
     async def _maybe_spawn_goal_verification(self, group_id: str) -> bool:
         """Create a PM ``goal_verification`` task if the conditions are met.
 
@@ -1155,6 +2271,16 @@ class TaskBoard:
         as still active). Returns False when skipped — no verification needed
         or already performed.
         """
+        # Package-backed groups are verified by Work Package review gates.
+        # Keep the older PM goal-verification fallback only for legacy groups
+        # that do not have package records.
+        has_package = await self._db.execute_fetchone(
+            "SELECT 1 FROM work_packages WHERE group_id = ? LIMIT 1",
+            (group_id,),
+        )
+        if has_package:
+            return False
+
         # Dedup: never spawn more than one goal_verification per group.
         already = await self._db.execute_fetchone(
             "SELECT id FROM tasks WHERE group_id = ? "
@@ -1253,16 +2379,18 @@ class TaskBoard:
             # Wake any idle agent for this role so it doesn't wait
             # out the poll_interval before picking up work that is
             # now claimable.
-            if transitioned and self._event_bus is not None:
+            if transitioned:
                 task = transitioned[0]
-                await self._event_bus.emit(
-                    "task.available",
-                    {
-                        "task_id": task["id"],
-                        "role": task["assigned_to"],
-                        "group_id": task["group_id"],
-                    },
-                )
+                await self.reconcile_task_package(task["id"])
+                if self._event_bus is not None:
+                    await self._event_bus.emit(
+                        "task.available",
+                        {
+                            "task_id": task["id"],
+                            "role": task["assigned_to"],
+                            "group_id": task["group_id"],
+                        },
+                    )
 
     # ------------------------------------------------------------------
     # Board view
@@ -1601,6 +2729,7 @@ class TaskBoard:
         if not rows:
             raise ValueError(f"Task not found: {task_id}")
         await self._cascade_failure(task_id)
+        await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         return rows[0]
 

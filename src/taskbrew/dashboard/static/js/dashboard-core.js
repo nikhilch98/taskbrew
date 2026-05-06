@@ -12,21 +12,46 @@ const ROLE_COLORS = {
     coder:      { bg: 'rgba(245,158,11,0.15)',  border: '#f59e0b', text: '#fbbf24' },
     tester:     { bg: 'rgba(16,185,129,0.15)',  border: '#10b981', text: '#34d399' },
     reviewer:   { bg: 'rgba(236,72,153,0.15)',  border: '#ec4899', text: '#f472b6' },
+    system:     { bg: 'rgba(6,182,212,0.15)',   border: '#06b6d4', text: '#67e8f9' },
 };
 
 const ROLE_EMOJI = {
     pm: '\uD83D\uDCCB', researcher: '\uD83D\uDD0D', architect: '\uD83C\uDFD7\uFE0F',
-    coder: '\uD83D\uDCBB', tester: '\uD83E\uDDEA', reviewer: '\uD83D\uDC41\uFE0F'
+    coder: '\uD83D\uDCBB', tester: '\uD83E\uDDEA', reviewer: '\uD83D\uDC41\uFE0F',
+    system: '\u2699\uFE0F'
 };
 
 const ROLE_TITLE = {
     pm: 'Project Manager', researcher: 'Researcher', architect: 'Architect',
-    coder: 'Coder', tester: 'Tester', reviewer: 'Code Reviewer'
+    coder: 'Coder', tester: 'Tester', reviewer: 'Code Reviewer', system: 'System AI'
 };
 
 const STATUS_ICONS = {
     backlog: 'B', blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1',
-    review: 'R', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5'
+    review: 'R', integrating: '\u21C4', completed: '\u2705',
+    rejected: '\u274C', failed: '\uD83D\uDCA5'
+};
+
+const BOARD_STATUSES = [
+    'backlog', 'pending', 'in_progress', 'review', 'integrating',
+    'blocked', 'completed', 'rejected', 'failed'
+];
+
+const BOARD_COLUMNS = {
+    backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
+    pending:     { el: 'tasksPending',    count: 'countPending' },
+    in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
+    review:      { el: 'tasksReview',     count: 'countReview' },
+    integrating: { el: 'tasksIntegrating', count: 'countIntegrating' },
+    blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
+    completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
+    rejected:    { el: 'tasksRejected',   count: 'countRejected' },
+    failed:      { el: 'tasksFailed',     count: 'countFailed' },
+};
+
+const PACKAGE_STATUS_COLUMN = {
+    waiting_revision: 'review',
+    cancelled: 'rejected',
 };
 
 const MAX_LOG_ENTRIES = 200;
@@ -46,6 +71,12 @@ let listSortAsc = true;
 let batchMode = false;
 let selectedTasks = new Set();
 let notifications = [];
+let currentBoardMode = 'packages';
+let lastTaskBoardData = null;
+let lastPackageBoardData = null;
+let lastOperationsSummary = null;
+let openPackageId = null;
+let currentPackageDrawerTab = 'tasks';
 
 // ================================================================
 // Toast Notifications
@@ -379,6 +410,9 @@ function applyFilters() {
     if (assignee) currentFilters.assigned_to = assignee;
     if (status) currentFilters.status = status;
     if (priority) currentFilters.priority = priority;
+    if ((assignee || priority) && currentBoardMode === 'packages') {
+        currentBoardMode = 'tasks';
+    }
 
     if (currentView === 'graph') {
         renderGraphView();
@@ -435,11 +469,15 @@ async function refreshBoard() {
         const params = new URLSearchParams(currentFilters);
         const resp = await fetch('/api/board?' + params.toString());
         const data = await resp.json();
+        const packageBoard = await loadPackageBoard();
+        const operationsSummary = await loadOperationsSummary();
+        lastTaskBoardData = data;
+        lastPackageBoardData = packageBoard;
+        lastOperationsSummary = operationsSummary;
 
         // Flatten all tasks for list view and stats
         allTasks = [];
-        const statuses = ['backlog', 'pending', 'in_progress', 'review', 'blocked', 'completed', 'rejected', 'failed'];
-        for (const status of statuses) {
+        for (const status of BOARD_STATUSES) {
             const tasks = data[status] || [];
             for (const t of tasks) {
                 t._status = status;
@@ -452,16 +490,82 @@ async function refreshBoard() {
         const activeCount = (data.pending || []).length + (data.in_progress || []).length;
         document.getElementById('statActive').textContent = activeCount;
         document.getElementById('statBlocked').textContent = blockedCount;
+        renderPackageCommandCenter(operationsSummary);
 
         // Render the appropriate view
         if (currentView === 'board') {
-            renderBoardView(data);
+            if (shouldRenderPackageBoard(packageBoard)) {
+                renderPackageBoard(packageBoard);
+            } else {
+                renderBoardView(data);
+            }
         } else if (currentView === 'list') {
             renderListView();
         }
+        refreshOpenPackageDrawer();
+        handlePackageHashRoute();
     } catch (err) {
         showToast('Failed to refresh board: ' + err.message);
     }
+}
+
+async function loadPackageBoard() {
+    if (currentBoardMode !== 'packages') {
+        return null;
+    }
+    if (batchMode || currentFilters.assigned_to || currentFilters.priority) {
+        return null;
+    }
+    try {
+        const params = new URLSearchParams();
+        if (currentFilters.group_id) {
+            params.set('group_id', currentFilters.group_id);
+        }
+        const query = params.toString();
+        const resp = await fetch('/api/work-packages/board' + (query ? '?' + query : ''));
+        if (!resp.ok) {
+            return null;
+        }
+        return await resp.json();
+    } catch (e) {
+        return null;
+    }
+}
+
+async function loadOperationsSummary() {
+    try {
+        const params = new URLSearchParams();
+        if (currentFilters.group_id) {
+            params.set('group_id', currentFilters.group_id);
+        }
+        const query = params.toString();
+        const resp = await fetch('/api/operations/summary' + (query ? '?' + query : ''));
+        if (!resp.ok) {
+            return null;
+        }
+        return await resp.json();
+    } catch (e) {
+        return null;
+    }
+}
+
+async function loadPackageDetail(packageId) {
+    const resp = await fetch('/api/work-packages/' + encodeURIComponent(packageId));
+    if (!resp.ok) {
+        throw new Error('HTTP ' + resp.status);
+    }
+    return await resp.json();
+}
+
+function shouldRenderPackageBoard(packageBoard) {
+    if (batchMode) {
+        return false;
+    }
+    return Boolean(
+        currentBoardMode === 'packages' &&
+        packageBoard &&
+        Array.isArray(packageBoard.packages)
+    );
 }
 
 async function refreshGroups() {
@@ -546,19 +650,12 @@ async function refreshFilters() {
 // Board View Rendering
 // ================================================================
 function renderBoardView(data) {
-    const columns = {
-        backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
-        pending:     { el: 'tasksPending',    count: 'countPending' },
-        in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
-        review:      { el: 'tasksReview',     count: 'countReview' },
-        blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
-        completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
-        rejected:    { el: 'tasksRejected',   count: 'countRejected' },
-        failed:      { el: 'tasksFailed',     count: 'countFailed' },
-    };
-
-    for (const [status, cfg] of Object.entries(columns)) {
-        const tasks = data[status] || [];
+    currentBoardMode = 'tasks';
+    updateBoardModeControls();
+    for (const [status, cfg] of Object.entries(BOARD_COLUMNS)) {
+        const selectedStatus = currentFilters.status || '';
+        setBoardColumnVisible(status, !selectedStatus || selectedStatus === status);
+        const tasks = selectedStatus && selectedStatus !== status ? [] : (data[status] || []);
         const container = document.getElementById(cfg.el);
         const countEl = document.getElementById(cfg.count);
 
@@ -575,6 +672,461 @@ function renderBoardView(data) {
             container.appendChild(createTaskCard(task, status));
         }
     }
+}
+
+function renderPackageBoard(data) {
+    currentBoardMode = 'packages';
+    updateBoardModeControls();
+    for (const [status, cfg] of Object.entries(BOARD_COLUMNS)) {
+        const selectedStatus = currentFilters.status || '';
+        setBoardColumnVisible(status, !selectedStatus || selectedStatus === status);
+        const packages = packagesForColumn(data, status);
+        const container = document.getElementById(cfg.el);
+        const countEl = document.getElementById(cfg.count);
+        if (!container || !countEl) continue;
+
+        countEl.textContent = packages.length;
+        container.innerHTML = '';
+
+        if (packages.length === 0) {
+            container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">' +
+                (STATUS_ICONS[status] || '\uD83D\uDCE6') + '</span> No work packages</div>';
+            continue;
+        }
+
+        for (const pkg of packages) {
+            container.appendChild(createPackageCard(pkg));
+        }
+    }
+}
+
+function packagesForColumn(data, status) {
+    const selectedStatus = currentFilters.status || '';
+    if (selectedStatus && selectedStatus !== status) {
+        return [];
+    }
+    const columns = data.columns || {};
+    const packages = [...(columns[status] || [])];
+    for (const [rawStatus, mappedStatus] of Object.entries(PACKAGE_STATUS_COLUMN)) {
+        if (mappedStatus === status) {
+            packages.push(...(columns[rawStatus] || []));
+        }
+    }
+    return packages;
+}
+
+function createPackageCard(pkg) {
+    const card = document.createElement('div');
+    card.className = 'task-card package-card';
+    card.setAttribute('data-package-id', String(pkg.id || ''));
+    card.setAttribute('role', 'listitem');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute(
+        'aria-label',
+        'Work package ' + String(pkg.id || '') + ': ' + (pkg.title || 'untitled')
+    );
+
+    const counts = pkg.task_counts || {};
+    const completed = counts.completed || 0;
+    const total = counts.total || 0;
+    const riskLevel = pkg.risk_level || 'medium';
+    const riskClass = classToken(riskLevel);
+    const reviewStatus = pkg.review_status || 'not_started';
+    const gate = pkg.review_gate || null;
+    const gateStatus = gate ? (gate.status || 'pending') : reviewStatus;
+    const latestIntegration = pkg.latest_integration || null;
+    const attentionCount = Array.isArray(pkg.attention_reasons) ? pkg.attention_reasons.length : 0;
+
+    let html = '<div class="task-card-header">';
+    html += '<span class="task-card-id">' + escapeHtml(String(pkg.id || '')) + '</span>';
+    html += '<span class="badge badge-package-role">Work Package</span>';
+    if (pkg.needs_attention) {
+        html += '<span class="badge badge-package-attention">' + attentionCount + ' attention</span>';
+    }
+    html += '</div>';
+    html += '<div class="task-card-title">' + escapeHtml(truncate(pkg.title || '(untitled)', 80)) + '</div>';
+    html += '<div class="package-progress">' + completed + '/' + total + ' tasks complete</div>';
+    html += '<div class="task-card-badges">';
+    html += '<span class="badge badge-system-gate gate-state-' + escapeHtml(classToken(gateStatus)) + '">' +
+        escapeHtml(formatPackageLabel(gateStatus)) + '</span>';
+    html += '<span class="badge badge-package-risk risk-' + escapeHtml(riskClass) + '">' +
+        escapeHtml(formatPackageLabel(riskLevel)) + '</span>';
+    if (pkg.group_id) {
+        html += '<span class="badge badge-group">' + escapeHtml(pkg.group_id) + '</span>';
+    }
+    if (latestIntegration) {
+        html += '<span class="badge badge-system-gate gate-state-' +
+            escapeHtml(classToken(latestIntegration.status || 'queued')) + '">' +
+            'Merge ' + escapeHtml(formatPackageLabel(latestIntegration.status || 'queued')) +
+            '</span>';
+    }
+    html += '</div>';
+    if (latestIntegration) {
+        html += '<div class="package-attention-line">' +
+            escapeHtml((latestIntegration.source_branch || '?') + ' -> ' +
+                (latestIntegration.target_branch || 'main')) + '</div>';
+    }
+    if (gate && gate.status === 'running') {
+        html += '<div class="task-card-system-gate">' +
+            '<span class="system-gate-dot"></span> System agent reviewing</div>';
+    } else if (pkg.needs_attention && pkg.attention_reasons && pkg.attention_reasons[0]) {
+        html += '<div class="package-attention-line">' +
+            escapeHtml(pkg.attention_reasons[0].message || 'Needs attention') + '</div>';
+    }
+    if (pkg.waiting_age_seconds !== null && pkg.waiting_age_seconds !== undefined) {
+        html += '<div class="package-age">Waiting ' +
+            escapeHtml(formatPackageAge(pkg.waiting_age_seconds)) + '</div>';
+    }
+
+    card.innerHTML = html;
+    card.addEventListener('click', () => openPackageDrawer(pkg.id));
+    card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { openPackageDrawer(pkg.id); }
+    });
+    return card;
+}
+
+function formatPackageLabel(value) {
+    return String(value || '')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function formatPackageAge(seconds) {
+    const total = Number(seconds || 0);
+    if (total < 60) return total + 's';
+    const minutes = Math.floor(total / 60);
+    if (minutes < 60) return minutes + 'm';
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return hours + 'h';
+    return Math.floor(hours / 24) + 'd';
+}
+
+function renderPackageCommandCenter(summary) {
+    const shell = document.getElementById('packageCommandCenter');
+    if (!shell) return;
+    shell.hidden = currentView !== 'board';
+    renderPackageCommandSummary(summary);
+    renderPackageActionRail(summary);
+    updateBoardModeControls();
+}
+
+function renderPackageCommandSummary(summary) {
+    const el = document.getElementById('packageCommandSummary');
+    if (!el) return;
+    const counts = summary && summary.counts ? summary.counts : {};
+    const systemAgent = summary && summary.system_agent ? summary.system_agent : {};
+    const items = [
+        ['Packages', counts.packages_total || 0],
+        ['Active', counts.packages_active || 0],
+        ['Review', counts.packages_review || 0],
+        ['Integrating', counts.packages_integrating || 0],
+        ['Blocked', counts.packages_blocked || 0],
+        ['Revision', counts.packages_waiting_revision || 0],
+        ['Attention', counts.packages_attention || 0],
+    ];
+    let html = '<div class="package-summary-grid">';
+    items.forEach(function(item) {
+        html += '<div class="package-summary-item"><span>' +
+            escapeHtml(item[0]) + '</span><strong>' + escapeHtml(String(item[1])) +
+            '</strong></div>';
+    });
+    html += '<div class="package-summary-agent"><span>System Agent</span><strong>' +
+        escapeHtml(formatPackageLabel(systemAgent.status || 'idle')) + '</strong><small>' +
+        escapeHtml(systemAgent.label || systemAgent.status_detail || 'Idle') + '</small></div>';
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function renderPackageActionRail(summary) {
+    const el = document.getElementById('packageActionRail');
+    if (!el) return;
+    if (!summary) {
+        el.innerHTML = '<div class="rail-empty">Operations summary unavailable</div>';
+        return;
+    }
+    const queues = summary.queues || {};
+    let html = '<div class="rail-header"><div><span class="rail-kicker">System</span>' +
+        '<h3>Needs Attention</h3></div><span class="rail-count">' +
+        escapeHtml(String((queues.attention || []).length)) + '</span></div>';
+    html += renderPackageRailSection('Review Gates', queues.review || []);
+    html += renderPackageRailSection('Blocked', queues.blocked || []);
+    html += renderPackageRailSection('Revision', queues.revision || []);
+    html += renderPackageRailSection('Stale', queues.stale || []);
+    const decisions = summary.recent_decisions || [];
+    if (decisions.length) {
+        html += '<div class="rail-section"><h4>Recent Decisions</h4>';
+        decisions.slice(0, 4).forEach(function(decision) {
+            html += '<button type="button" class="rail-item" onclick="openPackageDrawer(\'' +
+                escapeHtml(String(decision.package_id || '')) + '\')">' +
+                '<strong>' + escapeHtml(decision.package_id || '') + '</strong>' +
+                '<span>' + escapeHtml(formatPackageLabel(decision.outcome || 'updated')) + '</span>' +
+                '</button>';
+        });
+        html += '</div>';
+    }
+    el.innerHTML = html;
+}
+
+function renderPackageRailSection(title, items) {
+    let html = '<div class="rail-section"><h4>' + escapeHtml(title) + '</h4>';
+    if (!items.length) {
+        html += '<div class="rail-empty">None</div></div>';
+        return html;
+    }
+    items.slice(0, 5).forEach(function(item) {
+        const reason = item.attention_reasons && item.attention_reasons[0]
+            ? item.attention_reasons[0].message
+            : formatPackageLabel(item.status || '');
+        html += '<button type="button" class="rail-item" onclick="openPackageDrawer(\'' +
+            escapeHtml(String(item.id || '')) + '\')">' +
+            '<strong>' + escapeHtml(item.id || '') + '</strong>' +
+            '<span>' + escapeHtml(truncate(item.title || reason || '', 54)) + '</span>' +
+            '</button>';
+    });
+    html += '</div>';
+    return html;
+}
+
+function updateBoardModeControls() {
+    const packagesBtn = document.getElementById('modePackagesBtn');
+    const tasksBtn = document.getElementById('modeTasksBtn');
+    if (packagesBtn) packagesBtn.classList.toggle('active', currentBoardMode === 'packages');
+    if (tasksBtn) tasksBtn.classList.toggle('active', currentBoardMode === 'tasks');
+    const assignee = document.getElementById('filterAssignee');
+    const priority = document.getElementById('filterPriority');
+    const batchBtn = document.getElementById('batchSelectModeBtn');
+    const packageMode = currentBoardMode === 'packages';
+    if (assignee) assignee.disabled = packageMode;
+    if (priority) priority.disabled = packageMode;
+    if (batchBtn) batchBtn.disabled = packageMode;
+}
+
+function setBoardMode(mode) {
+    currentBoardMode = mode === 'tasks' ? 'tasks' : 'packages';
+    if (currentBoardMode === 'packages') {
+        delete currentFilters.assigned_to;
+        delete currentFilters.priority;
+        const assignee = document.getElementById('filterAssignee');
+        const priority = document.getElementById('filterPriority');
+        if (assignee) assignee.value = '';
+        if (priority) priority.value = '';
+        if (batchMode) toggleBatchMode();
+    }
+    updateBoardModeControls();
+    if (lastTaskBoardData && currentBoardMode === 'tasks') {
+        renderBoardView(lastTaskBoardData);
+    } else {
+        refreshBoard();
+    }
+}
+
+async function openPackageDrawer(packageId) {
+    if (!packageId) return;
+    openPackageId = String(packageId);
+    const overlay = document.getElementById('packageDetailOverlay');
+    const body = document.getElementById('packageDetailBody');
+    if (!overlay || !body) return;
+    overlay.classList.add('open');
+    body.innerHTML = '<div class="package-detail-loading">Loading package...</div>';
+    try {
+        const detail = await loadPackageDetail(openPackageId);
+        renderPackageDrawer(detail);
+    } catch (err) {
+        body.innerHTML = '<div class="package-detail-error">Failed to load package detail</div>';
+    }
+}
+
+function closePackageDrawer() {
+    const overlay = document.getElementById('packageDetailOverlay');
+    if (overlay) overlay.classList.remove('open');
+    openPackageId = null;
+}
+
+async function refreshOpenPackageDrawer() {
+    const overlay = document.getElementById('packageDetailOverlay');
+    if (!openPackageId || !overlay || !overlay.classList.contains('open')) return;
+    try {
+        renderPackageDrawer(await loadPackageDetail(openPackageId));
+    } catch (e) {
+        // Keep the existing drawer content visible if a live refresh fails.
+    }
+}
+
+function renderPackageDrawer(detail) {
+    const header = document.getElementById('packageDetailHeaderLeft');
+    const body = document.getElementById('packageDetailBody');
+    if (!header || !body) return;
+    header.innerHTML = '<div class="task-detail-header-meta"><span class="task-detail-id">' +
+        escapeHtml(detail.id || '') + '</span><span class="task-detail-id">' +
+        escapeHtml(formatPackageLabel(detail.status || '')) + '</span></div><h2>' +
+        escapeHtml(detail.title || '(untitled)') + '</h2>';
+    const reasons = detail.attention_reasons || [];
+    let html = '<div class="package-drawer-actions"><button type="button" onclick="openPackageFullPage(\'' +
+        escapeHtml(String(detail.id || '')) + '\')">Open full page</button></div>';
+    if (reasons.length) {
+        html += '<div class="package-attention-panel"><strong>Needs Attention</strong>';
+        reasons.forEach(function(reason) {
+            html += '<div>' + escapeHtml(reason.message || reason.type || '') + '</div>';
+        });
+        html += '</div>';
+    } else {
+        html += '<div class="package-attention-panel quiet">No active issues</div>';
+    }
+    html += renderPackageDrawerTabs(detail);
+    body.innerHTML = html;
+}
+
+function renderPackageDrawerTabs(detail) {
+    const tabs = ['tasks', 'review', 'integration', 'artifacts', 'history'];
+    let html = '<div class="package-tabs">';
+    tabs.forEach(function(tab) {
+        html += '<button type="button" class="' + (currentPackageDrawerTab === tab ? 'active' : '') +
+            '" onclick="setPackageDrawerTab(\'' + tab + '\', \'' + escapeHtml(String(detail.id || '')) + '\')">' +
+            escapeHtml(formatPackageLabel(tab)) + '</button>';
+    });
+    html += '</div><div class="package-tab-body">';
+    if (currentPackageDrawerTab === 'review') {
+        html += renderPackageReviewTab(detail);
+    } else if (currentPackageDrawerTab === 'integration') {
+        html += renderPackageIntegrationTab(detail);
+    } else if (currentPackageDrawerTab === 'artifacts') {
+        html += renderPackageArtifactsTab(detail);
+    } else if (currentPackageDrawerTab === 'history') {
+        html += renderPackageHistoryTab(detail);
+    } else {
+        html += renderPackageTasksTab(detail);
+    }
+    html += '</div>';
+    return html;
+}
+
+function renderPackageIntegrationTab(detail) {
+    const rows = detail.integration_queue || [];
+    if (!rows.length) return '<div class="rail-empty">No integration queue items</div>';
+    let html = '';
+    rows.forEach(function(row) {
+        html += '<div class="package-detail-row"><strong>' +
+            escapeHtml(row.id || '') + '</strong><span>' +
+            escapeHtml((row.source_branch || '?') + ' -> ' + (row.target_branch || 'main')) +
+            '</span><em>' + escapeHtml(formatPackageLabel(row.status || 'queued')) + '</em></div>';
+        if (row.last_error) {
+            html += '<div class="package-attention-line">' +
+                escapeHtml(truncate(row.last_error, 180)) + '</div>';
+        }
+    });
+    return html;
+}
+
+async function setPackageDrawerTab(tab, packageId) {
+    currentPackageDrawerTab = tab;
+    if (packageId) {
+        renderPackageDrawer(await loadPackageDetail(packageId));
+    }
+}
+
+function renderPackageTasksTab(detail) {
+    const tasks = detail.tasks || [];
+    if (!tasks.length) return '<div class="rail-empty">No child tasks</div>';
+    let html = '';
+    tasks.forEach(function(task) {
+        html += '<div class="package-detail-row"><strong>' + escapeHtml(task.id || '') +
+            '</strong><span>' + escapeHtml(truncate(task.title || '', 70)) +
+            '</span><em>' + escapeHtml(formatPackageLabel(task.status || '')) + '</em></div>';
+    });
+    return html;
+}
+
+function renderPackageReviewTab(detail) {
+    const gate = detail.review_gate || {};
+    let html = '<div class="package-detail-grid">';
+    html += tdField('Gate State', escapeHtml(formatPackageLabel(gate.status || detail.review_status || 'none')));
+    html += tdField('Review Round', escapeHtml(String(gate.review_round || detail.review_round || 0)));
+    html += tdField('Latest Reason', escapeHtml(detail.latest_review_reason_summary || gate.reason || '-'));
+    html += '</div>';
+    const revisions = detail.revision_tasks || [];
+    html += '<h4 class="package-subheading">Revision Tasks</h4>';
+    html += revisions.length ? renderPackageTasksTab({tasks: revisions}) : '<div class="rail-empty">No revision tasks</div>';
+    return html;
+}
+
+function renderPackageArtifactsTab(detail) {
+    const artifacts = detail.artifacts || [];
+    if (!artifacts.length) return '<div class="rail-empty">No artifacts yet</div>';
+    let html = '';
+    artifacts.forEach(function(artifact) {
+        html += '<div class="package-detail-row"><strong>' + escapeHtml(artifact.task_id || '') +
+            '</strong><span>' + (artifact.has_output ? 'Output captured' : 'No output yet') +
+            '</span><em>' + escapeHtml(artifact.merge_status || artifact.branch_name || '-') + '</em></div>';
+    });
+    return html;
+}
+
+function renderPackageHistoryTab(detail) {
+    const timeline = detail.timeline || [];
+    if (!timeline.length) return '<div class="rail-empty">No history yet</div>';
+    let html = '<div class="package-timeline">';
+    timeline.slice().reverse().forEach(function(item) {
+        html += '<div class="package-timeline-item"><strong>' +
+            escapeHtml(item.label || item.type || '') + '</strong><span>' +
+            escapeHtml(fmtTs(item.at)) + '</span></div>';
+    });
+    html += '</div>';
+    return html;
+}
+
+async function openPackageFullPage(packageId) {
+    if (!packageId) return;
+    location.hash = 'package=' + encodeURIComponent(packageId);
+    const detail = await loadPackageDetail(packageId);
+    renderPackageFullPage(detail);
+}
+
+function closePackageFullPage() {
+    const page = document.getElementById('packageFullPage');
+    if (page) page.hidden = true;
+    if (location.hash.startsWith('#package=')) {
+        history.replaceState(null, '', location.pathname + location.search);
+    }
+}
+
+async function handlePackageHashRoute() {
+    if (!location.hash.startsWith('#package=')) return;
+    const packageId = decodeURIComponent(location.hash.replace('#package=', ''));
+    if (!packageId) return;
+    try {
+        renderPackageFullPage(await loadPackageDetail(packageId));
+    } catch (e) {
+        showToast('Failed to load package page: ' + e.message, 'error');
+    }
+}
+
+function renderPackageFullPage(detail) {
+    const page = document.getElementById('packageFullPage');
+    const title = document.getElementById('packageFullPageTitle');
+    const body = document.getElementById('packageFullPageBody');
+    if (!page || !body) return;
+    page.hidden = false;
+    if (title) title.textContent = (detail.id || '') + ' · ' + (detail.title || '');
+    body.innerHTML =
+        '<section><h3>Package Spec</h3><p>' + escapeHtml(detail.description || 'No description') + '</p></section>' +
+        '<section><h3>Child Tasks</h3>' + renderPackageTasksTab(detail) + '</section>' +
+        '<section><h3>Review</h3>' + renderPackageReviewTab(detail) + '</section>' +
+        '<section><h3>Artifacts</h3>' + renderPackageArtifactsTab(detail) + '</section>' +
+        '<section><h3>History</h3>' + renderPackageHistoryTab(detail) + '</section>';
+}
+
+window.addEventListener('hashchange', handlePackageHashRoute);
+
+function setBoardColumnVisible(status, visible) {
+    const col = document.getElementById(STATUS_TO_COL_ID[status] || ('col-' + status));
+    if (col) {
+        col.hidden = !visible;
+    }
+}
+
+function classToken(value) {
+    return String(value || '').replace(/[^\w-]/g, '-');
 }
 
 function createTaskCard(task, status) {
@@ -640,12 +1192,20 @@ function createTaskCard(task, status) {
     if (task.needs_review === true || task.needs_review === 1) {
         html += '<span class="badge badge-needs-review">Needs Review</span>';
     }
+    const gateBadge = renderSystemGateBadge(task, status);
+    if (gateBadge) {
+        html += gateBadge;
+    }
 
     html += '</div>';
 
     // Claimed by
     if (task.claimed_by && status === 'in_progress') {
         html += '<div class="task-card-claimed">\u2192 ' + escapeHtml(task.claimed_by) + '</div>';
+    }
+    const gateLine = renderSystemGateLine(task, status);
+    if (gateLine) {
+        html += gateLine;
     }
 
     // Blocked indicator
@@ -667,6 +1227,69 @@ function createTaskCard(task, status) {
         if (e.key === ' ') { e.preventDefault(); card.classList.toggle('selected'); }
     });
     return card;
+}
+
+function systemGateState(task, status) {
+    if (status === 'backlog') {
+        const state = task.backlog_intake_status || 'pending';
+        const labels = {
+            pending: 'Queued for system check',
+            running: 'System agent checking',
+            completed: 'System check done',
+            failed: 'System check failed'
+        };
+        return { gate: 'backlog', state, label: labels[state] || 'System check pending' };
+    }
+    if (status === 'review') {
+        const state = task.review_status || 'pending';
+        const labels = {
+            pending: 'Queued for system review',
+            running: 'System agent reviewing',
+            waiting_revision: 'Waiting on revision',
+            failed: 'Review attempt failed',
+            approved: 'Review approved',
+            rejected: 'Review rejected'
+        };
+        return { gate: 'review', state, label: labels[state] || 'System review pending' };
+    }
+    return null;
+}
+
+function asArray(value) {
+    if (Array.isArray(value)) return value;
+    if (!value) return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function latestSystemGateRun(task, gateName) {
+    const runs = asArray(task.system_gate_runs);
+    for (let i = runs.length - 1; i >= 0; i--) {
+        if (!gateName || runs[i].gate === gateName) return runs[i];
+    }
+    return null;
+}
+
+function renderSystemGateBadge(task, status) {
+    const gate = systemGateState(task, status);
+    if (!gate) return '';
+    const cls = 'badge-system-gate gate-' + classToken(gate.gate) +
+        ' gate-state-' + classToken(gate.state);
+    return '<span class="badge ' + cls + '">' + escapeHtml(gate.label) + '</span>';
+}
+
+function renderSystemGateLine(task, status) {
+    const gate = systemGateState(task, status);
+    if (!gate || !['running', 'failed', 'waiting_revision'].includes(gate.state)) {
+        return '';
+    }
+    const cls = 'task-card-system-gate gate-state-' + classToken(gate.state);
+    return '<div class="' + cls + '"><span class="system-gate-dot"></span>' +
+        escapeHtml(gate.label) + '</div>';
 }
 
 // ================================================================
@@ -970,10 +1593,11 @@ function renderAgentSidebar(agents) {
         const roleColor = getRoleColor(role);
         const emoji = getRoleEmoji(role);
         const statusClass = agent.status === 'paused' ? 'sidebar-status-paused' : (agent.status === 'working' ? 'sidebar-status-working' : 'sidebar-status-idle');
-        const statusLabel = agent.status || 'idle';
+        const statusLabel = agent.status_detail || agent.status || 'idle';
 
         const card = document.createElement('div');
         card.className = 'sidebar-agent-card';
+        if (role === 'system') card.classList.add('sidebar-agent-system');
 
         let html = '<div class="sidebar-agent-top">';
         html += '<div class="sidebar-agent-identity">';
@@ -992,6 +1616,9 @@ function renderAgentSidebar(agents) {
         if (agent.current_task) {
             html += '<div class="sidebar-agent-meta">Task: <span class="task-link">' + escapeHtml(String(agent.current_task)) + '</span></div>';
         }
+        if (agent.current_gate) {
+            html += '<div class="sidebar-agent-meta">Gate: ' + escapeHtml(String(agent.current_gate)) + '</div>';
+        }
         if (agent.last_heartbeat) {
             html += '<div class="sidebar-agent-meta">Last seen: ' + timeAgo(agent.last_heartbeat) + '</div>';
         }
@@ -1001,16 +1628,18 @@ function renderAgentSidebar(agents) {
         html += '<div class="' + activityClass + '" id="activity-' + escapeHtml(agent.instance_id || '') + '"></div>';
 
         // Actions
-        html += '<div class="sidebar-agent-actions">';
-        html += '<button class="btn btn-chat" onclick="openChat(\'' + escapeHtml(agent.instance_id || '') + '\')">Chat</button>';
-        html += '</div>';
+        if (role !== 'system') {
+            html += '<div class="sidebar-agent-actions">';
+            html += '<button class="btn btn-chat" onclick="openChat(\'' + escapeHtml(agent.instance_id || '') + '\')">Chat</button>';
+            html += '</div>';
+        }
 
         card.innerHTML = html;
         container.appendChild(card);
     }
 
     // Per-role pause controls
-    const roles = [...new Set(agents.map(a => a.role).filter(Boolean))];
+    const roles = [...new Set(agents.map(a => a.role).filter(r => r && r !== 'system'))];
     if (roles.length > 0) {
         const divider = document.createElement('div');
         divider.style.cssText = 'height:1px;background:var(--border-subtle);margin:12px 0;';
@@ -1068,17 +1697,7 @@ function appendAgentActivity(agentName, kind, text) {
 // Differential Board Updates
 // ================================================================
 function updateColumnCounts() {
-    const columns = {
-        backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
-        pending:     { el: 'tasksPending',    count: 'countPending' },
-        in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
-        review:      { el: 'tasksReview',     count: 'countReview' },
-        blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
-        completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
-        rejected:    { el: 'tasksRejected',   count: 'countRejected' },
-        failed:      { el: 'tasksFailed',     count: 'countFailed' },
-    };
-    for (const [status, cfg] of Object.entries(columns)) {
+    for (const [, cfg] of Object.entries(BOARD_COLUMNS)) {
         const container = document.getElementById(cfg.el);
         const countEl = document.getElementById(cfg.count);
         if (container && countEl) {
@@ -1093,6 +1712,7 @@ const STATUS_TO_COL_ID = {
     pending: 'col-pending',
     in_progress: 'col-in_progress',
     review: 'col-review',
+    integrating: 'col-integrating',
     blocked: 'col-blocked',
     completed: 'col-completed',
     rejected: 'col-rejected',
@@ -1120,12 +1740,17 @@ function _addEmptyStateIfNeeded(col) {
     const container = col.querySelector('.column-tasks');
     if (container && container.querySelectorAll('.task-card').length === 0) {
         const status = col.id.replace('col-', '');
+        const emptyLabel = currentBoardMode === 'packages' ? 'No work packages' : 'No tasks';
         container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">' +
-            (STATUS_ICONS[status] || '\uD83D\uDCE6') + '</span> No tasks</div>';
+            (STATUS_ICONS[status] || '\uD83D\uDCE6') + '</span> ' + emptyLabel + '</div>';
     }
 }
 
 async function updateSingleTask(taskId) {
+    if (currentBoardMode === 'packages') {
+        refreshBoard();
+        return;
+    }
     try {
         const scrollPositions = _saveColumnScrollPositions();
 
@@ -1134,6 +1759,20 @@ async function updateSingleTask(taskId) {
         const task = await resp.json();
         const status = task.status || 'pending';
         task._status = status;
+        const selectedStatus = currentFilters.status || '';
+        if (selectedStatus && selectedStatus !== status) {
+            const existingCard = document.querySelector(
+                '[data-task-id="' + CSS.escape(String(taskId)) + '"]'
+            );
+            if (existingCard) {
+                const currentCol = existingCard.closest('.kanban-column');
+                existingCard.remove();
+                _addEmptyStateIfNeeded(currentCol);
+                updateColumnCounts();
+            }
+            _restoreColumnScrollPositions(scrollPositions);
+            return;
+        }
 
         // Find existing card and update or move it
         const existingCard = document.querySelector('[data-task-id="' + CSS.escape(String(taskId)) + '"]');
@@ -1181,6 +1820,10 @@ async function updateSingleTask(taskId) {
 }
 
 function removeSingleTask(taskId) {
+    if (currentBoardMode === 'packages') {
+        refreshBoard();
+        return;
+    }
     const card = document.querySelector('[data-task-id="' + CSS.escape(String(taskId)) + '"]');
     if (!card) return;
     const col = card.closest('.kanban-column');
@@ -1217,11 +1860,20 @@ function connectWebSocket() {
             const taskId = event.task_id;
             if (type === 'task.deleted' && taskId) {
                 removeSingleTask(taskId);
-            } else if (taskId) {
+            } else if (taskId && currentBoardMode !== 'packages') {
                 updateSingleTask(taskId);
             } else {
                 refreshBoard();
             }
+            if (type.startsWith('task.system_gate_')) {
+                refreshAgents();
+            }
+        } else if (type.startsWith('work_package.')) {
+            refreshBoard();
+            refreshAgents();
+        } else if (type.startsWith('review_gate.')) {
+            refreshBoard();
+            refreshAgents();
         } else if (type.startsWith('pipeline.')) {
             refreshBoard();
         }
@@ -1302,4 +1954,3 @@ function appendLog(event) {
         }
     }
 }
-

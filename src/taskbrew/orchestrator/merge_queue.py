@@ -41,28 +41,52 @@ class MergeQueue:
         verifier_task_id: str,
         source_branch: str,
         target_branch: str = "main",
+        source_type: str = "verifier_approval",
+        source_entity_id: str | None = None,
+        work_package_id: str | None = None,
     ) -> dict:
         """Insert or return the merge row for *verifier_task_id*."""
+        source_entity_id = source_entity_id or verifier_task_id
         existing = await self._db.execute_fetchone(
-            "SELECT * FROM merge_queue WHERE verifier_task_id = ?",
-            (verifier_task_id,),
+            "SELECT * FROM merge_queue "
+            "WHERE source_type = ? AND source_entity_id = ? "
+            "AND parent_task_id = ? AND source_branch = ? AND target_branch = ? "
+            "ORDER BY created_at LIMIT 1",
+            (
+                source_type,
+                source_entity_id,
+                parent_task_id,
+                source_branch,
+                target_branch or "main",
+            ),
         )
         if existing:
             return existing
+        if source_type == "verifier_approval":
+            existing = await self._db.execute_fetchone(
+                "SELECT * FROM merge_queue WHERE verifier_task_id = ?",
+                (verifier_task_id,),
+            )
+            if existing:
+                return existing
 
         now = _utcnow()
         row_id = f"MQ-{uuid.uuid4().hex[:12]}"
         rows = await self._db.execute_returning(
             "INSERT INTO merge_queue ("
-            "id, group_id, parent_task_id, verifier_task_id, source_branch, "
+            "id, group_id, parent_task_id, verifier_task_id, source_type, "
+            "source_entity_id, work_package_id, source_branch, "
             "target_branch, status, attempts, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?) "
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?) "
             "RETURNING *",
             (
                 row_id,
                 group_id,
                 parent_task_id,
                 verifier_task_id,
+                source_type,
+                source_entity_id,
+                work_package_id,
                 source_branch,
                 target_branch or "main",
                 now,
@@ -70,6 +94,27 @@ class MergeQueue:
             ),
         )
         return rows[0]
+
+    async def enqueue_package_integration(
+        self,
+        *,
+        group_id: str,
+        work_package_id: str,
+        parent_task_id: str,
+        source_branch: str,
+        target_branch: str = "main",
+    ) -> dict:
+        """Insert or return a package-approval integration row."""
+        return await self.enqueue(
+            group_id=group_id,
+            parent_task_id=parent_task_id,
+            verifier_task_id=parent_task_id,
+            source_branch=source_branch,
+            target_branch=target_branch,
+            source_type="package_approval",
+            source_entity_id=work_package_id,
+            work_package_id=work_package_id,
+        )
 
     async def claim_ready(
         self,
@@ -186,6 +231,33 @@ class MergeQueue:
         )
         return len(rows)
 
+    async def supersede_open_for_package(
+        self,
+        *,
+        work_package_id: str,
+        except_row_id: str,
+        details: str,
+    ) -> int:
+        """Close older unresolved rows once a later package merge lands."""
+        placeholders = ",".join("?" for _ in MERGE_QUEUE_OPEN_STATUSES)
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE merge_queue SET status = 'superseded', leased_by = NULL, "
+            "leased_until = NULL, next_attempt_at = NULL, last_error = ?, "
+            "updated_at = ?, completed_at = COALESCE(completed_at, ?) "
+            "WHERE work_package_id = ? AND id != ? "
+            f"AND status IN ({placeholders}) RETURNING id",
+            (
+                details,
+                now,
+                now,
+                work_package_id,
+                except_row_id,
+                *MERGE_QUEUE_OPEN_STATUSES,
+            ),
+        )
+        return len(rows)
+
     async def update_result_metadata(
         self,
         row_id: str,
@@ -225,6 +297,18 @@ class MergeQueue:
             (group_id,),
         )
         return {row["status"]: int(row["n"] or 0) for row in rows}
+
+    async def list_for_group(self, group_id: str) -> list[dict]:
+        return await self._db.execute_fetchall(
+            "SELECT * FROM merge_queue WHERE group_id = ? ORDER BY created_at",
+            (group_id,),
+        )
+
+    async def list_for_package(self, work_package_id: str) -> list[dict]:
+        return await self._db.execute_fetchall(
+            "SELECT * FROM merge_queue WHERE work_package_id = ? ORDER BY created_at",
+            (work_package_id,),
+        )
 
     async def list_non_running_integration_ids(self) -> list[str]:
         rows = await self._db.execute_fetchall(

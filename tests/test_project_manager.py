@@ -79,6 +79,7 @@ class TestRegistryCRUD:
         assert entry["id"] == "my-app"
         assert entry["name"] == "My App"
         assert entry["directory"] == str(project_dir)
+        assert entry["auto_resume_on_activate"] is True
         assert "created_at" in entry
 
     def test_create_persists_to_yaml(
@@ -209,6 +210,18 @@ class TestRegistryCRUD:
         pm.delete_project("active")
         assert pm.get_active() is None
 
+    def test_auto_resume_flag_is_consumed_once(
+        self, pm: ProjectManager, project_dir: Path
+    ):
+        pm.create_project("First Run", str(project_dir))
+
+        assert pm.should_auto_resume_on_activate("first-run") is True
+        pm.mark_auto_resume_consumed("first-run")
+
+        projects = pm.list_projects()
+        assert projects[0]["auto_resume_on_activate"] is False
+        assert pm.should_auto_resume_on_activate("first-run") is False
+
 
 # ---------------------------------------------------------------------------
 # Scaffolding tests
@@ -244,6 +257,23 @@ class TestScaffolding:
         roles_dir = d / "config" / "roles"
         role_files = sorted(p.stem for p in roles_dir.glob("*.yaml"))
         assert role_files == ["architect", "coder", "pm"]
+
+    def test_default_roles_allow_completion_tool(
+        self, pm: ProjectManager, tmp_path: Path
+    ):
+        d = tmp_path / "defaults-complete-tool"
+        pm.create_project("Defaults Complete Tool", str(d), with_defaults=True)
+
+        for role_name in ("pm", "architect", "coder"):
+            with open(d / "config" / "roles" / f"{role_name}.yaml") as f:
+                role_data = yaml.safe_load(f)
+            assert "mcp__task-tools__complete_task" in role_data["tools"]
+        with open(d / "config" / "roles" / "pm.yaml") as f:
+            pm_data = yaml.safe_load(f)
+        with open(d / "config" / "roles" / "architect.yaml") as f:
+            architect_data = yaml.safe_load(f)
+        assert "mcp__task-tools__create_work_package" in pm_data["tools"]
+        assert "mcp__task-tools__update_work_package" in architect_data["tools"]
 
     def test_without_defaults_leaves_roles_empty(
         self, pm: ProjectManager, tmp_path: Path

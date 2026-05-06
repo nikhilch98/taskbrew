@@ -26,6 +26,10 @@ from pydantic import BaseModel, Field, HttpUrl
 
 class CreateTaskBody(BaseModel):
     group_id: str
+    work_package_id: Optional[str] = Field(default=None, max_length=128)
+    work_package_title: Optional[str] = Field(default=None, max_length=2000)
+    work_package_description: Optional[str] = Field(default=None, max_length=20000)
+    milestone_id: Optional[str] = Field(default=None, max_length=128)
     title: str
     assigned_to: str
     assigned_by: str
@@ -34,8 +38,24 @@ class CreateTaskBody(BaseModel):
     priority: str = "medium"
     parent_id: Optional[str] = None
     blocked_by: Optional[list[str]] = None
+    review_scope: Optional[str] = Field(default=None, max_length=32)
     # None = task_type default (tech_design => required); True/False = explicit.
     requires_fanout: Optional[bool] = None
+
+
+class CreateWorkPackageBody(BaseModel):
+    group_id: str = Field(max_length=128)
+    title: str = Field(max_length=2000)
+    description: Optional[str] = Field(default=None, max_length=20000)
+    milestone_id: Optional[str] = Field(default=None, max_length=128)
+    created_by: Optional[str] = Field(default=None, max_length=128)
+    risk_level: str = Field(default="medium", max_length=32)
+    review_scope: str = Field(default="work_package", max_length=32)
+
+
+class UpdateWorkPackageBody(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=2000)
+    description: Optional[str] = Field(default=None, max_length=20000)
 
 
 class SubmitGoalBody(BaseModel):

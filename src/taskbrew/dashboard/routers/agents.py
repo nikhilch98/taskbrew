@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException
 
 from taskbrew.dashboard.models import PauseResumeBody
@@ -18,7 +20,44 @@ router = APIRouter()
 @router.get("/api/agents")
 async def get_agents():
     orch = get_orch()
-    return await orch.instance_manager.get_all_instances()
+    agents = await orch.instance_manager.get_all_instances()
+    agents.append(await _system_agent_snapshot(orch))
+    return agents
+
+
+async def _system_agent_snapshot(orch) -> dict:
+    """Return a virtual agent row for project-level system gates."""
+    row = await orch.task_board._db.execute_fetchone(
+        "SELECT id, status, backlog_intake_status, review_status "
+        "FROM tasks WHERE "
+        "(status = 'review' AND review_status = 'running') "
+        "OR (status = 'backlog' AND backlog_intake_status = 'running') "
+        "ORDER BY CASE WHEN status = 'review' THEN 0 ELSE 1 END, created_at "
+        "LIMIT 1"
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    if row:
+        gate = "review" if row["status"] == "review" else "backlog"
+        return {
+            "instance_id": "system-agent",
+            "role": "system",
+            "status": "working",
+            "current_task": row["id"],
+            "current_gate": gate,
+            "status_detail": "reviewing" if gate == "review" else "checking",
+            "started_at": None,
+            "last_heartbeat": now,
+        }
+    return {
+        "instance_id": "system-agent",
+        "role": "system",
+        "status": "idle",
+        "current_task": None,
+        "current_gate": None,
+        "status_detail": "idle",
+        "started_at": None,
+        "last_heartbeat": now,
+    }
 
 
 # ------------------------------------------------------------------

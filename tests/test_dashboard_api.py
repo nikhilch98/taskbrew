@@ -6,6 +6,7 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 
 from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.merge_queue import MergeQueue
 from taskbrew.orchestrator.task_board import TaskBoard
 from taskbrew.orchestrator.event_bus import EventBus
 from taskbrew.agents.instance_manager import InstanceManager
@@ -186,6 +187,287 @@ async def test_get_agents(app_client):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
+    assert any(agent["instance_id"] == "system-agent" for agent in data)
+
+
+async def test_get_agents_shows_running_system_review(app_client):
+    board = app_client["board"]
+    db = app_client["db"]
+    group = await board.create_group(title="System review visibility", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Review-visible task",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="pm",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Exercise system review visibility.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    completed = await board.complete_task_with_output(claimed["id"], "Ready.")
+    await db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (completed["id"],),
+    )
+
+    resp = await app_client["client"].get("/api/agents")
+
+    assert resp.status_code == 200
+    system_agent = next(
+        agent for agent in resp.json() if agent["instance_id"] == "system-agent"
+    )
+    assert system_agent["status"] == "working"
+    assert system_agent["current_task"] == completed["id"]
+    assert system_agent["current_gate"] == "review"
+    assert system_agent["status_detail"] == "reviewing"
+
+
+async def test_work_package_api_round_trip(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(
+        title="Dashboard package group",
+        origin="pm",
+        created_by="pm",
+    )
+
+    package_resp = await client.post(
+        "/api/work-packages",
+        json={
+            "group_id": group["id"],
+            "title": "Dashboard live updates",
+            "description": "Reviewable dashboard slice.",
+            "created_by": "architect-1",
+            "risk_level": "medium",
+        },
+    )
+
+    assert package_resp.status_code == 200
+    package = package_resp.json()
+    assert package["id"].startswith("WP-")
+
+    list_resp = await client.get(f"/api/work-packages?group_id={group['id']}")
+    assert list_resp.status_code == 200
+    assert any(pkg["id"] == package["id"] for pkg in list_resp.json())
+    assert any(
+        event["type"] == "work_package.created"
+        and event["work_package_id"] == package["id"]
+        for event in app_client["event_bus"].get_history()
+    )
+
+    task_resp = await client.post(
+        "/api/tasks",
+        json={
+            "group_id": group["id"],
+            "work_package_id": package["id"],
+            "title": "Implement websocket refresh",
+            "assigned_to": "coder",
+            "assigned_by": "human",
+            "task_type": "implementation",
+            "priority": "high",
+        },
+    )
+
+    assert task_resp.status_code == 200
+    task = task_resp.json()
+    assert task["work_package_id"] == package["id"]
+
+    board_resp = await client.get(
+        f"/api/work-packages/board?group_id={group['id']}"
+    )
+
+    assert board_resp.status_code == 200
+    data = board_resp.json()
+    assert data["columns"]["pending"][0]["id"] == package["id"]
+    assert data["columns"]["pending"][0]["task_counts"]["total"] == 1
+
+
+async def test_update_work_package_api(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(title="Package update group", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Initial package",
+        description="Initial description.",
+        created_by="architect-1",
+    )
+
+    resp = await client.patch(
+        f"/api/work-packages/{package['id']}",
+        json={
+            "title": "Renamed package",
+            "description": "Updated description.",
+        },
+    )
+
+    assert resp.status_code == 200
+    updated = resp.json()
+    assert updated["title"] == "Renamed package"
+    assert updated["description"] == "Updated description."
+
+
+async def test_work_package_detail_and_operations_summary_api(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(
+        title="Package command center",
+        origin="pm",
+        created_by="pm",
+    )
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Reviewable dashboard package",
+        description="Expose command center detail.",
+        created_by="architect-1",
+        risk_level="high",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        title="Implement package detail",
+        assigned_to="coder",
+        created_by="architect-1",
+        task_type="implementation",
+        priority="high",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(claimed["id"], "Done.")
+
+    detail_resp = await client.get(f"/api/work-packages/{package['id']}")
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["id"] == package["id"]
+    assert detail["tasks"][0]["id"] == task["id"]
+    assert detail["review_gate"]["entity_id"] == package["id"]
+    assert detail["needs_attention"] is True
+
+    summary_resp = await client.get(f"/api/operations/summary?group_id={group['id']}")
+    assert summary_resp.status_code == 200
+    summary = summary_resp.json()
+    assert summary["counts"]["packages_total"] == 1
+    assert summary["counts"]["packages_review"] == 1
+    assert summary["queues"]["review"][0]["id"] == package["id"]
+    assert summary["system_agent"]["status"] in {"idle", "working"}
+
+
+async def test_merge_queue_api_filters_package_integration_rows(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(title="Merge queue API", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Integration package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        title="Implement integration package",
+        assigned_to="coder",
+        task_type="implementation",
+        created_by="architect-1",
+        branch_name="feat/cd-001",
+    )
+    row = await MergeQueue(app_client["db"]).enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        parent_task_id=task["id"],
+        source_branch="feat/cd-001",
+        target_branch="main",
+    )
+
+    resp = await client.get(f"/api/merge-queue?package_id={package['id']}")
+
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["id"] == row["id"]
+    assert rows[0]["source_type"] == "package_approval"
+    assert rows[0]["source_entity_id"] == package["id"]
+
+
+async def test_create_work_package_rejects_missing_group(app_client):
+    resp = await app_client["client"].post(
+        "/api/work-packages",
+        json={
+            "group_id": "GRP-NOPE",
+            "title": "Orphaned package",
+            "created_by": "architect-1",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "Group not found" in resp.text
+
+
+async def test_create_task_rejects_invalid_work_package(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(
+        title="Invalid package group",
+        origin="pm",
+        created_by="pm",
+    )
+
+    resp = await client.post(
+        "/api/tasks",
+        json={
+            "group_id": group["id"],
+            "work_package_id": "WP-DOES-NOT-EXIST",
+            "title": "Implement package-linked work",
+            "assigned_to": "coder",
+            "assigned_by": "human",
+            "task_type": "implementation",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "Work package" in resp.text
+
+
+async def test_create_task_rejects_work_package_from_different_group(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group_a = await board.create_group(
+        title="Package source group",
+        origin="pm",
+        created_by="pm",
+    )
+    group_b = await board.create_group(
+        title="Task target group",
+        origin="pm",
+        created_by="pm",
+    )
+    package = await board.create_work_package(
+        group_id=group_a["id"],
+        title="Source package",
+        created_by="architect-1",
+    )
+
+    resp = await client.post(
+        "/api/tasks",
+        json={
+            "group_id": group_b["id"],
+            "work_package_id": package["id"],
+            "title": "Implement misplaced package work",
+            "assigned_to": "coder",
+            "assigned_by": "human",
+            "task_type": "implementation",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "Work package" in resp.text
 
 
 async def test_get_group_graph(app_client):
@@ -1587,7 +1869,7 @@ async def test_list_all_artifacts_merges_flat_and_output_text(artifact_client):
 # ---------------------------------------------------------------------------
 # Stage-1 Fix #3: architect -> coder tasks must include parent_id
 # Stage-1 Fix #12: reject duplicate verification tasks for the same parent
-# Stage-1 Fix #4: group completion triggers PM goal_verification
+# Stage-1 Fix #4: legacy group completion, now superseded by package review
 # ---------------------------------------------------------------------------
 
 
@@ -1884,9 +2166,8 @@ async def test_fix12_cancelled_verifier_allows_new_one(stage1_client):
     assert second.status_code == 200
 
 
-async def test_fix4_group_completion_spawns_goal_verification(stage1_client):
-    """Fix #4: when the last task in a >=5-task group goes terminal, a PM
-    goal_verification task is auto-created and blocks the group from sealing."""
+async def test_fix4_group_completion_waits_for_package_review(stage1_client):
+    """Package-backed groups wait for system package review instead of PM GV."""
     board = stage1_client["board"]
     db = stage1_client["db"]
 
@@ -1914,29 +2195,42 @@ async def test_fix4_group_completion_spawns_goal_verification(stage1_client):
     for t in tasks:
         await board.complete_task(t["id"])
 
-    # The goal_verification task should now exist in backlog for PM intake.
+    packages = await board.get_group_work_packages(group["id"])
+    assert len(packages) == 1
+    package = await board.get_work_package(packages[0]["id"])
+    assert package["status"] == "review"
+    assert package["review_status"] == "pending"
+    gate = await db.execute_fetchone(
+        "SELECT status FROM review_gates "
+        "WHERE entity_type = 'work_package' AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate["status"] == "pending"
+
+    # Package review replaces the old PM goal_verification pass.
     gv = await db.execute_fetchone(
         "SELECT id, status, assigned_to, parent_id, requires_fanout "
         "FROM tasks WHERE group_id = ? AND task_type = 'goal_verification'",
         (group["id"],),
     )
-    assert gv is not None
-    assert gv["assigned_to"] == "pm"
-    assert gv["status"] == "backlog"
-    assert gv["parent_id"] == pm_goal["id"]
-    # Goal-verify should NOT be subject to the fan-out gate itself.
-    assert gv["requires_fanout"] == 0
+    assert gv is None
 
-    # The group must stay active while goal verification is pending.
+    # The group must stay active while package review is pending.
     grp = await db.execute_fetchone(
         "SELECT status FROM groups WHERE id = ?", (group["id"],),
     )
     assert grp["status"] == "active"
 
+    await board.approve_work_package_review(package["id"], reason="Package review passed.")
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "completed"
 
-async def test_fix4_small_group_skips_goal_verification(stage1_client):
+
+async def test_fix4_small_group_uses_package_review_gate(stage1_client):
     """Fix #4: groups with <5 tasks (e.g. FEAT-002 README) don't need a
-    second PM pass — avoids token waste on trivial goals."""
+    second PM pass, but package review still gates final completion."""
     board = stage1_client["board"]
     db = stage1_client["db"]
 
@@ -1964,15 +2258,24 @@ async def test_fix4_small_group_skips_goal_verification(stage1_client):
         (group["id"],),
     )
     assert gv is None
+    packages = await board.get_group_work_packages(group["id"])
+    assert len(packages) == 1
+    package = await board.get_work_package(packages[0]["id"])
+    assert package["status"] == "review"
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "active"
+
+    await board.approve_work_package_review(package["id"], reason="Small package passed.")
     grp = await db.execute_fetchone(
         "SELECT status FROM groups WHERE id = ?", (group["id"],),
     )
     assert grp["status"] == "completed"
 
 
-async def test_fix4_only_fires_once_per_group(stage1_client):
-    """Fix #4: completing the auto-generated goal_verification task shouldn't
-    spawn a second one — that would loop forever."""
+async def test_fix4_package_approval_does_not_spawn_goal_verification(stage1_client):
+    """Package approval should seal the group without the old PM GV loop."""
     board = stage1_client["board"]
     db = stage1_client["db"]
 
@@ -2002,21 +2305,25 @@ async def test_fix4_only_fires_once_per_group(stage1_client):
         "AND task_type = 'goal_verification'",
         (group["id"],),
     )
-    assert len(gv_rows) == 1
+    assert len(gv_rows) == 0
 
-    # Complete the goal_verification task — group should seal, no second GV.
-    gv_id = gv_rows[0]["id"]
-    await db.execute(
-        "UPDATE tasks SET status = 'in_progress' WHERE id = ?", (gv_id,),
-    )
-    await board.complete_task(gv_id)
+    packages = await board.get_group_work_packages(group["id"])
+    assert len(packages) == 1
+    package = await board.get_work_package(packages[0]["id"])
+    assert package["status"] == "review"
+
+    await board.approve_work_package_review(package["id"], reason="Package review passed.")
 
     gv_after = await db.execute_fetchall(
         "SELECT id FROM tasks WHERE group_id = ? "
         "AND task_type = 'goal_verification'",
         (group["id"],),
     )
-    assert len(gv_after) == 1  # still just the one
+    assert len(gv_after) == 0
+    grp = await db.execute_fetchone(
+        "SELECT status FROM groups WHERE id = ?", (group["id"],),
+    )
+    assert grp["status"] == "completed"
 
     grp = await db.execute_fetchone(
         "SELECT status FROM groups WHERE id = ?", (group["id"],),

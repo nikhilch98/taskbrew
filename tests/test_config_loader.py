@@ -19,6 +19,7 @@ from taskbrew.config_loader import (
     load_team_config,
     validate_routing,
 )
+from taskbrew.project_manager import ProjectManager
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +536,20 @@ def test_repository_default_team_uses_codex_gpt55_without_verifier_pipeline() ->
         role_data = yaml.safe_load((roles_dir / f"{role}.yaml").read_text())
         assert role_data["model"] == "gpt-5.5"
         assert role_data["reasoning_effort"] == "xhigh"
+
+
+def test_scaffolded_architect_role_matches_ambiguity_defaults(tmp_path: Path) -> None:
+    project_dir = tmp_path / "scaffolded-project"
+
+    ProjectManager._scaffold_project(project_dir, "Scaffolded Project")
+
+    architect_path = project_dir / "config" / "roles" / "architect.yaml"
+    architect_data = yaml.safe_load(architect_path.read_text())
+
+    assert "mcp__task-tools__ask_question" in architect_data["tools"]
+    assert "Handling ambiguity:" in architect_data["system_prompt"]
+    assert "ask_question(question," in architect_data["system_prompt"]
+    assert "preferred_answer" in architect_data["system_prompt"]
 
 
 def test_load_team_config_expands_tilde(tmp_path):

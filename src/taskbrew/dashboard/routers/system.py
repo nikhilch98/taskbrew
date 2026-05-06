@@ -239,7 +239,9 @@ async def remove_project(project_id: str):
 async def activate_project_endpoint(project_id: str):
     if not _project_manager:
         raise HTTPException(500, "Project manager not initialized")
+    auto_resume = False
     try:
+        auto_resume = _project_manager.should_auto_resume_on_activate(project_id)
         orch = await _project_manager.activate_project(project_id)
     except KeyError:
         raise HTTPException(404, f"Project '{project_id}' not found")
@@ -257,7 +259,9 @@ async def activate_project_endpoint(project_id: str):
 
     # Start agents
     from taskbrew.main import start_agents
-    await start_agents(orch)
+    await start_agents(orch, start_paused=not auto_resume)
+    if auto_resume:
+        _project_manager.mark_auto_resume_consumed(project_id)
 
     return {"status": "ok", "project": _project_manager.get_active()}
 
