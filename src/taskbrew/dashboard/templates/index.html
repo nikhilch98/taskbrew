@@ -1373,6 +1373,288 @@
             border-color: rgba(244, 63, 94, 0.24);
         }
 
+        .package-command-center { display: flex; flex-direction: column; gap: 14px; }
+        .package-command-summary {
+            border: 1px solid var(--border-subtle);
+            background: rgba(10, 14, 26, 0.56);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+        }
+        .package-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .package-summary-item,
+        .package-summary-agent {
+            min-height: 58px;
+            border: 1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.035);
+            border-radius: var(--radius-sm);
+            padding: 9px 10px;
+        }
+        .package-summary-item span,
+        .package-summary-agent span {
+            display: block;
+            color: var(--text-muted);
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+        }
+        .package-summary-item strong,
+        .package-summary-agent strong {
+            display: block;
+            margin-top: 5px;
+            color: var(--text-primary);
+            font-size: 20px;
+        }
+        .package-summary-agent small {
+            display: block;
+            margin-top: 4px;
+            color: var(--text-secondary);
+            font-size: 11px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .package-command-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 290px;
+            gap: 14px;
+            align-items: start;
+        }
+        .package-board-shell { min-width: 0; }
+        .package-mode-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .mode-segmented {
+            display: inline-flex;
+            padding: 3px;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            background: rgba(255,255,255,0.035);
+        }
+        .mode-btn {
+            border: none;
+            border-radius: 6px;
+            padding: 7px 12px;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .mode-btn.active {
+            background: rgba(99, 102, 241, 0.18);
+            color: var(--text-primary);
+        }
+        .package-action-rail {
+            position: sticky;
+            top: 84px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            border: 1px solid var(--border-subtle);
+            background: rgba(10, 14, 26, 0.72);
+            border-radius: var(--radius-sm);
+            padding: 14px;
+            max-height: 76vh;
+            overflow-y: auto;
+        }
+        .rail-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+        }
+        .rail-kicker,
+        .rail-section h4 {
+            color: var(--text-muted);
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+        }
+        .rail-header h3 { margin: 3px 0 0; font-size: 16px; }
+        .rail-count {
+            min-width: 28px;
+            text-align: center;
+            border-radius: 999px;
+            padding: 3px 8px;
+            background: rgba(245, 158, 11, 0.14);
+            color: var(--accent-amber-light);
+            font-weight: 800;
+        }
+        .rail-section { display: flex; flex-direction: column; gap: 7px; }
+        .rail-item {
+            display: grid;
+            grid-template-columns: 62px minmax(0, 1fr);
+            gap: 8px;
+            width: 100%;
+            text-align: left;
+            border: 1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.035);
+            color: var(--text-primary);
+            border-radius: var(--radius-sm);
+            padding: 8px;
+            cursor: pointer;
+        }
+        .rail-item strong {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+        }
+        .rail-item span,
+        .rail-empty { color: var(--text-secondary); font-size: 11px; }
+        .badge-package-attention {
+            background: rgba(245, 158, 11, 0.13);
+            color: var(--accent-amber-light);
+            border: 1px solid rgba(245, 158, 11, 0.26);
+        }
+        .package-attention-line,
+        .package-age {
+            margin-top: 7px;
+            color: var(--text-secondary);
+            font-size: 11px;
+        }
+        .package-detail-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 220;
+            background: rgba(0, 0, 0, 0.48);
+            justify-content: flex-end;
+        }
+        .package-detail-overlay.open { display: flex; }
+        .package-detail-drawer {
+            width: min(560px, 96vw);
+            height: 100vh;
+            background: rgba(12, 16, 30, 0.98);
+            border-left: 1px solid var(--border-subtle);
+            box-shadow: -24px 0 80px rgba(0,0,0,0.45);
+            display: flex;
+            flex-direction: column;
+        }
+        .package-detail-body { padding: 20px 24px 24px; overflow-y: auto; }
+        .package-drawer-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 12px;
+        }
+        .package-drawer-actions button,
+        .package-full-page-close {
+            border: 1px solid var(--border-subtle);
+            background: rgba(99, 102, 241, 0.14);
+            color: var(--text-primary);
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .package-attention-panel {
+            border: 1px solid rgba(245, 158, 11, 0.26);
+            background: rgba(245, 158, 11, 0.1);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            margin-bottom: 14px;
+            color: var(--accent-amber-light);
+            font-size: 12px;
+        }
+        .package-attention-panel.quiet {
+            border-color: rgba(16, 185, 129, 0.22);
+            background: rgba(16, 185, 129, 0.08);
+            color: var(--accent-emerald-light);
+        }
+        .package-tabs {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            padding-bottom: 8px;
+        }
+        .package-tabs button {
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            border-radius: 6px;
+            padding: 7px 10px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        .package-tabs button.active {
+            background: rgba(6, 182, 212, 0.14);
+            color: var(--accent-cyan-lighter);
+        }
+        .package-detail-row {
+            display: grid;
+            grid-template-columns: 72px minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: center;
+            padding: 9px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 12px;
+        }
+        .package-detail-row strong {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            color: var(--text-muted);
+        }
+        .package-detail-row em { color: var(--text-secondary); font-style: normal; }
+        .package-detail-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .package-subheading {
+            margin: 18px 0 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+        .package-timeline { display: flex; flex-direction: column; gap: 10px; }
+        .package-timeline-item {
+            border-left: 2px solid rgba(6, 182, 212, 0.35);
+            padding-left: 10px;
+        }
+        .package-timeline-item strong,
+        .package-timeline-item span { display: block; font-size: 12px; }
+        .package-timeline-item span { color: var(--text-secondary); margin-top: 3px; }
+        .package-full-page {
+            position: fixed;
+            inset: 72px 24px 24px;
+            z-index: 215;
+            background: rgba(12, 16, 30, 0.98);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-xl);
+            display: flex;
+            flex-direction: column;
+        }
+        .package-full-page[hidden] { display: none; }
+        .package-full-page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            padding: 18px 22px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .package-full-page-body {
+            padding: 22px;
+            overflow-y: auto;
+            display: grid;
+            gap: 18px;
+        }
+        .package-full-page-body section {
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: var(--radius-sm);
+            padding: 14px;
+            background: rgba(255,255,255,0.03);
+        }
+        .package-full-page-body h3 { margin: 0 0 10px; font-size: 14px; }
+
         .system-gate-dot {
             width: 7px;
             height: 7px;
@@ -3114,12 +3396,17 @@
             .stats-bar { grid-template-columns: repeat(3, 1fr); }
             .search-bar { flex-wrap: wrap; }
             .search-bar .search-input-wrapper { flex: 1 1 100%; }
+            .package-command-layout { grid-template-columns: 1fr; }
+            .package-action-rail { position: static; max-height: none; }
+            .package-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
 
         @media (max-width: 768px) {
             .kanban-column { min-width: 100%; flex: 0 0 100%; }
             .stats-bar { grid-template-columns: repeat(2, 1fr); }
             .search-bar select { flex: 1 1 calc(33% - 8px); }
+            .package-detail-grid,
+            .package-detail-row { grid-template-columns: 1fr; }
         }
 
         /* ========== Landing Page ========== */
@@ -5251,56 +5538,70 @@
 
         <!-- Board View -->
         <div class="view-container active" id="viewBoard" role="region" aria-label="Task Board">
-            <div class="kanban-board" id="kanbanBoard" role="list" aria-label="Task columns">
-                <div class="kanban-column" id="col-backlog" role="listitem" aria-label="Backlog tasks">
-                    <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-backlog"></span> Backlog <span class="count" id="countBacklog">0</span></h3>
+            <section class="package-command-center" id="packageCommandCenter">
+                <div class="package-command-summary" id="packageCommandSummary"></div>
+                <div class="package-command-layout">
+                    <div class="package-board-shell">
+                        <div class="package-mode-bar">
+                            <div class="mode-segmented" role="tablist" aria-label="Board mode">
+                                <button type="button" class="mode-btn active" id="modePackagesBtn" onclick="setBoardMode('packages')">Packages</button>
+                                <button type="button" class="mode-btn" id="modeTasksBtn" onclick="setBoardMode('tasks')">Tasks</button>
+                            </div>
+                        </div>
+                        <div class="kanban-board" id="kanbanBoard" role="list" aria-label="Task columns">
+                            <div class="kanban-column" id="col-backlog" role="listitem" aria-label="Backlog tasks">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-backlog"></span> Backlog <span class="count" id="countBacklog">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksBacklog" role="list" aria-label="Backlog task cards"></div>
+                            </div>
+                            <div class="kanban-column" id="col-pending" role="listitem" aria-label="Pending tasks">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-pending"></span> Pending <span class="count" id="countPending">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksPending" role="list" aria-label="Pending task cards"></div>
+                            </div>
+                            <div class="kanban-column" id="col-in_progress" role="listitem" aria-label="In progress tasks">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-in_progress"></span> In Progress <span class="count" id="countInProgress">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksInProgress" role="list" aria-label="In progress task cards"></div>
+                            </div>
+                            <div class="kanban-column" id="col-review" role="listitem" aria-label="Review tasks">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-review"></span> Review <span class="count" id="countReview">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksReview" role="list" aria-label="Review task cards"></div>
+                            </div>
+                            <div class="kanban-column" id="col-blocked" role="listitem" aria-label="Blocked tasks">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-blocked"></span> Blocked <span class="count" id="countBlocked">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksBlocked" role="list" aria-label="Blocked task cards"></div>
+                            </div>
+                            <div class="kanban-column" id="col-completed" role="listitem" aria-label="Completed tasks">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-completed"></span> Completed <span class="count" id="countCompleted">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksCompleted" role="list" aria-label="Completed task cards"></div>
+                            </div>
+                            <div class="kanban-column" id="col-rejected" role="listitem" aria-label="Rejected tasks">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-rejected"></span> Rejected <span class="count" id="countRejected">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksRejected" role="list" aria-label="Rejected task cards"></div>
+                            </div>
+                            <div class="kanban-column" id="col-failed" role="listitem" aria-label="Failed tasks">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-failed"></span> Failed <span class="count" id="countFailed">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksFailed" role="list" aria-label="Failed task cards"></div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="column-tasks" id="tasksBacklog" role="list" aria-label="Backlog task cards"></div>
+                    <aside class="package-action-rail" id="packageActionRail" aria-label="Work package action rail"></aside>
                 </div>
-                <div class="kanban-column" id="col-pending" role="listitem" aria-label="Pending tasks">
-                    <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-pending"></span> Pending <span class="count" id="countPending">0</span></h3>
-                    </div>
-                    <div class="column-tasks" id="tasksPending" role="list" aria-label="Pending task cards"></div>
-                </div>
-                <div class="kanban-column" id="col-in_progress" role="listitem" aria-label="In progress tasks">
-                    <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-in_progress"></span> In Progress <span class="count" id="countInProgress">0</span></h3>
-                    </div>
-                    <div class="column-tasks" id="tasksInProgress" role="list" aria-label="In progress task cards"></div>
-                </div>
-                <div class="kanban-column" id="col-review" role="listitem" aria-label="Review tasks">
-                    <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-review"></span> Review <span class="count" id="countReview">0</span></h3>
-                    </div>
-                    <div class="column-tasks" id="tasksReview" role="list" aria-label="Review task cards"></div>
-                </div>
-                <div class="kanban-column" id="col-blocked" role="listitem" aria-label="Blocked tasks">
-                    <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-blocked"></span> Blocked <span class="count" id="countBlocked">0</span></h3>
-                    </div>
-                    <div class="column-tasks" id="tasksBlocked" role="list" aria-label="Blocked task cards"></div>
-                </div>
-                <div class="kanban-column" id="col-completed" role="listitem" aria-label="Completed tasks">
-                    <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-completed"></span> Completed <span class="count" id="countCompleted">0</span></h3>
-                    </div>
-                    <div class="column-tasks" id="tasksCompleted" role="list" aria-label="Completed task cards"></div>
-                </div>
-                <div class="kanban-column" id="col-rejected" role="listitem" aria-label="Rejected tasks">
-                    <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-rejected"></span> Rejected <span class="count" id="countRejected">0</span></h3>
-                    </div>
-                    <div class="column-tasks" id="tasksRejected" role="list" aria-label="Rejected task cards"></div>
-                </div>
-                <div class="kanban-column" id="col-failed" role="listitem" aria-label="Failed tasks">
-                    <div class="kanban-column-header">
-                        <h3><span class="accent-bar accent-failed"></span> Failed <span class="count" id="countFailed">0</span></h3>
-                    </div>
-                    <div class="column-tasks" id="tasksFailed" role="list" aria-label="Failed task cards"></div>
-                </div>
-            </div>
+            </section>
         </div>
 
         <!-- List View -->
@@ -6120,7 +6421,12 @@
         let batchMode = false;
         let selectedTasks = new Set();
         let notifications = [];
-        let currentBoardMode = 'tasks';
+        let currentBoardMode = 'packages';
+        let lastTaskBoardData = null;
+        let lastPackageBoardData = null;
+        let lastOperationsSummary = null;
+        let openPackageId = null;
+        let currentPackageDrawerTab = 'tasks';
 
         // ================================================================
         // Toast Notifications
@@ -6460,6 +6766,9 @@
             if (assignee) currentFilters.assigned_to = assignee;
             if (status) currentFilters.status = status;
             if (priority) currentFilters.priority = priority;
+            if ((assignee || priority) && currentBoardMode === 'packages') {
+                currentBoardMode = 'tasks';
+            }
 
             if (currentView === 'graph') {
                 renderGraphView();
@@ -6517,6 +6826,10 @@
                 const resp = await fetch('/api/board?' + params.toString());
                 const data = await resp.json();
                 const packageBoard = await loadPackageBoard();
+                const operationsSummary = await loadOperationsSummary();
+                lastTaskBoardData = data;
+                lastPackageBoardData = packageBoard;
+                lastOperationsSummary = operationsSummary;
 
                 // Flatten all tasks for list view and stats
                 allTasks = [];
@@ -6533,6 +6846,7 @@
                 const activeCount = (data.pending || []).length + (data.in_progress || []).length;
                 document.getElementById('statActive').textContent = activeCount;
                 document.getElementById('statBlocked').textContent = blockedCount;
+                renderPackageCommandCenter(operationsSummary);
 
                 // Render the appropriate view
                 if (currentView === 'board') {
@@ -6544,12 +6858,17 @@
                 } else if (currentView === 'list') {
                     renderListView();
                 }
+                refreshOpenPackageDrawer();
+                handlePackageHashRoute();
             } catch (err) {
                 showToast('Failed to refresh board: ' + err.message);
             }
         }
 
         async function loadPackageBoard() {
+            if (currentBoardMode !== 'packages') {
+                return null;
+            }
             if (batchMode || currentFilters.assigned_to || currentFilters.priority) {
                 return null;
             }
@@ -6569,11 +6888,37 @@
             }
         }
 
+        async function loadOperationsSummary() {
+            try {
+                const params = new URLSearchParams();
+                if (currentFilters.group_id) {
+                    params.set('group_id', currentFilters.group_id);
+                }
+                const query = params.toString();
+                const resp = await fetch('/api/operations/summary' + (query ? '?' + query : ''));
+                if (!resp.ok) {
+                    return null;
+                }
+                return await resp.json();
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function loadPackageDetail(packageId) {
+            const resp = await fetch('/api/work-packages/' + encodeURIComponent(packageId));
+            if (!resp.ok) {
+                throw new Error('HTTP ' + resp.status);
+            }
+            return await resp.json();
+        }
+
         function shouldRenderPackageBoard(packageBoard) {
             if (batchMode) {
                 return false;
             }
             return Boolean(
+                currentBoardMode === 'packages' &&
                 packageBoard &&
                 Array.isArray(packageBoard.packages)
             );
@@ -6662,6 +7007,7 @@
         // ================================================================
         function renderBoardView(data) {
             currentBoardMode = 'tasks';
+            updateBoardModeControls();
             for (const [status, cfg] of Object.entries(BOARD_COLUMNS)) {
                 const selectedStatus = currentFilters.status || '';
                 setBoardColumnVisible(status, !selectedStatus || selectedStatus === status);
@@ -6686,6 +7032,7 @@
 
         function renderPackageBoard(data) {
             currentBoardMode = 'packages';
+            updateBoardModeControls();
             for (const [status, cfg] of Object.entries(BOARD_COLUMNS)) {
                 const selectedStatus = currentFilters.status || '';
                 setBoardColumnVisible(status, !selectedStatus || selectedStatus === status);
@@ -6741,24 +7088,45 @@
             const riskLevel = pkg.risk_level || 'medium';
             const riskClass = classToken(riskLevel);
             const reviewStatus = pkg.review_status || 'not_started';
+            const gate = pkg.review_gate || null;
+            const gateStatus = gate ? (gate.status || 'pending') : reviewStatus;
+            const attentionCount = Array.isArray(pkg.attention_reasons) ? pkg.attention_reasons.length : 0;
 
             let html = '<div class="task-card-header">';
             html += '<span class="task-card-id">' + escapeHtml(String(pkg.id || '')) + '</span>';
             html += '<span class="badge badge-package-role">Work Package</span>';
+            if (pkg.needs_attention) {
+                html += '<span class="badge badge-package-attention">' + attentionCount + ' attention</span>';
+            }
             html += '</div>';
             html += '<div class="task-card-title">' + escapeHtml(truncate(pkg.title || '(untitled)', 80)) + '</div>';
             html += '<div class="package-progress">' + completed + '/' + total + ' tasks complete</div>';
             html += '<div class="task-card-badges">';
-            html += '<span class="badge badge-system-gate">' +
-                escapeHtml(formatPackageLabel(reviewStatus)) + '</span>';
+            html += '<span class="badge badge-system-gate gate-state-' + escapeHtml(classToken(gateStatus)) + '">' +
+                escapeHtml(formatPackageLabel(gateStatus)) + '</span>';
             html += '<span class="badge badge-package-risk risk-' + escapeHtml(riskClass) + '">' +
                 escapeHtml(formatPackageLabel(riskLevel)) + '</span>';
             if (pkg.group_id) {
                 html += '<span class="badge badge-group">' + escapeHtml(pkg.group_id) + '</span>';
             }
             html += '</div>';
+            if (gate && gate.status === 'running') {
+                html += '<div class="task-card-system-gate">' +
+                    '<span class="system-gate-dot"></span> System agent reviewing</div>';
+            } else if (pkg.needs_attention && pkg.attention_reasons && pkg.attention_reasons[0]) {
+                html += '<div class="package-attention-line">' +
+                    escapeHtml(pkg.attention_reasons[0].message || 'Needs attention') + '</div>';
+            }
+            if (pkg.waiting_age_seconds !== null && pkg.waiting_age_seconds !== undefined) {
+                html += '<div class="package-age">Waiting ' +
+                    escapeHtml(formatPackageAge(pkg.waiting_age_seconds)) + '</div>';
+            }
 
             card.innerHTML = html;
+            card.addEventListener('click', () => openPackageDrawer(pkg.id));
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { openPackageDrawer(pkg.id); }
+            });
             return card;
         }
 
@@ -6767,6 +7135,312 @@
                 .replace(/_/g, ' ')
                 .replace(/\b\w/g, c => c.toUpperCase());
         }
+
+        function formatPackageAge(seconds) {
+            const total = Number(seconds || 0);
+            if (total < 60) return total + 's';
+            const minutes = Math.floor(total / 60);
+            if (minutes < 60) return minutes + 'm';
+            const hours = Math.floor(minutes / 60);
+            if (hours < 48) return hours + 'h';
+            return Math.floor(hours / 24) + 'd';
+        }
+
+        function renderPackageCommandCenter(summary) {
+            const shell = document.getElementById('packageCommandCenter');
+            if (!shell) return;
+            shell.hidden = currentView !== 'board';
+            renderPackageCommandSummary(summary);
+            renderPackageActionRail(summary);
+            updateBoardModeControls();
+        }
+
+        function renderPackageCommandSummary(summary) {
+            const el = document.getElementById('packageCommandSummary');
+            if (!el) return;
+            const counts = summary && summary.counts ? summary.counts : {};
+            const systemAgent = summary && summary.system_agent ? summary.system_agent : {};
+            const items = [
+                ['Packages', counts.packages_total || 0],
+                ['Active', counts.packages_active || 0],
+                ['Review', counts.packages_review || 0],
+                ['Blocked', counts.packages_blocked || 0],
+                ['Revision', counts.packages_waiting_revision || 0],
+                ['Attention', counts.packages_attention || 0],
+            ];
+            let html = '<div class="package-summary-grid">';
+            items.forEach(function(item) {
+                html += '<div class="package-summary-item"><span>' +
+                    escapeHtml(item[0]) + '</span><strong>' + escapeHtml(String(item[1])) +
+                    '</strong></div>';
+            });
+            html += '<div class="package-summary-agent"><span>System Agent</span><strong>' +
+                escapeHtml(formatPackageLabel(systemAgent.status || 'idle')) + '</strong><small>' +
+                escapeHtml(systemAgent.label || systemAgent.status_detail || 'Idle') + '</small></div>';
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        function renderPackageActionRail(summary) {
+            const el = document.getElementById('packageActionRail');
+            if (!el) return;
+            if (!summary) {
+                el.innerHTML = '<div class="rail-empty">Operations summary unavailable</div>';
+                return;
+            }
+            const queues = summary.queues || {};
+            let html = '<div class="rail-header"><div><span class="rail-kicker">System</span>' +
+                '<h3>Needs Attention</h3></div><span class="rail-count">' +
+                escapeHtml(String((queues.attention || []).length)) + '</span></div>';
+            html += renderPackageRailSection('Review Gates', queues.review || []);
+            html += renderPackageRailSection('Blocked', queues.blocked || []);
+            html += renderPackageRailSection('Revision', queues.revision || []);
+            html += renderPackageRailSection('Stale', queues.stale || []);
+            const decisions = summary.recent_decisions || [];
+            if (decisions.length) {
+                html += '<div class="rail-section"><h4>Recent Decisions</h4>';
+                decisions.slice(0, 4).forEach(function(decision) {
+                    html += '<button type="button" class="rail-item" onclick="openPackageDrawer(\'' +
+                        escapeHtml(String(decision.package_id || '')) + '\')">' +
+                        '<strong>' + escapeHtml(decision.package_id || '') + '</strong>' +
+                        '<span>' + escapeHtml(formatPackageLabel(decision.outcome || 'updated')) + '</span>' +
+                        '</button>';
+                });
+                html += '</div>';
+            }
+            el.innerHTML = html;
+        }
+
+        function renderPackageRailSection(title, items) {
+            let html = '<div class="rail-section"><h4>' + escapeHtml(title) + '</h4>';
+            if (!items.length) {
+                html += '<div class="rail-empty">None</div></div>';
+                return html;
+            }
+            items.slice(0, 5).forEach(function(item) {
+                const reason = item.attention_reasons && item.attention_reasons[0]
+                    ? item.attention_reasons[0].message
+                    : formatPackageLabel(item.status || '');
+                html += '<button type="button" class="rail-item" onclick="openPackageDrawer(\'' +
+                    escapeHtml(String(item.id || '')) + '\')">' +
+                    '<strong>' + escapeHtml(item.id || '') + '</strong>' +
+                    '<span>' + escapeHtml(truncate(item.title || reason || '', 54)) + '</span>' +
+                    '</button>';
+            });
+            html += '</div>';
+            return html;
+        }
+
+        function updateBoardModeControls() {
+            const packagesBtn = document.getElementById('modePackagesBtn');
+            const tasksBtn = document.getElementById('modeTasksBtn');
+            if (packagesBtn) packagesBtn.classList.toggle('active', currentBoardMode === 'packages');
+            if (tasksBtn) tasksBtn.classList.toggle('active', currentBoardMode === 'tasks');
+            const assignee = document.getElementById('filterAssignee');
+            const priority = document.getElementById('filterPriority');
+            const batchBtn = document.getElementById('batchSelectModeBtn');
+            const packageMode = currentBoardMode === 'packages';
+            if (assignee) assignee.disabled = packageMode;
+            if (priority) priority.disabled = packageMode;
+            if (batchBtn) batchBtn.disabled = packageMode;
+        }
+
+        function setBoardMode(mode) {
+            currentBoardMode = mode === 'tasks' ? 'tasks' : 'packages';
+            if (currentBoardMode === 'packages') {
+                delete currentFilters.assigned_to;
+                delete currentFilters.priority;
+                const assignee = document.getElementById('filterAssignee');
+                const priority = document.getElementById('filterPriority');
+                if (assignee) assignee.value = '';
+                if (priority) priority.value = '';
+                if (batchMode) toggleBatchMode();
+            }
+            updateBoardModeControls();
+            if (lastTaskBoardData && currentBoardMode === 'tasks') {
+                renderBoardView(lastTaskBoardData);
+            } else {
+                refreshBoard();
+            }
+        }
+
+        async function openPackageDrawer(packageId) {
+            if (!packageId) return;
+            openPackageId = String(packageId);
+            const overlay = document.getElementById('packageDetailOverlay');
+            const body = document.getElementById('packageDetailBody');
+            if (!overlay || !body) return;
+            overlay.classList.add('open');
+            body.innerHTML = '<div class="package-detail-loading">Loading package...</div>';
+            try {
+                const detail = await loadPackageDetail(openPackageId);
+                renderPackageDrawer(detail);
+            } catch (err) {
+                body.innerHTML = '<div class="package-detail-error">Failed to load package detail</div>';
+            }
+        }
+
+        function closePackageDrawer() {
+            const overlay = document.getElementById('packageDetailOverlay');
+            if (overlay) overlay.classList.remove('open');
+            openPackageId = null;
+        }
+
+        async function refreshOpenPackageDrawer() {
+            const overlay = document.getElementById('packageDetailOverlay');
+            if (!openPackageId || !overlay || !overlay.classList.contains('open')) return;
+            try {
+                renderPackageDrawer(await loadPackageDetail(openPackageId));
+            } catch (e) {
+                // Keep the existing drawer content visible if a live refresh fails.
+            }
+        }
+
+        function renderPackageDrawer(detail) {
+            const header = document.getElementById('packageDetailHeaderLeft');
+            const body = document.getElementById('packageDetailBody');
+            if (!header || !body) return;
+            header.innerHTML = '<div class="task-detail-header-meta"><span class="task-detail-id">' +
+                escapeHtml(detail.id || '') + '</span><span class="task-detail-id">' +
+                escapeHtml(formatPackageLabel(detail.status || '')) + '</span></div><h2>' +
+                escapeHtml(detail.title || '(untitled)') + '</h2>';
+            const reasons = detail.attention_reasons || [];
+            let html = '<div class="package-drawer-actions"><button type="button" onclick="openPackageFullPage(\'' +
+                escapeHtml(String(detail.id || '')) + '\')">Open full page</button></div>';
+            if (reasons.length) {
+                html += '<div class="package-attention-panel"><strong>Needs Attention</strong>';
+                reasons.forEach(function(reason) {
+                    html += '<div>' + escapeHtml(reason.message || reason.type || '') + '</div>';
+                });
+                html += '</div>';
+            } else {
+                html += '<div class="package-attention-panel quiet">No active issues</div>';
+            }
+            html += renderPackageDrawerTabs(detail);
+            body.innerHTML = html;
+        }
+
+        function renderPackageDrawerTabs(detail) {
+            const tabs = ['tasks', 'review', 'artifacts', 'history'];
+            let html = '<div class="package-tabs">';
+            tabs.forEach(function(tab) {
+                html += '<button type="button" class="' + (currentPackageDrawerTab === tab ? 'active' : '') +
+                    '" onclick="setPackageDrawerTab(\'' + tab + '\', \'' + escapeHtml(String(detail.id || '')) + '\')">' +
+                    escapeHtml(formatPackageLabel(tab)) + '</button>';
+            });
+            html += '</div><div class="package-tab-body">';
+            if (currentPackageDrawerTab === 'review') {
+                html += renderPackageReviewTab(detail);
+            } else if (currentPackageDrawerTab === 'artifacts') {
+                html += renderPackageArtifactsTab(detail);
+            } else if (currentPackageDrawerTab === 'history') {
+                html += renderPackageHistoryTab(detail);
+            } else {
+                html += renderPackageTasksTab(detail);
+            }
+            html += '</div>';
+            return html;
+        }
+
+        async function setPackageDrawerTab(tab, packageId) {
+            currentPackageDrawerTab = tab;
+            if (packageId) {
+                renderPackageDrawer(await loadPackageDetail(packageId));
+            }
+        }
+
+        function renderPackageTasksTab(detail) {
+            const tasks = detail.tasks || [];
+            if (!tasks.length) return '<div class="rail-empty">No child tasks</div>';
+            let html = '';
+            tasks.forEach(function(task) {
+                html += '<div class="package-detail-row"><strong>' + escapeHtml(task.id || '') +
+                    '</strong><span>' + escapeHtml(truncate(task.title || '', 70)) +
+                    '</span><em>' + escapeHtml(formatPackageLabel(task.status || '')) + '</em></div>';
+            });
+            return html;
+        }
+
+        function renderPackageReviewTab(detail) {
+            const gate = detail.review_gate || {};
+            let html = '<div class="package-detail-grid">';
+            html += tdField('Gate State', escapeHtml(formatPackageLabel(gate.status || detail.review_status || 'none')));
+            html += tdField('Review Round', escapeHtml(String(gate.review_round || detail.review_round || 0)));
+            html += tdField('Latest Reason', escapeHtml(detail.latest_review_reason_summary || gate.reason || '-'));
+            html += '</div>';
+            const revisions = detail.revision_tasks || [];
+            html += '<h4 class="package-subheading">Revision Tasks</h4>';
+            html += revisions.length ? renderPackageTasksTab({tasks: revisions}) : '<div class="rail-empty">No revision tasks</div>';
+            return html;
+        }
+
+        function renderPackageArtifactsTab(detail) {
+            const artifacts = detail.artifacts || [];
+            if (!artifacts.length) return '<div class="rail-empty">No artifacts yet</div>';
+            let html = '';
+            artifacts.forEach(function(artifact) {
+                html += '<div class="package-detail-row"><strong>' + escapeHtml(artifact.task_id || '') +
+                    '</strong><span>' + (artifact.has_output ? 'Output captured' : 'No output yet') +
+                    '</span><em>' + escapeHtml(artifact.merge_status || artifact.branch_name || '-') + '</em></div>';
+            });
+            return html;
+        }
+
+        function renderPackageHistoryTab(detail) {
+            const timeline = detail.timeline || [];
+            if (!timeline.length) return '<div class="rail-empty">No history yet</div>';
+            let html = '<div class="package-timeline">';
+            timeline.slice().reverse().forEach(function(item) {
+                html += '<div class="package-timeline-item"><strong>' +
+                    escapeHtml(item.label || item.type || '') + '</strong><span>' +
+                    escapeHtml(fmtTs(item.at)) + '</span></div>';
+            });
+            html += '</div>';
+            return html;
+        }
+
+        async function openPackageFullPage(packageId) {
+            if (!packageId) return;
+            location.hash = 'package=' + encodeURIComponent(packageId);
+            const detail = await loadPackageDetail(packageId);
+            renderPackageFullPage(detail);
+        }
+
+        function closePackageFullPage() {
+            const page = document.getElementById('packageFullPage');
+            if (page) page.hidden = true;
+            if (location.hash.startsWith('#package=')) {
+                history.replaceState(null, '', location.pathname + location.search);
+            }
+        }
+
+        async function handlePackageHashRoute() {
+            if (!location.hash.startsWith('#package=')) return;
+            const packageId = decodeURIComponent(location.hash.replace('#package=', ''));
+            if (!packageId) return;
+            try {
+                renderPackageFullPage(await loadPackageDetail(packageId));
+            } catch (e) {
+                showToast('Failed to load package page: ' + e.message, 'error');
+            }
+        }
+
+        function renderPackageFullPage(detail) {
+            const page = document.getElementById('packageFullPage');
+            const title = document.getElementById('packageFullPageTitle');
+            const body = document.getElementById('packageFullPageBody');
+            if (!page || !body) return;
+            page.hidden = false;
+            if (title) title.textContent = (detail.id || '') + ' · ' + (detail.title || '');
+            body.innerHTML =
+                '<section><h3>Package Spec</h3><p>' + escapeHtml(detail.description || 'No description') + '</p></section>' +
+                '<section><h3>Child Tasks</h3>' + renderPackageTasksTab(detail) + '</section>' +
+                '<section><h3>Review</h3>' + renderPackageReviewTab(detail) + '</section>' +
+                '<section><h3>Artifacts</h3>' + renderPackageArtifactsTab(detail) + '</section>' +
+                '<section><h3>History</h3>' + renderPackageHistoryTab(detail) + '</section>';
+        }
+
+        window.addEventListener('hashchange', handlePackageHashRoute);
 
         function setBoardColumnVisible(status, visible) {
             const col = document.getElementById(STATUS_TO_COL_ID[status] || ('col-' + status));
@@ -7786,7 +8460,7 @@
                     const taskId = event.task_id;
                     if (type === 'task.deleted' && taskId) {
                         removeSingleTask(taskId);
-                    } else if (taskId) {
+                    } else if (taskId && currentBoardMode !== 'packages') {
                         updateSingleTask(taskId);
                     } else {
                         refreshBoard();
@@ -7796,6 +8470,10 @@
                     }
                 } else if (type.startsWith('work_package.')) {
                     refreshBoard();
+                    refreshAgents();
+                } else if (type.startsWith('review_gate.')) {
+                    refreshBoard();
+                    refreshAgents();
                 } else if (type.startsWith('pipeline.')) {
                     refreshBoard();
                 }
@@ -9865,6 +10543,10 @@
         // Feature: Batch Operations
         // ================================================================
         function toggleBatchMode() {
+            if (currentBoardMode === 'packages') {
+                showToast('Switch to Tasks mode for batch selection', 'info', 3000);
+                return;
+            }
             batchMode = !batchMode;
             selectedTasks.clear();
             document.getElementById('batchBar').classList.toggle('active', batchMode);
@@ -14185,6 +14867,26 @@
             </div>
             <div class="task-detail-body" id="taskDetailBody"></div>
         </div>
+    </div>
+
+    <!-- Package Detail Drawer -->
+    <div class="package-detail-overlay" id="packageDetailOverlay" role="dialog" aria-modal="true" aria-label="Work package details">
+        <div class="package-detail-drawer">
+            <div class="task-detail-header">
+                <div id="packageDetailHeaderLeft" class="task-detail-header-left"></div>
+                <button class="faq-close" onclick="closePackageDrawer()" title="Close" style="flex-shrink:0;margin-top:4px">&times;</button>
+            </div>
+            <div class="package-detail-body" id="packageDetailBody"></div>
+        </div>
+    </div>
+
+    <!-- Package Full Page -->
+    <div class="package-full-page" id="packageFullPage" hidden>
+        <div class="package-full-page-header">
+            <h2 id="packageFullPageTitle">Work Package</h2>
+            <button type="button" class="package-full-page-close" onclick="closePackageFullPage()">Close</button>
+        </div>
+        <div class="package-full-page-body" id="packageFullPageBody"></div>
     </div>
 
     <!-- Settings Modal -->

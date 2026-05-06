@@ -1739,6 +1739,10 @@ async function loadArtifactContent(groupId, taskId, filename) {
 // Feature: Batch Operations
 // ================================================================
 function toggleBatchMode() {
+    if (currentBoardMode === 'packages') {
+        showToast('Switch to Tasks mode for batch selection', 'info', 3000);
+        return;
+    }
     batchMode = !batchMode;
     selectedTasks.clear();
     document.getElementById('batchBar').classList.toggle('active', batchMode);
