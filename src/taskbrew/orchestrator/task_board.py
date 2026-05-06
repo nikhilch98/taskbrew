@@ -1180,6 +1180,104 @@ class TaskBoard:
         await self.reconcile_task_package(task_id)
         return rows[0]
 
+    async def approve_work_package_review(
+        self, package_id: str, *, reason: str
+    ) -> dict:
+        """Approve a work package waiting at the system review gate."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            raise ValueError(f"Work package not found: {package_id}")
+        if package["status"] != "review":
+            return package
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET status = 'completed', "
+            "review_status = 'approved', review_reason = ?, completed_at = ?, "
+            "updated_at = ? WHERE id = ? AND status = 'review' RETURNING *",
+            (reason, now, now, package_id),
+        )
+        if not rows:
+            fresh = await self.get_work_package(package_id)
+            if fresh is None:
+                raise ValueError(f"Work package not found: {package_id}")
+            return fresh
+
+        gate = await self._db.execute_fetchone(
+            "SELECT id FROM review_gates "
+            "WHERE entity_type = 'work_package' AND entity_id = ?",
+            (package_id,),
+        )
+        if gate is not None:
+            await self._db.execute(
+                "UPDATE review_gates SET status = 'completed', outcome = 'approved', "
+                "reason = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+                (reason, now, now, gate["id"]),
+            )
+            await self._append_review_gate_run(
+                gate["id"],
+                {
+                    "gate": "package_review",
+                    "outcome": "approved",
+                    "reason": reason,
+                    "finished_at": now,
+                },
+            )
+        await self._check_group_completion_for_group(rows[0]["group_id"])
+        fresh = await self.get_work_package(package_id)
+        if fresh is None:
+            raise ValueError(f"Work package not found after review approval: {package_id}")
+        return fresh
+
+    async def reject_work_package_review(
+        self, package_id: str, *, reason: str
+    ) -> dict:
+        """Reject a work package waiting at the system review gate."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            raise ValueError(f"Work package not found: {package_id}")
+        if package["status"] not in ("review", "waiting_revision"):
+            return package
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET status = 'rejected', "
+            "review_status = 'rejected', review_reason = ?, updated_at = ? "
+            "WHERE id = ? AND status IN ('review', 'waiting_revision') RETURNING *",
+            (reason, now, package_id),
+        )
+        if not rows:
+            fresh = await self.get_work_package(package_id)
+            if fresh is None:
+                raise ValueError(f"Work package not found: {package_id}")
+            return fresh
+
+        gate = await self._db.execute_fetchone(
+            "SELECT id FROM review_gates "
+            "WHERE entity_type = 'work_package' AND entity_id = ?",
+            (package_id,),
+        )
+        if gate is not None:
+            await self._db.execute(
+                "UPDATE review_gates SET status = 'completed', outcome = 'rejected', "
+                "reason = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+                (reason, now, now, gate["id"]),
+            )
+            await self._append_review_gate_run(
+                gate["id"],
+                {
+                    "gate": "package_review",
+                    "outcome": "rejected",
+                    "reason": reason,
+                    "finished_at": now,
+                },
+            )
+        await self._check_group_completion_for_group(rows[0]["group_id"])
+        fresh = await self.get_work_package(package_id)
+        if fresh is None:
+            raise ValueError(f"Work package not found after review rejection: {package_id}")
+        return fresh
+
     async def _append_system_gate_run(self, task_id: str, entry: dict) -> None:
         task = await self.get_task(task_id)
         if task is None:
@@ -1189,6 +1287,19 @@ class TaskBoard:
         await self._db.execute(
             "UPDATE tasks SET system_gate_runs = ? WHERE id = ?",
             (json.dumps(runs), task_id),
+        )
+
+    async def _append_review_gate_run(self, gate_id: str, run: dict) -> None:
+        gate = await self._db.execute_fetchone(
+            "SELECT system_gate_runs FROM review_gates WHERE id = ?", (gate_id,)
+        )
+        if gate is None:
+            raise ValueError(f"Review gate not found: {gate_id}")
+        runs = self._json_list(gate.get("system_gate_runs"))
+        runs.append(run)
+        await self._db.execute(
+            "UPDATE review_gates SET system_gate_runs = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(runs), _utcnow(), gate_id),
         )
 
     async def reject_task(self, task_id: str, reason: str) -> dict:
@@ -1361,6 +1472,11 @@ class TaskBoard:
             return
 
         group_id = task["group_id"]
+
+        await self._check_group_completion_for_group(group_id)
+
+    async def _check_group_completion_for_group(self, group_id: str) -> None:
+        """Check if all tasks and packages in a group are terminal."""
 
         # Check whether any task in this group is NOT in a terminal state.
         non_terminal = await self._db.execute_fetchone(

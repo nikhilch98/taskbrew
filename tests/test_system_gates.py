@@ -230,6 +230,18 @@ def _running_gate_runs(gate: str) -> str:
     )
 
 
+def _stale_running_gate_runs(gate: str) -> str:
+    return json.dumps(
+        [
+            {
+                "gate": gate,
+                "outcome": "running",
+                "started_at": "2000-01-01T00:00:00+00:00",
+            }
+        ]
+    )
+
+
 async def test_process_pending_once_processes_one_backlog_task_once(
     board: TaskBoard,
 ):
@@ -255,8 +267,8 @@ async def test_process_pending_once_processes_one_backlog_task_once(
     counts = await manager.process_pending_once()
     again = await manager.process_pending_once()
 
-    assert counts == {"backlog": 1, "review": 0}
-    assert again == {"backlog": 0, "review": 0}
+    assert counts == {"backlog": 1, "review": 0, "package_review": 0}
+    assert again == {"backlog": 0, "review": 0, "package_review": 0}
     assert len(analyzer.backlog_contexts) == 1
     assert analyzer.backlog_contexts[0]["task"]["id"] == task["id"]
     updated = await board.get_task(task["id"])
@@ -265,8 +277,12 @@ async def test_process_pending_once_processes_one_backlog_task_once(
     assert updated["needs_review_reason"] == "Touches shared orchestration."
 
 
-async def test_process_pending_once_approves_pending_review_task(board: TaskBoard):
+async def test_process_pending_once_approves_pending_review_task(
+    board: TaskBoard,
+    event_bus: RecordingEventBus,
+):
     review_task = await _create_review_task(board, output="Implementation summary.")
+    event_bus.events.clear()
     analyzer = FakeAnalyzer(
         review_results=[
             ReviewResult(outcome="approved", reason="Output satisfies the gate.")
@@ -276,7 +292,7 @@ async def test_process_pending_once_approves_pending_review_task(board: TaskBoar
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     assert len(analyzer.review_contexts) == 1
     assert analyzer.review_contexts[0]["task"]["id"] == review_task["id"]
     assert analyzer.review_contexts[0]["output_text"] == "Implementation summary."
@@ -285,6 +301,184 @@ async def test_process_pending_once_approves_pending_review_task(board: TaskBoar
     assert updated["review_status"] == "approved"
     gate_runs = json.loads(updated["system_gate_runs"])
     assert gate_runs[-1]["outcome"] == "approved"
+    assert event_bus.events[0] == (
+        "task.system_gate_started",
+        {
+            "task_id": review_task["id"],
+            "gate": "review",
+            "review_status": "running",
+        },
+    )
+    assert event_bus.events[-1][0] == "task.system_gate_finished"
+    assert event_bus.events[-1][1]["task_id"] == review_task["id"]
+    assert event_bus.events[-1][1]["outcome"] == "approved"
+    assert event_bus.events[-1][1]["status"] == "completed"
+
+
+async def test_process_pending_once_approves_package_review(board: TaskBoard):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package review bundle",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    assert claimed["id"] == task["id"]
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(outcome="approved", reason="Package satisfies spec.")
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts["package_review"] == 1
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "completed"
+    assert updated_package["review_status"] == "approved"
+    gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate["status"] == "completed"
+    assert gate["outcome"] == "approved"
+    assert len(analyzer.review_contexts) == 1
+    context = analyzer.review_contexts[0]
+    assert context["entity_type"] == "work_package"
+    assert context["package"]["id"] == package["id"]
+    assert context["tasks"][0]["id"] == task["id"]
+    groups = await board.get_groups()
+    completed_group = next(item for item in groups if item["id"] == group["id"])
+    assert completed_group["status"] == "completed"
+    assert completed_group["completed_at"] is not None
+
+
+async def test_package_review_analysis_error_marks_failed_and_does_not_raise(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package review parse failure",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build parse-sensitive package",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    assert claimed["id"] == task["id"]
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    analyzer = FakeAnalyzer(review_results=[SystemGateAnalysisError("bad json")])
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 0, "package_review": 0}
+    gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate["status"] == "failed"
+    assert gate["outcome"] == "failed_review"
+    assert gate["reason"] == "bad json"
+    gate_runs = json.loads(gate["system_gate_runs"])
+    assert gate_runs[-1]["outcome"] == "failed_review"
+    assert gate_runs[-1]["reason"] == "bad json"
+
+
+async def test_process_pending_once_retries_stale_running_package_review(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Stale package review bundle",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build stale package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    assert claimed["id"] == task["id"]
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+    gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate is not None
+    await board._db.execute(
+        "UPDATE review_gates SET status = 'running', system_gate_runs = ?, "
+        "updated_at = ? WHERE id = ?",
+        (
+            _stale_running_gate_runs("package_review"),
+            "2000-01-01T00:00:00+00:00",
+            gate["id"],
+        ),
+    )
+
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(outcome="approved", reason="Package satisfies spec.")
+        ]
+    )
+    manager = SystemGateManager(
+        board=board,
+        analyzer=analyzer,
+        running_timeout_seconds=1,
+    )
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 0, "package_review": 1}
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "completed"
+    assert updated_package["review_status"] == "approved"
+    updated_gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE id = ?",
+        (gate["id"],),
+    )
+    assert updated_gate["status"] == "completed"
+    assert updated_gate["outcome"] == "approved"
 
 
 async def test_process_pending_once_creates_revision_tasks_for_needs_revision(
@@ -312,7 +506,7 @@ async def test_process_pending_once_creates_revision_tasks_for_needs_revision(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "review"
     assert updated["review_status"] == "waiting_revision"
@@ -337,7 +531,7 @@ async def test_process_pending_once_defaults_revision_task_when_missing(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     updated = await board.get_task(review_task["id"])
     revision_ids = json.loads(updated["revision_task_ids"])
     assert len(revision_ids) == 1
@@ -367,7 +561,7 @@ async def test_process_pending_once_rejects_when_review_round_limit_reached(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "rejected"
     assert updated["review_status"] == "rejected"
@@ -399,7 +593,7 @@ async def test_process_pending_once_skips_active_running_backlog_task(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 0}
+    assert counts == {"backlog": 0, "review": 0, "package_review": 0}
     assert analyzer.backlog_contexts == []
     updated = await board.get_task(task["id"])
     assert updated["status"] == "backlog"
@@ -427,7 +621,7 @@ async def test_process_pending_once_retries_running_backlog_without_audit(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 1, "review": 0}
+    assert counts == {"backlog": 1, "review": 0, "package_review": 0}
     updated = await board.get_task(task["id"])
     assert updated["status"] == "pending"
     assert updated["backlog_intake_status"] == "completed"
@@ -464,7 +658,7 @@ async def test_process_pending_once_retries_running_backlog_with_naive_timestamp
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 1, "review": 0}
+    assert counts == {"backlog": 1, "review": 0, "package_review": 0}
     updated = await board.get_task(task["id"])
     assert updated["status"] == "pending"
 
@@ -497,7 +691,7 @@ async def test_active_running_backlog_does_not_starve_pending_backlog(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 1, "review": 0}
+    assert counts == {"backlog": 1, "review": 0, "package_review": 0}
     active_updated = await board.get_task(active["id"])
     pending_updated = await board.get_task(pending["id"])
     assert active_updated["status"] == "backlog"
@@ -537,7 +731,7 @@ async def test_many_active_running_backlog_rows_do_not_starve_pending_backlog(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 1, "review": 0}
+    assert counts == {"backlog": 1, "review": 0, "package_review": 0}
     pending_updated = await board.get_task(pending["id"])
     assert pending_updated["status"] == "pending"
     assert len(analyzer.backlog_contexts) == 1
@@ -574,7 +768,7 @@ async def test_process_pending_once_retries_stale_running_backlog_task(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 1, "review": 0}
+    assert counts == {"backlog": 1, "review": 0, "package_review": 0}
     updated = await board.get_task(task["id"])
     assert updated["status"] == "pending"
     assert updated["backlog_intake_status"] == "completed"
@@ -594,7 +788,7 @@ async def test_process_pending_once_skips_active_running_review_task(board: Task
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 0}
+    assert counts == {"backlog": 0, "review": 0, "package_review": 0}
     assert analyzer.review_contexts == []
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "review"
@@ -616,7 +810,7 @@ async def test_process_pending_once_retries_running_review_without_audit(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "completed"
     assert updated["review_status"] == "approved"
@@ -647,7 +841,7 @@ async def test_process_pending_once_retries_running_review_with_naive_timestamp(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "completed"
 
@@ -669,7 +863,7 @@ async def test_active_running_review_does_not_starve_pending_review(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     active_updated = await board.get_task(active["id"])
     pending_updated = await board.get_task(pending["id"])
     assert active_updated["status"] == "review"
@@ -696,7 +890,7 @@ async def test_many_active_running_review_rows_do_not_starve_pending_review(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     pending_updated = await board.get_task(pending["id"])
     assert pending_updated["status"] == "completed"
     assert pending_updated["review_status"] == "approved"
@@ -723,7 +917,7 @@ async def test_process_pending_once_retries_stale_running_review_task(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "completed"
     assert updated["review_status"] == "approved"
@@ -1044,7 +1238,7 @@ async def test_backlog_analyzer_exception_marks_intake_failed(board: TaskBoard):
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 0}
+    assert counts == {"backlog": 0, "review": 0, "package_review": 0}
     updated = await board.get_task(task["id"])
     assert updated["status"] == "backlog"
     assert updated["backlog_intake_status"] == "failed"
@@ -1082,7 +1276,7 @@ async def test_review_failed_review_outcome_marks_failed_and_appends_audit(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 1}
+    assert counts == {"backlog": 0, "review": 1, "package_review": 0}
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "review"
     assert updated["review_status"] == "failed"
@@ -1100,7 +1294,7 @@ async def test_review_analyzer_exception_marks_failed_and_appends_audit(
 
     counts = await manager.process_pending_once()
 
-    assert counts == {"backlog": 0, "review": 0}
+    assert counts == {"backlog": 0, "review": 0, "package_review": 0}
     updated = await board.get_task(review_task["id"])
     assert updated["status"] == "review"
     assert updated["review_status"] == "failed"
