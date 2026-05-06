@@ -174,6 +174,12 @@ class TaskBoard:
         review_scope: str = DEFAULT_PACKAGE_REVIEW_SCOPE,
     ) -> dict:
         """Create a work package for a group."""
+        group = await self._db.execute_fetchone(
+            "SELECT 1 FROM groups WHERE id = ?", (group_id,)
+        )
+        if group is None:
+            raise ValueError(f"Group not found: {group_id}")
+
         await self._db.register_prefix("WP")
         package_id = await self._db.generate_task_id("WP")
         now = _utcnow()
@@ -213,6 +219,46 @@ class TaskBoard:
             "SELECT * FROM work_packages WHERE group_id = ? ORDER BY created_at",
             (group_id,),
         )
+
+    async def get_work_package_board(self, group_id: str | None = None) -> dict:
+        """Return work packages grouped by package status with task counts."""
+        clauses: list[str] = []
+        params: list[str] = []
+        if group_id is not None:
+            clauses.append("group_id = ?")
+            params.append(group_id)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        package_rows = await self._db.execute_fetchall(
+            f"SELECT * FROM work_packages{where} ORDER BY created_at",
+            tuple(params),
+        )
+
+        package_ids = [package["id"] for package in package_rows]
+        counts_by_package: dict[str, dict[str, int]] = {}
+        if package_ids:
+            placeholders = ",".join("?" * len(package_ids))
+            count_rows = await self._db.execute_fetchall(
+                "SELECT work_package_id, status, COUNT(*) AS count "
+                "FROM tasks "
+                f"WHERE work_package_id IN ({placeholders}) "
+                "GROUP BY work_package_id, status",
+                tuple(package_ids),
+            )
+            for row in count_rows:
+                package_counts = counts_by_package.setdefault(row["work_package_id"], {})
+                package_counts[row["status"]] = int(row["count"] or 0)
+
+        columns: dict[str, list[dict]] = {status: [] for status in PACKAGE_STATUSES}
+        packages: list[dict] = []
+        for package in package_rows:
+            status_counts = counts_by_package.get(package["id"], {})
+            task_counts = dict(status_counts)
+            task_counts["total"] = sum(status_counts.values())
+            card = dict(package)
+            card["task_counts"] = task_counts
+            columns.setdefault(card["status"], []).append(card)
+            packages.append(card)
+        return {"columns": columns, "packages": packages}
 
     async def ensure_review_gate(
         self,

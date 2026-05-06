@@ -21,6 +21,7 @@ from taskbrew.dashboard.models import (
     CompleteTaskBody,
     CreateTaskBody,
     CreateTemplateBody,
+    CreateWorkPackageBody,
     CreateWorkflowBody,
     InstantiateTemplateBody,
     ReassignTaskBody,
@@ -125,6 +126,40 @@ async def get_board(
 async def get_groups(status: str | None = None):
     orch = get_orch()
     return await orch.task_board.get_groups(status=status)
+
+
+@router.post("/api/work-packages")
+async def create_work_package(body: CreateWorkPackageBody):
+    orch = get_orch()
+    try:
+        package = await orch.task_board.create_work_package(
+            group_id=body.group_id,
+            title=body.title,
+            description=body.description,
+            milestone_id=body.milestone_id,
+            created_by=body.created_by,
+            risk_level=body.risk_level,
+            review_scope=body.review_scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await orch.event_bus.emit(
+        "work_package.created",
+        {"work_package_id": package["id"], "group_id": body.group_id},
+    )
+    return package
+
+
+@router.get("/api/work-packages")
+async def get_work_packages(group_id: str):
+    orch = get_orch()
+    return await orch.task_board.get_group_work_packages(group_id)
+
+
+@router.get("/api/work-packages/board")
+async def get_work_package_board(group_id: str | None = None):
+    orch = get_orch()
+    return await orch.task_board.get_work_package_board(group_id=group_id)
 
 
 @router.get("/api/groups/{group_id}/graph")
@@ -570,18 +605,24 @@ async def create_task(body: CreateTaskBody):
                 f"tasks in chain). Human intervention required.",
             )
 
-    task = await orch.task_board.create_task(
-        group_id=body.group_id,
-        title=body.title,
-        task_type=body.task_type,
-        assigned_to=body.assigned_to,
-        created_by=body.assigned_by,
-        description=body.description,
-        priority=body.priority,
-        parent_id=parent_id,
-        blocked_by=body.blocked_by,
-        requires_fanout=body.requires_fanout,
-    )
+    try:
+        task = await orch.task_board.create_task(
+            group_id=body.group_id,
+            title=body.title,
+            task_type=body.task_type,
+            assigned_to=body.assigned_to,
+            created_by=body.assigned_by,
+            description=body.description,
+            priority=body.priority,
+            parent_id=parent_id,
+            blocked_by=body.blocked_by,
+            requires_fanout=body.requires_fanout,
+            work_package_id=body.work_package_id,
+            milestone_id=body.milestone_id,
+            review_scope=body.review_scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     await orch.event_bus.emit("task.created", {"task_id": task["id"], "group_id": body.group_id})
     return task
 

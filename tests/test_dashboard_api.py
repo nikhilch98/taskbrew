@@ -186,6 +186,176 @@ async def test_get_agents(app_client):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
+    assert any(agent["instance_id"] == "system-agent" for agent in data)
+
+
+async def test_get_agents_shows_running_system_review(app_client):
+    board = app_client["board"]
+    db = app_client["db"]
+    group = await board.create_group(title="System review visibility", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Review-visible task",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="pm",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Exercise system review visibility.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    completed = await board.complete_task_with_output(claimed["id"], "Ready.")
+    await db.execute(
+        "UPDATE tasks SET review_status = 'running' WHERE id = ?",
+        (completed["id"],),
+    )
+
+    resp = await app_client["client"].get("/api/agents")
+
+    assert resp.status_code == 200
+    system_agent = next(
+        agent for agent in resp.json() if agent["instance_id"] == "system-agent"
+    )
+    assert system_agent["status"] == "working"
+    assert system_agent["current_task"] == completed["id"]
+    assert system_agent["current_gate"] == "review"
+    assert system_agent["status_detail"] == "reviewing"
+
+
+async def test_work_package_api_round_trip(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(
+        title="Dashboard package group",
+        origin="pm",
+        created_by="pm",
+    )
+
+    package_resp = await client.post(
+        "/api/work-packages",
+        json={
+            "group_id": group["id"],
+            "title": "Dashboard live updates",
+            "description": "Reviewable dashboard slice.",
+            "created_by": "architect-1",
+            "risk_level": "medium",
+        },
+    )
+
+    assert package_resp.status_code == 200
+    package = package_resp.json()
+    assert package["id"].startswith("WP-")
+
+    list_resp = await client.get(f"/api/work-packages?group_id={group['id']}")
+    assert list_resp.status_code == 200
+    assert any(pkg["id"] == package["id"] for pkg in list_resp.json())
+    assert any(
+        event["type"] == "work_package.created"
+        and event["work_package_id"] == package["id"]
+        for event in app_client["event_bus"].get_history()
+    )
+
+    task_resp = await client.post(
+        "/api/tasks",
+        json={
+            "group_id": group["id"],
+            "work_package_id": package["id"],
+            "title": "Implement websocket refresh",
+            "assigned_to": "coder",
+            "assigned_by": "human",
+            "task_type": "implementation",
+            "priority": "high",
+        },
+    )
+
+    assert task_resp.status_code == 200
+    task = task_resp.json()
+    assert task["work_package_id"] == package["id"]
+
+    board_resp = await client.get(
+        f"/api/work-packages/board?group_id={group['id']}"
+    )
+
+    assert board_resp.status_code == 200
+    data = board_resp.json()
+    assert data["columns"]["pending"][0]["id"] == package["id"]
+    assert data["columns"]["pending"][0]["task_counts"]["total"] == 1
+
+
+async def test_create_work_package_rejects_missing_group(app_client):
+    resp = await app_client["client"].post(
+        "/api/work-packages",
+        json={
+            "group_id": "GRP-NOPE",
+            "title": "Orphaned package",
+            "created_by": "architect-1",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "Group not found" in resp.text
+
+
+async def test_create_task_rejects_invalid_work_package(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(
+        title="Invalid package group",
+        origin="pm",
+        created_by="pm",
+    )
+
+    resp = await client.post(
+        "/api/tasks",
+        json={
+            "group_id": group["id"],
+            "work_package_id": "WP-DOES-NOT-EXIST",
+            "title": "Implement package-linked work",
+            "assigned_to": "coder",
+            "assigned_by": "human",
+            "task_type": "implementation",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "Work package" in resp.text
+
+
+async def test_create_task_rejects_work_package_from_different_group(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group_a = await board.create_group(
+        title="Package source group",
+        origin="pm",
+        created_by="pm",
+    )
+    group_b = await board.create_group(
+        title="Task target group",
+        origin="pm",
+        created_by="pm",
+    )
+    package = await board.create_work_package(
+        group_id=group_a["id"],
+        title="Source package",
+        created_by="architect-1",
+    )
+
+    resp = await client.post(
+        "/api/tasks",
+        json={
+            "group_id": group_b["id"],
+            "work_package_id": package["id"],
+            "title": "Implement misplaced package work",
+            "assigned_to": "coder",
+            "assigned_by": "human",
+            "task_type": "implementation",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "Work package" in resp.text
 
 
 async def test_get_group_graph(app_client):

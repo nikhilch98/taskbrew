@@ -73,6 +73,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         parent_id: str = "",
         blocked_by: str = "",
         requires_fanout: str = "",
+        work_package_id: str = "",
     ) -> str:
         """Create a new task on the task board and assign it to an agent role.
 
@@ -93,6 +94,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
                 receives your design as context via parent_artifact. Omitting
                 it on an architect->coder route returns HTTP 400.
             blocked_by: Comma-separated list of task IDs that must complete before this one starts. Leave empty if not blocked.
+            work_package_id: Optional Work Package ID to attach this task to.
             requires_fanout: Optional override for the fan-out gate.
                 - Leave empty ("") to use the task_type default (tech_design
                   requires fan-out; everything else does not).
@@ -116,6 +118,8 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             payload["parent_id"] = parent_id
         if blocked_by:
             payload["blocked_by"] = [t.strip() for t in blocked_by.split(",") if t.strip()]
+        if work_package_id:
+            payload["work_package_id"] = work_package_id
         denial = gate_or_error("create_task")
         if denial:
             return denial
