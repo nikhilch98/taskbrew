@@ -19,3 +19,5 @@ def test_task_tools_server_has_create_task_tool():
     # FastMCP stores tools in ._tool_manager._tools dict keyed by name
     tool_names = list(server._tool_manager._tools.keys())
     assert "create_task" in tool_names
+    assert "create_work_package" in tool_names
+    assert "update_work_package" in tool_names

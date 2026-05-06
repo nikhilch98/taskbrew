@@ -110,6 +110,23 @@ def create_app(
         "CORS_ORIGINS", "http://localhost:8000,http://localhost:3000"
     )
     cors_origins = [origin.strip() for origin in raw_cors.split(",") if origin.strip()]
+
+    def _dashboard_origins() -> list[str]:
+        """Return same-machine browser origins for the configured dashboard."""
+        _tc = team_config
+        if not _tc and project_manager and project_manager.orchestrator:
+            _tc = project_manager.orchestrator.team_config
+        host = getattr(_tc, "dashboard_host", None) or "127.0.0.1"
+        port = getattr(_tc, "dashboard_port", None) or 8420
+
+        hosts: set[str] = {host}
+        if host in {"0.0.0.0", "::", "", "127.0.0.1", "localhost", "::1"}:
+            hosts.update({"127.0.0.1", "localhost", "[::1]"})
+        return [f"http://{h}:{port}" for h in hosts if h not in {"0.0.0.0", "::"}]
+
+    for origin in _dashboard_origins():
+        if origin not in cors_origins:
+            cors_origins.append(origin)
     # audit 10 F#8: refuse the ``*`` wildcard when we ship
     # allow_credentials=True. Browsers reject this combination anyway,
     # but a mis-configured ``CORS_ORIGINS=*`` would previously run in

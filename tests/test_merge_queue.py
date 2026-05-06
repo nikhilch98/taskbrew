@@ -87,8 +87,41 @@ async def test_merge_queue_enqueue_is_idempotent(board: TaskBoard):
     )
 
     assert first["id"] == second["id"]
+    assert first["source_type"] == "verifier_approval"
+    assert first["source_entity_id"] == verifier["id"]
+    assert first["work_package_id"] is None
     counts = await queue.counts_for_group(group["id"])
     assert counts == {"queued": 1}
+
+
+async def test_merge_queue_package_integration_rows_are_first_class(
+    board: TaskBoard,
+):
+    group, parent, _verifier = await _verified_task_pair(board)
+    package_id = parent["work_package_id"]
+    queue = MergeQueue(board._db)
+
+    first = await queue.enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package_id,
+        parent_task_id=parent["id"],
+        source_branch="feat/cd-001",
+        target_branch="main",
+    )
+    second = await queue.enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package_id,
+        parent_task_id=parent["id"],
+        source_branch="feat/cd-001",
+        target_branch="main",
+    )
+
+    assert first["id"] == second["id"]
+    assert first["source_type"] == "package_approval"
+    assert first["source_entity_id"] == package_id
+    assert first["work_package_id"] == package_id
+    rows = await queue.list_for_package(package_id)
+    assert [row["id"] for row in rows] == [first["id"]]
 
 
 async def test_merge_queue_claims_fifo_and_recovers_expired_leases(board: TaskBoard):
@@ -123,6 +156,10 @@ async def test_group_completion_blocks_on_open_merge_queue(board: TaskBoard):
     )
     await board._db.execute(
         "UPDATE tasks SET status = 'completed' WHERE group_id = ?",
+        (group["id"],),
+    )
+    await board._db.execute(
+        "UPDATE work_packages SET status = 'completed' WHERE group_id = ?",
         (group["id"],),
     )
 
@@ -174,6 +211,47 @@ async def test_successful_merge_supersedes_older_conflict_for_parent(board: Task
     assert await queue.has_open_group_merges(group["id"]) is False
 
 
+async def test_successful_package_merge_supersedes_older_package_conflicts(
+    board: TaskBoard,
+):
+    group, parent, _verifier = await _verified_task_pair(board, "feat/cd-001")
+    _, revision, _ = await _verified_task_pair(board, "feat/cd-001-revision")
+    package_id = parent["work_package_id"]
+    await board._db.execute(
+        "UPDATE tasks SET work_package_id = ? WHERE id = ?",
+        (package_id, revision["id"]),
+    )
+    queue = MergeQueue(board._db)
+    old = await queue.enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package_id,
+        parent_task_id=parent["id"],
+        source_branch="feat/cd-001",
+        target_branch="main",
+    )
+    newer = await queue.enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package_id,
+        parent_task_id=revision["id"],
+        source_branch="feat/cd-001-revision",
+        target_branch="main",
+    )
+    await queue.complete(old["id"], status="conflict", details="CONFLICT")
+    await queue.complete(newer["id"], status="merged")
+
+    count = await queue.supersede_open_for_package(
+        work_package_id=package_id,
+        except_row_id=newer["id"],
+        details="newer package merge landed",
+    )
+
+    assert count == 1
+    rows = await board._db.execute_fetchall("SELECT id, status FROM merge_queue")
+    statuses = {row["id"]: row["status"] for row in rows}
+    assert statuses[old["id"]] == "superseded"
+    assert statuses[newer["id"]] == "merged"
+
+
 async def test_merge_broker_merges_branch_and_refreshes_root(tmp_path, board: TaskBoard):
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -205,6 +283,72 @@ async def test_merge_broker_merges_branch_and_refreshes_root(tmp_path, board: Ta
     assert parent_row["merge_status"] == "merged"
     assert verifier_row["merge_status"] == "merged"
     assert counts == {"merged": 1}
+
+
+async def test_package_merge_conflict_creates_package_revision_task(tmp_path, board: TaskBoard):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "settings.py").write_text("VALUE = 1\n")
+    _git(repo, "add", "settings.py")
+    _git(repo, "commit", "-m", "add settings")
+    _git(repo, "checkout", "-b", "feat/cd-001")
+    (repo / "settings.py").write_text("VALUE = 2\n")
+    _git(repo, "add", "settings.py")
+    _git(repo, "commit", "-m", "feature change")
+    _git(repo, "checkout", "main")
+    (repo / "settings.py").write_text("VALUE = 3\n")
+    _git(repo, "add", "settings.py")
+    _git(repo, "commit", "-m", "main change")
+
+    group = await board.create_group(title="Feature", origin="human", created_by="human")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package integration",
+        created_by="architect-1",
+    )
+    parent = await board.create_task(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        title="Implementation",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        branch_name="feat/cd-001",
+        parent_branch="main",
+    )
+    await board._db.execute(
+        "UPDATE work_packages SET status = 'integrating', review_status = 'approved' "
+        "WHERE id = ?",
+        (package["id"],),
+    )
+    queue = MergeQueue(board._db)
+    await queue.enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        parent_task_id=parent["id"],
+        source_branch="feat/cd-001",
+        target_branch="main",
+    )
+    broker = MergeBroker(
+        merge_queue=queue,
+        task_board=board,
+        event_bus=EventBus(),
+        repo_dir=str(repo),
+        poll_interval=0.01,
+    )
+
+    assert await broker.process_once() is True
+
+    row = await board._db.execute_fetchone("SELECT * FROM merge_queue")
+    assert row["status"] == "conflict"
+    revisions = await board._db.execute_fetchall(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision'",
+        (package["id"],),
+    )
+    assert len(revisions) == 1
+    assert revisions[0]["status"] == "backlog"
+    assert revisions[0]["revision_of"] == parent["id"]
+    assert package["id"] in revisions[0]["description"]
 
 
 async def test_merge_broker_preserves_dirty_root_changes(tmp_path, board: TaskBoard):

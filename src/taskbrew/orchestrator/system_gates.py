@@ -6,8 +6,10 @@ import asyncio
 import json
 import logging
 import re
+import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from time import monotonic
 from typing import Any
 
@@ -25,10 +27,19 @@ _GATE_LOCKS: dict[tuple[str, str], tuple[asyncio.AbstractEventLoop, asyncio.Lock
 _GATE_RECENT_ATTEMPTS: dict[
     tuple[str, str], tuple[asyncio.AbstractEventLoop, float]
 ] = {}
+_PLANNING_ROLES = {"pm", "architect"}
+_PLANNING_TASK_TYPES = {"goal", "tech_design", "architecture_review"}
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_planning_task(task: dict) -> bool:
+    return (
+        str(task.get("assigned_to") or "").lower() in _PLANNING_ROLES
+        or str(task.get("task_type") or "").lower() in _PLANNING_TASK_TYPES
+    )
 
 
 @dataclass(frozen=True)
@@ -142,6 +153,11 @@ class AgentRunnerSystemGateAnalyzer(SystemGateAnalyzer):
             "You are running TaskBrew backlog intake for exactly one task.\n"
             "Decide only whether the task should require system review after completion.\n"
             "Do not rewrite, split, reprioritize, or modify the task.\n"
+            "Review the task against its own role and task type, not against the "
+            "final group goal. PM goal and Architect tech_design tasks usually "
+            "produce planning artifacts; their implementation output is validated "
+            "later through downstream task or work-package review, so do not mark "
+            "them needs_review only because the final deliverable is code.\n"
             "Return only strict JSON with this shape:\n"
             '{"needs_review": true, "reason": "string", '
             '"signals": ["string"], "confidence": "low|medium|high"}\n\n'
@@ -157,6 +173,10 @@ class AgentRunnerSystemGateAnalyzer(SystemGateAnalyzer):
             "Choose exactly one outcome: approved, needs_revision, rejected, failed_review.\n"
             "Use rejected only when the task should not continue; fixable work must become "
             "revision tasks.\n"
+            "Review the completed task against the task's own role contract. If a PM "
+            "or Architect planning task needs revision, create a planning revision "
+            "for the same role; do not create implementation/coder revisions from a "
+            "planning-task review.\n"
             "Return only strict JSON with this shape:\n"
             '{"outcome": "approved|needs_revision|rejected|failed_review", '
             '"reason": "string", "revisions": [{"title": "string", '
@@ -280,17 +300,78 @@ class SystemGateManager:
                 "SELECT * FROM groups WHERE id = ?", (package["group_id"],)
             )
             tasks = await self._board._db.execute_fetchall(
-                "SELECT id, title, status, task_type, assigned_to, priority, "
-                "output_text, completion_checks, branch_name, parent_branch "
+                "SELECT id, title, description, status, task_type, assigned_to, "
+                "priority, output_text, completion_checks, branch_name, "
+                "parent_branch, created_by, created_at, completed_at "
                 "FROM tasks WHERE work_package_id = ? ORDER BY created_at",
                 (package_id,),
             )
+        integration_queue = await self._board._db.execute_fetchall(
+            "SELECT * FROM merge_queue WHERE work_package_id = ? ORDER BY created_at",
+            (package_id,),
+        )
         return {
             "entity_type": "work_package",
             "package": package,
             "group": group,
             "tasks": tasks,
+            "integration_queue": integration_queue,
+            "branch_diffs": await self._package_branch_diffs(tasks),
         }
+
+    async def _package_branch_diffs(self, tasks: list[dict]) -> list[dict]:
+        repo_dir = getattr(self._board, "_package_repo_dir", None)
+        if repo_dir is None:
+            return []
+        result: list[dict] = []
+        for task in tasks:
+            source_branch = task.get("branch_name")
+            if not source_branch:
+                continue
+            target_branch = self._package_target_branch(task)
+            if source_branch == target_branch:
+                continue
+            diff_stat = self._git_text(
+                repo_dir,
+                "diff",
+                "--stat",
+                f"{target_branch}...{source_branch}",
+            )
+            commit_log = self._git_text(
+                repo_dir,
+                "log",
+                "--oneline",
+                "--decorate=no",
+                f"{target_branch}..{source_branch}",
+            )
+            result.append(
+                {
+                    "task_id": task["id"],
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "diff_stat": diff_stat[:4000],
+                    "commit_log": commit_log[:4000],
+                }
+            )
+        return result
+
+    def _package_target_branch(self, task: dict) -> str:
+        target_fn = getattr(self._board, "_package_target_branch", None)
+        if callable(target_fn):
+            return target_fn(task)
+        return task.get("parent_branch") or "main"
+
+    def _git_text(self, repo_dir: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=repo_dir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return (proc.stderr or proc.stdout).strip()
+        return proc.stdout.strip()
 
     async def process_backlog_task(self, task_id: str) -> bool:
         async with self._gate_lock("backlog", task_id):
@@ -336,9 +417,11 @@ class SystemGateManager:
         )
         running_task = rows[0]
         try:
-            result = await self._analyzer.decide_needs_review(
-                await self._backlog_context(running_task)
-            )
+            result = self._backlog_intake_override(running_task)
+            if result is None:
+                result = await self._analyzer.decide_needs_review(
+                    await self._backlog_context(running_task)
+                )
             updated = await self._board.apply_backlog_intake_decision(
                 task_id,
                 needs_review=result.needs_review,
@@ -369,6 +452,18 @@ class SystemGateManager:
             return False
         finally:
             self._mark_gate_attempt("backlog", task_id)
+        await self._board._append_system_gate_run(
+            task_id,
+            {
+                "gate": "backlog",
+                "outcome": "completed",
+                "reason": result.reason,
+                "signals": result.signals,
+                "confidence": result.confidence,
+                "needs_review": result.needs_review,
+                "finished_at": _utcnow(),
+            },
+        )
         await self._emit_task_event(
             "task.system_gate_finished",
             task_id,
@@ -379,6 +474,23 @@ class SystemGateManager:
             backlog_intake_status="completed",
         )
         return True
+
+    def _backlog_intake_override(self, task: dict) -> BacklogIntakeResult | None:
+        if not _is_planning_task(task):
+            return None
+        return BacklogIntakeResult(
+            needs_review=False,
+            reason=(
+                "Planning tasks are validated through their downstream task and "
+                "work-package review flow; task-level review would duplicate the "
+                "final system gate and can create premature revision work."
+            ),
+            signals=[
+                "planning_role_or_task_type",
+                "downstream_work_package_review_is_primary_gate",
+            ],
+            confidence="high",
+        )
 
     async def process_review_task(self, task_id: str) -> bool:
         async with self._gate_lock("review", task_id):
@@ -689,6 +801,9 @@ class SystemGateManager:
             revisions = result.revisions or [
                 RevisionRequest(description=result.reason)
             ]
+            original = await self._board.get_task(task_id)
+            if original is not None:
+                revisions = self._normalize_review_revisions(original, revisions)
             created = await self._board.create_review_revision_tasks(
                 task_id,
                 [self._revision_to_dict(revision) for revision in revisions],
@@ -904,6 +1019,27 @@ class SystemGateManager:
             for key, value in asdict(revision).items()
             if value not in (None, "")
         }
+
+    def _normalize_review_revisions(
+        self,
+        original: dict,
+        revisions: list[RevisionRequest],
+    ) -> list[RevisionRequest]:
+        if not _is_planning_task(original):
+            return revisions
+        assigned_to = original.get("assigned_to") or "pm"
+        normalized: list[RevisionRequest] = []
+        for index, revision in enumerate(revisions, start=1):
+            normalized.append(
+                RevisionRequest(
+                    title=revision.title or f"Revise planning output for {original['id']}",
+                    description=revision.description,
+                    assigned_to=assigned_to,
+                    task_type="revision",
+                    priority=revision.priority or original.get("priority") or "medium",
+                )
+            )
+        return normalized
 
     async def _dependencies(self, task_id: str) -> list[dict]:
         return await self._board._db.execute_fetchall(

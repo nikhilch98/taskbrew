@@ -913,6 +913,7 @@
         .accent-pending { background: var(--accent-indigo); box-shadow: 0 0 8px rgba(99, 102, 241, 0.4); }
         .accent-in_progress { background: var(--accent-blue); box-shadow: 0 0 8px rgba(59, 130, 246, 0.4); }
         .accent-review { background: var(--accent-cyan); box-shadow: 0 0 8px rgba(6, 182, 212, 0.35); }
+        .accent-integrating { background: var(--accent-purple); box-shadow: 0 0 8px rgba(139, 92, 246, 0.35); }
         .accent-completed { background: var(--accent-emerald); box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
         .accent-rejected { background: var(--accent-rose); box-shadow: 0 0 8px rgba(244, 63, 94, 0.4); }
         .accent-failed { background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.5); }
@@ -5309,6 +5310,7 @@
                 <option value="pending">Pending</option>
                 <option value="in_progress">In Progress</option>
                 <option value="review">Review</option>
+                <option value="integrating">Integrating</option>
                 <option value="blocked">Blocked</option>
                 <option value="completed">Completed</option>
                 <option value="rejected">Rejected</option>
@@ -5351,6 +5353,7 @@
                 <option value="pending">Pending</option>
                 <option value="in_progress">In Progress</option>
                 <option value="review">Review</option>
+                <option value="integrating">Integrating</option>
                 <option value="blocked">Blocked</option>
                 <option value="completed">Completed</option>
                 <option value="rejected">Rejected</option>
@@ -5506,6 +5509,7 @@
                 <option value="pending">Pending</option>
                 <option value="in_progress">In Progress</option>
                 <option value="review">Review</option>
+                <option value="integrating">Integrating</option>
                 <option value="completed">Completed</option>
                 <option value="blocked">Blocked</option>
                 <option value="rejected">Rejected</option>
@@ -5572,6 +5576,12 @@
                                     <h3><span class="accent-bar accent-review"></span> Review <span class="count" id="countReview">0</span></h3>
                                 </div>
                                 <div class="column-tasks" id="tasksReview" role="list" aria-label="Review task cards"></div>
+                            </div>
+                            <div class="kanban-column" id="col-integrating" role="listitem" aria-label="Integrating work packages">
+                                <div class="kanban-column-header">
+                                    <h3><span class="accent-bar accent-integrating"></span> Integrating <span class="count" id="countIntegrating">0</span></h3>
+                                </div>
+                                <div class="column-tasks" id="tasksIntegrating" role="list" aria-label="Integrating work package cards"></div>
                             </div>
                             <div class="kanban-column" id="col-blocked" role="listitem" aria-label="Blocked tasks">
                                 <div class="kanban-column-header">
@@ -6381,11 +6391,13 @@
 
         const STATUS_ICONS = {
             backlog: 'B', blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1',
-            review: 'R', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5'
+            review: 'R', integrating: '\u21C4', completed: '\u2705',
+            rejected: '\u274C', failed: '\uD83D\uDCA5'
         };
 
         const BOARD_STATUSES = [
-            'backlog', 'pending', 'in_progress', 'review', 'blocked', 'completed', 'rejected', 'failed'
+            'backlog', 'pending', 'in_progress', 'review', 'integrating',
+            'blocked', 'completed', 'rejected', 'failed'
         ];
 
         const BOARD_COLUMNS = {
@@ -6393,6 +6405,7 @@
             pending:     { el: 'tasksPending',    count: 'countPending' },
             in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
             review:      { el: 'tasksReview',     count: 'countReview' },
+            integrating: { el: 'tasksIntegrating', count: 'countIntegrating' },
             blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
             completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
             rejected:    { el: 'tasksRejected',   count: 'countRejected' },
@@ -7090,6 +7103,7 @@
             const reviewStatus = pkg.review_status || 'not_started';
             const gate = pkg.review_gate || null;
             const gateStatus = gate ? (gate.status || 'pending') : reviewStatus;
+            const latestIntegration = pkg.latest_integration || null;
             const attentionCount = Array.isArray(pkg.attention_reasons) ? pkg.attention_reasons.length : 0;
 
             let html = '<div class="task-card-header">';
@@ -7109,7 +7123,18 @@
             if (pkg.group_id) {
                 html += '<span class="badge badge-group">' + escapeHtml(pkg.group_id) + '</span>';
             }
+            if (latestIntegration) {
+                html += '<span class="badge badge-system-gate gate-state-' +
+                    escapeHtml(classToken(latestIntegration.status || 'queued')) + '">' +
+                    'Merge ' + escapeHtml(formatPackageLabel(latestIntegration.status || 'queued')) +
+                    '</span>';
+            }
             html += '</div>';
+            if (latestIntegration) {
+                html += '<div class="package-attention-line">' +
+                    escapeHtml((latestIntegration.source_branch || '?') + ' -> ' +
+                        (latestIntegration.target_branch || 'main')) + '</div>';
+            }
             if (gate && gate.status === 'running') {
                 html += '<div class="task-card-system-gate">' +
                     '<span class="system-gate-dot"></span> System agent reviewing</div>';
@@ -7164,6 +7189,7 @@
                 ['Packages', counts.packages_total || 0],
                 ['Active', counts.packages_active || 0],
                 ['Review', counts.packages_review || 0],
+                ['Integrating', counts.packages_integrating || 0],
                 ['Blocked', counts.packages_blocked || 0],
                 ['Revision', counts.packages_waiting_revision || 0],
                 ['Attention', counts.packages_attention || 0],
@@ -7321,7 +7347,7 @@
         }
 
         function renderPackageDrawerTabs(detail) {
-            const tabs = ['tasks', 'review', 'artifacts', 'history'];
+            const tabs = ['tasks', 'review', 'integration', 'artifacts', 'history'];
             let html = '<div class="package-tabs">';
             tabs.forEach(function(tab) {
                 html += '<button type="button" class="' + (currentPackageDrawerTab === tab ? 'active' : '') +
@@ -7331,6 +7357,8 @@
             html += '</div><div class="package-tab-body">';
             if (currentPackageDrawerTab === 'review') {
                 html += renderPackageReviewTab(detail);
+            } else if (currentPackageDrawerTab === 'integration') {
+                html += renderPackageIntegrationTab(detail);
             } else if (currentPackageDrawerTab === 'artifacts') {
                 html += renderPackageArtifactsTab(detail);
             } else if (currentPackageDrawerTab === 'history') {
@@ -7339,6 +7367,23 @@
                 html += renderPackageTasksTab(detail);
             }
             html += '</div>';
+            return html;
+        }
+
+        function renderPackageIntegrationTab(detail) {
+            const rows = detail.integration_queue || [];
+            if (!rows.length) return '<div class="rail-empty">No integration queue items</div>';
+            let html = '';
+            rows.forEach(function(row) {
+                html += '<div class="package-detail-row"><strong>' +
+                    escapeHtml(row.id || '') + '</strong><span>' +
+                    escapeHtml((row.source_branch || '?') + ' -> ' + (row.target_branch || 'main')) +
+                    '</span><em>' + escapeHtml(formatPackageLabel(row.status || 'queued')) + '</em></div>';
+                if (row.last_error) {
+                    html += '<div class="package-attention-line">' +
+                        escapeHtml(truncate(row.last_error, 180)) + '</div>';
+                }
+            });
             return html;
         }
 
@@ -8313,6 +8358,7 @@
             pending: 'col-pending',
             in_progress: 'col-in_progress',
             review: 'col-review',
+            integrating: 'col-integrating',
             blocked: 'col-blocked',
             completed: 'col-completed',
             rejected: 'col-rejected',

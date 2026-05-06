@@ -80,6 +80,8 @@ class TestCORSOrigins:
         origins = cors_mw.kwargs.get("allow_origins", [])
         assert "http://localhost:8000" in origins
         assert "http://localhost:3000" in origins
+        assert "http://127.0.0.1:8420" in origins
+        assert "http://localhost:8420" in origins
         assert "*" not in origins
         await db.close()
 

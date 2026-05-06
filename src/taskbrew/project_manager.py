@@ -135,12 +135,23 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "- For small and medium goals, describe reviewable Work Packages in the PRD.\n"
             "- For large goals, describe Milestones first, then the Work Packages inside each Milestone.\n"
             "- Create architect tasks that ask for Work Package designs, not isolated implementation fragments.\n"
+            "- Use create_work_package/update_work_package when you know the package boundary before implementation tasks exist.\n"
             '- Use the group_id from your task context (shown as "Group: GRP-XXX")\n'
             '- Set assigned_to: "architect", task_type: "tech_design"\n'
             "- Include full PRD content, proposed package boundaries, and acceptance criteria in the description.\n"
             '- Set priority: "high" for core packages, "medium" for enhancements.\n'
+            "- After your downstream tasks are created, you may call complete_task for your own task.\n"
         ),
-        "tools": ["Read", "Glob", "Grep", "WebSearch", "mcp__task-tools__create_task"],
+        "tools": [
+            "Read",
+            "Glob",
+            "Grep",
+            "WebSearch",
+            "mcp__task-tools__create_work_package",
+            "mcp__task-tools__update_work_package",
+            "mcp__task-tools__create_task",
+            "mcp__task-tools__complete_task",
+        ],
         "model": "claude-opus-4-6",
         "produces": ["prd", "goal_decomposition", "requirement"],
         "accepts": ["goal", "revision"],
@@ -167,7 +178,9 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "Work Package responsibilities:\n"
             "- Turn PRDs into coherent Work Packages that can be reviewed independently.\n"
             "- Keep a Work Package focused on a deliverable slice, not a single implementation step.\n"
+            "- Prefer create_work_package/update_work_package for package design before creating coder tasks.\n"
             "- When creating coder tasks, include the Work Package ID once the package exists.\n"
+            "- When your design names a package, pass work_package_title and work_package_description in create_task so the visible package is renamed.\n"
             "- Prefer package-level system review unless a specific task is high risk.\n"
             "- Include expected build, test, lint, and manual verification commands for each package.\n"
             "\n"
@@ -188,6 +201,7 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "  selected answer (your own pick in auto mode, or the user's in\n"
             "  manual mode). Do not call this for trivial decisions; you have\n"
             "  a budget per task.\n"
+            "- After coder tasks are created, you may call complete_task for your own task.\n"
         ),
         "tools": [
             "Read",
@@ -195,7 +209,10 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "Grep",
             "Write",
             "WebSearch",
+            "mcp__task-tools__create_work_package",
+            "mcp__task-tools__update_work_package",
             "mcp__task-tools__create_task",
+            "mcp__task-tools__complete_task",
             "mcp__task-tools__ask_question",
         ],
         "model": "claude-opus-4-6",
@@ -230,6 +247,7 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "- Run the relevant build, tests, and lint checks yourself before completing the task\n"
             "- Verify the task acceptance criteria from the design or parent task before marking work complete\n"
             "- Summarize the checks you ran and any skipped checks with reasons in your completion output\n"
+            "- After committing your implementation, you may call complete_task for your own task\n"
             "- Do NOT create verifier tasks in the default pipeline. Completed work is reviewed by the TaskBrew system review gate when the task requires review.\n"
             "\n"
             "Git branching rules:\n"
@@ -237,7 +255,16 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "- NEVER branch from another feature/fix branch\n"
             "- Before starting work: git checkout main && git pull\n"
         ),
-        "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "mcp__task-tools__create_task"],
+        "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Glob",
+            "Grep",
+            "mcp__task-tools__create_task",
+            "mcp__task-tools__complete_task",
+        ],
         "model": "claude-sonnet-4-6",
         "produces": ["implementation", "bug_fix", "revision"],
         "accepts": ["implementation", "bug_fix", "revision"],
@@ -408,6 +435,7 @@ class ProjectManager:
             "name": name,
             "directory": str(dir_path),
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "auto_resume_on_activate": True,
         }
         data["projects"].append(entry)
         self._write_registry(data)
@@ -468,6 +496,24 @@ class ProjectManager:
         data = self._read_registry()
         data["active_project"] = None
         self._write_registry(data)
+
+    def should_auto_resume_on_activate(self, project_id: str) -> bool:
+        """Return whether this project should resume agents on first activation."""
+        data = self._read_registry()
+        for project in data["projects"]:
+            if project["id"] == project_id:
+                return bool(project.get("auto_resume_on_activate"))
+        raise KeyError(f"No project with id '{project_id}'")
+
+    def mark_auto_resume_consumed(self, project_id: str) -> None:
+        """Clear the one-shot first activation resume flag."""
+        data = self._read_registry()
+        for project in data["projects"]:
+            if project["id"] == project_id:
+                project["auto_resume_on_activate"] = False
+                self._write_registry(data)
+                return
+        raise KeyError(f"No project with id '{project_id}'")
 
     # ------------------------------------------------------------------
     # Scaffolding

@@ -19,12 +19,14 @@ system_prompt: |
   - For small and medium goals, describe reviewable Work Packages in the PRD.
   - For large goals, describe Milestones first, then the Work Packages inside each Milestone.
   - Create architect tasks that ask for Work Package designs, not isolated implementation fragments.
+  - Use create_work_package/update_work_package when you know the package boundary before implementation tasks exist.
   - Use the group_id from your task context (shown as "Group: GRP-XXX")
   - Set assigned_to: "architect", task_type: "tech_design"
   - Include full PRD content, proposed package boundaries, and acceptance criteria in the description.
   - Set priority: "high" for core packages, "medium" for enhancements.
+  - After your downstream tasks are created, you may call complete_task for your own task.
 
-tools: [Read, Glob, Grep, WebSearch, mcp__task-tools__create_task]
+tools: [Read, Glob, Grep, WebSearch, mcp__task-tools__create_work_package, mcp__task-tools__update_work_package, mcp__task-tools__create_task, mcp__task-tools__complete_task]
 model: gpt-5.5
 reasoning_effort: xhigh
 produces: [prd, goal_decomposition, requirement]

@@ -362,6 +362,9 @@ CREATE TABLE IF NOT EXISTS merge_queue (
     group_id            TEXT NOT NULL,
     parent_task_id      TEXT NOT NULL REFERENCES tasks(id),
     verifier_task_id    TEXT NOT NULL REFERENCES tasks(id),
+    source_type         TEXT NOT NULL DEFAULT 'verifier_approval',
+    source_entity_id    TEXT,
+    work_package_id     TEXT REFERENCES work_packages(id),
     source_branch       TEXT NOT NULL,
     target_branch       TEXT NOT NULL DEFAULT 'main',
     status              TEXT NOT NULL DEFAULT 'queued',
@@ -455,6 +458,12 @@ CREATE INDEX IF NOT EXISTS idx_merge_queue_group_status
 
 CREATE INDEX IF NOT EXISTS idx_merge_queue_ready
     ON merge_queue(status, next_attempt_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_merge_queue_source
+    ON merge_queue(source_type, source_entity_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_merge_queue_package
+    ON merge_queue(work_package_id, status);
 
 """
 

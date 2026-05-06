@@ -6,6 +6,7 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 
 from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.merge_queue import MergeQueue
 from taskbrew.orchestrator.task_board import TaskBoard
 from taskbrew.orchestrator.event_bus import EventBus
 from taskbrew.agents.instance_manager import InstanceManager
@@ -284,6 +285,31 @@ async def test_work_package_api_round_trip(app_client):
     assert data["columns"]["pending"][0]["task_counts"]["total"] == 1
 
 
+async def test_update_work_package_api(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(title="Package update group", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Initial package",
+        description="Initial description.",
+        created_by="architect-1",
+    )
+
+    resp = await client.patch(
+        f"/api/work-packages/{package['id']}",
+        json={
+            "title": "Renamed package",
+            "description": "Updated description.",
+        },
+    )
+
+    assert resp.status_code == 200
+    updated = resp.json()
+    assert updated["title"] == "Renamed package"
+    assert updated["description"] == "Updated description."
+
+
 async def test_work_package_detail_and_operations_summary_api(app_client):
     board = app_client["board"]
     client = app_client["client"]
@@ -332,6 +358,42 @@ async def test_work_package_detail_and_operations_summary_api(app_client):
     assert summary["counts"]["packages_review"] == 1
     assert summary["queues"]["review"][0]["id"] == package["id"]
     assert summary["system_agent"]["status"] in {"idle", "working"}
+
+
+async def test_merge_queue_api_filters_package_integration_rows(app_client):
+    board = app_client["board"]
+    client = app_client["client"]
+    group = await board.create_group(title="Merge queue API", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Integration package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        title="Implement integration package",
+        assigned_to="coder",
+        task_type="implementation",
+        created_by="architect-1",
+        branch_name="feat/cd-001",
+    )
+    row = await MergeQueue(app_client["db"]).enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        parent_task_id=task["id"],
+        source_branch="feat/cd-001",
+        target_branch="main",
+    )
+
+    resp = await client.get(f"/api/merge-queue?package_id={package['id']}")
+
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert len(rows) == 1
+    assert rows[0]["id"] == row["id"]
+    assert rows[0]["source_type"] == "package_approval"
+    assert rows[0]["source_entity_id"] == package["id"]
 
 
 async def test_create_work_package_rejects_missing_group(app_client):

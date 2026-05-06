@@ -409,6 +409,15 @@ class MergeBroker:
                 f"{row['target_branch']}"
             ),
         )
+        if row.get("work_package_id"):
+            await self.merge_queue.supersede_open_for_package(
+                work_package_id=row["work_package_id"],
+                except_row_id=row["id"],
+                details=(
+                    f"Superseded after package branch {row['source_branch']} "
+                    f"landed on {row['target_branch']}"
+                ),
+            )
         await self.task_board._db.execute(
             "UPDATE tasks SET merge_status = ? WHERE id IN (?, ?)",
             ("merged", row["parent_task_id"], row["verifier_task_id"]),
@@ -489,29 +498,43 @@ class MergeBroker:
         await self.task_board._check_group_completion(row["parent_task_id"])
 
     async def _create_merge_conflict_task(self, row: dict, reason: str) -> None:
+        package_id = row.get("work_package_id")
+        source_label = (
+            f"work package {package_id}"
+            if package_id
+            else f"verification task {row['verifier_task_id']}"
+        )
         existing = await self.task_board._db.execute_fetchone(
             "SELECT id FROM tasks WHERE revision_of = ? AND status != 'cancelled' "
-            "AND task_type = 'revision' LIMIT 1",
-            (row["parent_task_id"],),
+            "AND task_type = 'revision' "
+            "AND (? IS NULL OR work_package_id = ?) LIMIT 1",
+            (row["parent_task_id"], package_id, package_id),
         )
         if existing:
             return
         await self.task_board.create_task(
             group_id=row["group_id"],
-            title=f"Resolve merge conflict for {row['parent_task_id']}",
+            title=(
+                f"Resolve package integration conflict for {package_id}"
+                if package_id
+                else f"Resolve merge conflict for {row['parent_task_id']}"
+            ),
             task_type="revision",
             assigned_to="coder",
             created_by=self.worker_id,
             parent_id=row["parent_task_id"],
             revision_of=row["parent_task_id"],
+            work_package_id=package_id,
             priority="high",
             description=(
                 f"TaskBrew attempted to merge `{row['source_branch']}` into "
-                f"`{row['target_branch']}` after verifier approval in "
-                f"{row['verifier_task_id']}, but git reported a merge conflict.\n\n"
+                f"`{row['target_branch']}` for {source_label}, but git reported "
+                f"a merge conflict.\n\n"
+                f"Work Package: {package_id or 'n/a'}\n"
+                f"Merge Queue: {row['id']}\n\n"
                 f"Conflict details:\n{reason}\n\n"
-                "Resolve the conflict on the task branch, run the relevant "
-                "tests, commit the fix, and create a fresh verification task."
+                "Resolve the conflict on the task branch, run the relevant tests, "
+                "commit the fix, and let package review/integration retry the branch."
             ),
         )
 

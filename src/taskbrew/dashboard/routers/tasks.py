@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 from starlette.responses import Response
 
+from taskbrew.orchestrator.merge_queue import MergeQueue
 
 from taskbrew.dashboard.models import (
     BatchTasksBody,
@@ -28,6 +29,7 @@ from taskbrew.dashboard.models import (
     StartWorkflowBody,
     SubmitGoalBody,
     UpdateTaskBody,
+    UpdateWorkPackageBody,
 )
 from taskbrew.dashboard.routers._deps import get_orch, get_orch_optional
 
@@ -171,10 +173,41 @@ async def get_work_package_detail(package_id: str):
     return detail
 
 
+@router.patch("/api/work-packages/{package_id}")
+async def update_work_package(package_id: str, body: UpdateWorkPackageBody):
+    orch = get_orch()
+    package = await orch.task_board.update_work_package_metadata(
+        package_id,
+        title=body.title,
+        description=body.description,
+    )
+    if package is None:
+        raise HTTPException(404, f"Work package not found: {package_id}")
+    await orch.event_bus.emit(
+        "work_package.updated",
+        {"work_package_id": package_id, "group_id": package["group_id"]},
+    )
+    return package
+
+
 @router.get("/api/operations/summary")
 async def get_operations_summary(group_id: str | None = None):
     orch = get_orch()
     return await orch.task_board.get_operations_summary(group_id=group_id)
+
+
+@router.get("/api/merge-queue")
+async def get_merge_queue(
+    group_id: str | None = None,
+    package_id: str | None = None,
+):
+    orch = get_orch()
+    queue = getattr(orch, "merge_queue", None) or MergeQueue(orch.task_board._db)
+    if package_id:
+        return await queue.list_for_package(package_id)
+    if group_id:
+        return await queue.list_for_group(group_id)
+    raise HTTPException(400, "group_id or package_id is required")
 
 
 @router.get("/api/groups/{group_id}/graph")
@@ -633,6 +666,8 @@ async def create_task(body: CreateTaskBody):
             blocked_by=body.blocked_by,
             requires_fanout=body.requires_fanout,
             work_package_id=body.work_package_id,
+            work_package_title=body.work_package_title,
+            work_package_description=body.work_package_description,
             milestone_id=body.milestone_id,
             review_scope=body.review_scope,
         )

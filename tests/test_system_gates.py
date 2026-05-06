@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.merge_queue import MergeQueue
 from taskbrew.orchestrator.system_gates import (
     AgentRunnerSystemGateAnalyzer,
     BacklogIntakeResult,
@@ -164,6 +167,28 @@ def _agent_analyzer(text: str) -> AgentRunnerSystemGateAnalyzer:
     return analyzer
 
 
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def _init_repo(repo: Path) -> None:
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "README.md").write_text("# Test\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "initial")
+    _git(repo, "branch", "-M", "main")
+
+
 @pytest.fixture
 async def db():
     database = Database(":memory:")
@@ -275,6 +300,37 @@ async def test_process_pending_once_processes_one_backlog_task_once(
     assert updated["status"] == "pending"
     assert updated["needs_review"] == 1
     assert updated["needs_review_reason"] == "Touches shared orchestration."
+    gate_runs = json.loads(updated["system_gate_runs"])
+    assert gate_runs[-2]["gate"] == "backlog"
+    assert gate_runs[-2]["outcome"] == "running"
+    assert gate_runs[-1]["gate"] == "backlog"
+    assert gate_runs[-1]["outcome"] == "completed"
+    assert gate_runs[-1]["reason"] == "Touches shared orchestration."
+
+
+async def test_backlog_intake_skips_task_level_review_for_planning_tasks(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Create PRD for simple CLI",
+        task_type="goal",
+        assigned_to="pm",
+    )
+    analyzer = FakeAnalyzer()
+    manager = SystemGateManager(board=board, analyzer=analyzer, batch_size=10)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 1, "review": 0, "package_review": 0}
+    assert analyzer.backlog_contexts == []
+    updated = await board.get_task(task["id"])
+    assert updated["status"] == "pending"
+    assert updated["needs_review"] == 0
+    assert "Planning tasks are validated" in updated["needs_review_reason"]
+    gate_runs = json.loads(updated["system_gate_runs"])
+    assert gate_runs[-1]["needs_review"] is False
 
 
 async def test_process_pending_once_approves_pending_review_task(
@@ -313,6 +369,75 @@ async def test_process_pending_once_approves_pending_review_task(
     assert event_bus.events[-1][1]["task_id"] == review_task["id"]
     assert event_bus.events[-1][1]["outcome"] == "approved"
     assert event_bus.events[-1][1]["status"] == "completed"
+
+
+async def test_planning_review_revisions_stay_with_planning_role(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Create PRD for simple CLI",
+        task_type="goal",
+        assigned_to="pm",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=True,
+        reason="Manual planning review.",
+    )
+    claimed = await board.claim_task("pm", "pm-1")
+    assert claimed["id"] == task["id"]
+    await board.complete_task_with_output(task["id"], "Created PRD and architect task.")
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(
+                outcome="needs_revision",
+                reason="PRD needs clearer acceptance criteria.",
+                revisions=[
+                    RevisionRequest(
+                        title="Implement missing CLI",
+                        description="Add the actual code.",
+                        assigned_to="coder",
+                        task_type="implementation",
+                        priority="high",
+                    )
+                ],
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    handled = await manager.process_review_task(task["id"])
+
+    assert handled is True
+    original = await board.get_task(task["id"])
+    assert original["review_status"] == "waiting_revision"
+    revision_ids = json.loads(original["revision_task_ids"])
+    assert len(revision_ids) == 1
+    revision = await board.get_task(revision_ids[0])
+    assert revision["assigned_to"] == "pm"
+    assert revision["task_type"] == "revision"
+    assert revision["title"] == "Implement missing CLI"
+
+
+async def test_review_revision_falls_back_to_main_when_parent_branch_missing(
+    board: TaskBoard,
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    board.configure_package_integration(repo_dir=str(repo))
+    review_task = await _create_review_task(board, output="Implementation summary.")
+
+    created = await board.create_review_revision_tasks(
+        review_task["id"],
+        [{"title": "Fix missing test"}],
+    )
+
+    assert len(created) == 1
+    revision = await board.get_task(created[0]["id"])
+    assert revision["parent_branch"] == "main"
 
 
 async def test_process_pending_once_approves_package_review(board: TaskBoard):
@@ -368,6 +493,78 @@ async def test_process_pending_once_approves_package_review(board: TaskBoard):
     completed_group = next(item for item in groups if item["id"] == group["id"])
     assert completed_group["status"] == "completed"
     assert completed_group["completed_at"] is not None
+
+
+async def test_package_review_context_includes_branch_diff_and_integration_queue(
+    db: Database,
+    event_bus: RecordingEventBus,
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "checkout", "-b", "feat/cd-001")
+    (repo / "add_two_numbers.py").write_text("print(1 + 2)\n")
+    _git(repo, "add", "add_two_numbers.py")
+    _git(repo, "commit", "-m", "add script")
+    _git(repo, "checkout", "main")
+
+    task_board = TaskBoard(
+        db,
+        group_prefixes={"pm": "FEAT", "architect": "DEBT"},
+        event_bus=event_bus,
+    )
+    await task_board.register_prefixes({"pm": "PM", "architect": "AR", "coder": "CD"})
+    queue = MergeQueue(db)
+    task_board.configure_package_integration(merge_queue=queue, repo_dir=str(repo))
+    group = await task_board.create_group(title="Feature", created_by="pm")
+    package = await task_board.create_work_package(
+        group_id=group["id"],
+        title="Addition CLI",
+        description="Deliver a minimal addition script.",
+        created_by="architect-1",
+    )
+    task = await task_board.create_task(
+        group_id=group["id"],
+        title="Build addition script",
+        description="Create add_two_numbers.py and verify it runs.",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+        branch_name="feat/cd-001",
+        parent_branch="main",
+    )
+    await task_board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await task_board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await task_board.complete_task_with_output(task["id"], "Added the script.")
+    await queue.enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        parent_task_id=task["id"],
+        source_branch="feat/cd-001",
+        target_branch="main",
+    )
+
+    analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Looks good.")]
+    )
+    manager = SystemGateManager(board=task_board, analyzer=analyzer)
+    await manager.process_pending_once()
+
+    context = analyzer.review_contexts[0]
+    assert context["package"]["description"] == "Deliver a minimal addition script."
+    assert context["tasks"][0]["description"] == "Create add_two_numbers.py and verify it runs."
+    assert context["integration_queue"][0]["source_type"] == "package_approval"
+    assert context["integration_queue"][0]["work_package_id"] == package["id"]
+    diff = context["branch_diffs"][0]
+    assert diff["task_id"] == task["id"]
+    assert diff["source_branch"] == "feat/cd-001"
+    assert "add_two_numbers.py" in diff["diff_stat"]
+    assert "add script" in diff["commit_log"]
 
 
 async def test_package_review_analysis_error_marks_failed_and_does_not_raise(

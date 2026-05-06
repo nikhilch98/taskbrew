@@ -1482,11 +1482,37 @@ class AgentLoop:
         )
         parent_branch: str | None = task.get("parent_branch") or "main"
         if self.worktree_manager:
-            worktree_path = await self.worktree_manager.create_worktree(
-                agent_name=self.instance_id,
-                branch_name=branch_name,
-                base_branch=parent_branch,
-            )
+            try:
+                worktree_path = await self.worktree_manager.create_worktree(
+                    agent_name=self.instance_id,
+                    branch_name=branch_name,
+                    base_branch=parent_branch,
+                )
+            except Exception as exc:
+                reason = f"worktree creation failed: {exc}"
+                task_logger.error(
+                    "Agent %s could not prepare worktree for task %s: %s",
+                    self.instance_id,
+                    task["id"],
+                    exc,
+                    exc_info=True,
+                )
+                await self.board.fail_task(task["id"], reason=reason)
+                await self.event_bus.emit(
+                    "task.failed",
+                    {
+                        "task_id": task["id"],
+                        "instance_id": self.instance_id,
+                        "reason": "worktree_creation_failed",
+                        "error": str(exc),
+                        "model": self.role_config.model,
+                        "correlation_id": correlation_id,
+                    },
+                )
+                await self.instance_manager.update_status(
+                    self.instance_id, "idle", current_task=None,
+                )
+                return True
             logger.info(
                 "Agent %s using worktree %s (branch %s)",
                 self.instance_id, worktree_path, branch_name,

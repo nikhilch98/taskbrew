@@ -1564,6 +1564,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_review_gates_status
             ON review_gates(status, created_at);
     """),
+    (36, "make_merge_queue_sources_first_class", """
+        ALTER TABLE merge_queue ADD COLUMN source_type TEXT DEFAULT 'verifier_approval';
+        ALTER TABLE merge_queue ADD COLUMN source_entity_id TEXT;
+        ALTER TABLE merge_queue ADD COLUMN work_package_id TEXT REFERENCES work_packages(id);
+
+        UPDATE merge_queue
+        SET source_type = COALESCE(source_type, 'verifier_approval'),
+            source_entity_id = COALESCE(source_entity_id, verifier_task_id)
+        WHERE source_entity_id IS NULL OR source_type IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_merge_queue_source
+            ON merge_queue(source_type, source_entity_id, status);
+        CREATE INDEX IF NOT EXISTS idx_merge_queue_package
+            ON merge_queue(work_package_id, status);
+    """),
 ]
 
 

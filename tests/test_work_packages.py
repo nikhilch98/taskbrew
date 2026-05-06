@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from taskbrew.orchestrator.database import Database
+from taskbrew.orchestrator.merge_queue import MergeQueue
 from taskbrew.orchestrator.task_board import DEFAULT_MAX_REVIEW_ROUNDS, TaskBoard
 
 
@@ -91,6 +95,33 @@ async def test_create_task_assigns_default_work_package(board: TaskBoard):
     package = await board.get_work_package(task["work_package_id"])
     assert package["title"] == "Default package for Feature"
     assert package["group_id"] == group["id"]
+
+
+async def test_create_task_can_update_package_metadata_from_design_output(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Default package for Feature",
+        description="Automatically created to keep existing tasks grouped.",
+        created_by="system",
+    )
+
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Implement minimal addition CLI",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+        work_package_title="Minimal Addition CLI",
+        work_package_description="Deliver a two-number addition script.",
+    )
+
+    updated_package = await board.get_work_package(task["work_package_id"])
+    assert updated_package["title"] == "Minimal Addition CLI"
+    assert updated_package["description"] == "Deliver a two-number addition script."
 
 
 async def test_create_task_ignores_manual_package_for_default(board: TaskBoard):
@@ -538,3 +569,122 @@ async def test_operations_summary_classifies_package_review_queue(
     assert summary["system_agent"]["status"] == "idle"
     assert summary["queues"]["review"][0]["id"] == package["id"]
     assert summary["queues"]["attention"][0]["id"] == package["id"]
+
+
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def _init_repo(repo: Path) -> None:
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "README.md").write_text("# Test\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "initial")
+    _git(repo, "branch", "-M", "main")
+
+
+async def test_package_review_approval_creates_final_integration_queue_item(
+    db: Database,
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "checkout", "-b", "feat/cd-001")
+    (repo / "add_two_numbers.py").write_text("print(1 + 2)\n")
+    _git(repo, "add", "add_two_numbers.py")
+    _git(repo, "commit", "-m", "add script")
+    _git(repo, "checkout", "main")
+
+    board = TaskBoard(db, group_prefixes={"pm": "FEAT"}, event_bus=RecordingEventBus())
+    await board.register_prefixes({"pm": "PM", "architect": "AR", "coder": "CD"})
+    queue = MergeQueue(db)
+    board.configure_package_integration(merge_queue=queue, repo_dir=str(repo))
+
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package review bundle",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+        branch_name="feat/cd-001",
+        parent_branch="main",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    approved = await board.approve_work_package_review(
+        package["id"],
+        reason="Package satisfies spec.",
+    )
+
+    assert approved["status"] == "integrating"
+    assert approved["review_status"] == "approved"
+    rows = await db.execute_fetchall("SELECT * FROM merge_queue")
+    assert len(rows) == 1
+    assert rows[0]["group_id"] == group["id"]
+    assert rows[0]["parent_task_id"] == task["id"]
+    assert rows[0]["verifier_task_id"] == task["id"]
+    assert rows[0]["source_type"] == "package_approval"
+    assert rows[0]["source_entity_id"] == package["id"]
+    assert rows[0]["work_package_id"] == package["id"]
+    assert rows[0]["source_branch"] == "feat/cd-001"
+    assert rows[0]["target_branch"] == "main"
+
+    board_data = await board.get_work_package_board(group_id=group["id"])
+    card = next(pkg for pkg in board_data["packages"] if pkg["id"] == package["id"])
+    assert card["integration_queue"][0]["id"] == rows[0]["id"]
+    assert card["latest_integration"]["status"] == "queued"
+    assert any(
+        reason["type"] == "integration_pending"
+        for reason in card["attention_reasons"]
+    )
+
+    detail = await board.get_work_package_detail(package["id"])
+    assert detail["integration_queue"][0]["source_branch"] == "feat/cd-001"
+
+    await queue.complete(rows[0]["id"], status="merged")
+    await board._check_group_completion(task["id"])
+    still_waiting = await board.get_work_package(package["id"])
+    assert still_waiting["status"] == "integrating"
+    group_row = await db.execute_fetchone("SELECT * FROM groups WHERE id = ?", (group["id"],))
+    assert group_row["status"] == "active"
+
+    _git(repo, "merge", "--no-edit", "feat/cd-001")
+    await board._check_group_completion(task["id"])
+
+    completed_package = await board.get_work_package(package["id"])
+    group_row = await db.execute_fetchone("SELECT * FROM groups WHERE id = ?", (group["id"],))
+    assert completed_package["status"] == "completed"
+    assert completed_package["completed_at"] is not None
+    assert group_row["status"] == "completed"
+    assert (repo / "add_two_numbers.py").exists()
+
+
+async def test_package_integration_targets_main_for_revision_feature_branches(
+    board: TaskBoard,
+):
+    assert board._package_target_branch({"parent_branch": "feat/cd-001"}) == "main"
+    assert board._package_target_branch({"parent_branch": "bugfix/cd-001"}) == "main"
+    assert board._package_target_branch({"parent_branch": "release/next"}) == "release/next"

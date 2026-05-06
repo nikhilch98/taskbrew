@@ -28,11 +28,13 @@ const ROLE_TITLE = {
 
 const STATUS_ICONS = {
     backlog: 'B', blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1',
-    review: 'R', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5'
+    review: 'R', integrating: '\u21C4', completed: '\u2705',
+    rejected: '\u274C', failed: '\uD83D\uDCA5'
 };
 
 const BOARD_STATUSES = [
-    'backlog', 'pending', 'in_progress', 'review', 'blocked', 'completed', 'rejected', 'failed'
+    'backlog', 'pending', 'in_progress', 'review', 'integrating',
+    'blocked', 'completed', 'rejected', 'failed'
 ];
 
 const BOARD_COLUMNS = {
@@ -40,6 +42,7 @@ const BOARD_COLUMNS = {
     pending:     { el: 'tasksPending',    count: 'countPending' },
     in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
     review:      { el: 'tasksReview',     count: 'countReview' },
+    integrating: { el: 'tasksIntegrating', count: 'countIntegrating' },
     blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
     completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
     rejected:    { el: 'tasksRejected',   count: 'countRejected' },
@@ -731,6 +734,7 @@ function createPackageCard(pkg) {
     const reviewStatus = pkg.review_status || 'not_started';
     const gate = pkg.review_gate || null;
     const gateStatus = gate ? (gate.status || 'pending') : reviewStatus;
+    const latestIntegration = pkg.latest_integration || null;
     const attentionCount = Array.isArray(pkg.attention_reasons) ? pkg.attention_reasons.length : 0;
 
     let html = '<div class="task-card-header">';
@@ -750,7 +754,18 @@ function createPackageCard(pkg) {
     if (pkg.group_id) {
         html += '<span class="badge badge-group">' + escapeHtml(pkg.group_id) + '</span>';
     }
+    if (latestIntegration) {
+        html += '<span class="badge badge-system-gate gate-state-' +
+            escapeHtml(classToken(latestIntegration.status || 'queued')) + '">' +
+            'Merge ' + escapeHtml(formatPackageLabel(latestIntegration.status || 'queued')) +
+            '</span>';
+    }
     html += '</div>';
+    if (latestIntegration) {
+        html += '<div class="package-attention-line">' +
+            escapeHtml((latestIntegration.source_branch || '?') + ' -> ' +
+                (latestIntegration.target_branch || 'main')) + '</div>';
+    }
     if (gate && gate.status === 'running') {
         html += '<div class="task-card-system-gate">' +
             '<span class="system-gate-dot"></span> System agent reviewing</div>';
@@ -805,6 +820,7 @@ function renderPackageCommandSummary(summary) {
         ['Packages', counts.packages_total || 0],
         ['Active', counts.packages_active || 0],
         ['Review', counts.packages_review || 0],
+        ['Integrating', counts.packages_integrating || 0],
         ['Blocked', counts.packages_blocked || 0],
         ['Revision', counts.packages_waiting_revision || 0],
         ['Attention', counts.packages_attention || 0],
@@ -962,7 +978,7 @@ function renderPackageDrawer(detail) {
 }
 
 function renderPackageDrawerTabs(detail) {
-    const tabs = ['tasks', 'review', 'artifacts', 'history'];
+    const tabs = ['tasks', 'review', 'integration', 'artifacts', 'history'];
     let html = '<div class="package-tabs">';
     tabs.forEach(function(tab) {
         html += '<button type="button" class="' + (currentPackageDrawerTab === tab ? 'active' : '') +
@@ -972,6 +988,8 @@ function renderPackageDrawerTabs(detail) {
     html += '</div><div class="package-tab-body">';
     if (currentPackageDrawerTab === 'review') {
         html += renderPackageReviewTab(detail);
+    } else if (currentPackageDrawerTab === 'integration') {
+        html += renderPackageIntegrationTab(detail);
     } else if (currentPackageDrawerTab === 'artifacts') {
         html += renderPackageArtifactsTab(detail);
     } else if (currentPackageDrawerTab === 'history') {
@@ -980,6 +998,23 @@ function renderPackageDrawerTabs(detail) {
         html += renderPackageTasksTab(detail);
     }
     html += '</div>';
+    return html;
+}
+
+function renderPackageIntegrationTab(detail) {
+    const rows = detail.integration_queue || [];
+    if (!rows.length) return '<div class="rail-empty">No integration queue items</div>';
+    let html = '';
+    rows.forEach(function(row) {
+        html += '<div class="package-detail-row"><strong>' +
+            escapeHtml(row.id || '') + '</strong><span>' +
+            escapeHtml((row.source_branch || '?') + ' -> ' + (row.target_branch || 'main')) +
+            '</span><em>' + escapeHtml(formatPackageLabel(row.status || 'queued')) + '</em></div>';
+        if (row.last_error) {
+            html += '<div class="package-attention-line">' +
+                escapeHtml(truncate(row.last_error, 180)) + '</div>';
+        }
+    });
     return html;
 }
 
@@ -1677,6 +1712,7 @@ const STATUS_TO_COL_ID = {
     pending: 'col-pending',
     in_progress: 'col-in_progress',
     review: 'col-review',
+    integrating: 'col-integrating',
     blocked: 'col-blocked',
     completed: 'col-completed',
     rejected: 'col-rejected',
