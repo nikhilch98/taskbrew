@@ -214,6 +214,117 @@ class TaskBoard:
             (group_id,),
         )
 
+    async def ensure_review_gate(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        group_id: str,
+        max_rounds: int | None = None,
+    ) -> dict:
+        """Return or create the review gate for an entity."""
+        existing = await self._db.execute_fetchone(
+            "SELECT * FROM review_gates WHERE entity_type = ? AND entity_id = ?",
+            (entity_type, entity_id),
+        )
+        if existing is not None:
+            return existing
+
+        await self._db.register_prefix("RG")
+        gate_id = await self._db.generate_task_id("RG")
+        now = _utcnow()
+        await self._db.execute(
+            "INSERT INTO review_gates "
+            "(id, entity_type, entity_id, group_id, status, review_round, "
+            "max_review_rounds, system_gate_runs, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'pending', 0, ?, '[]', ?, ?)",
+            (
+                gate_id,
+                entity_type,
+                entity_id,
+                group_id,
+                max_rounds or DEFAULT_MAX_REVIEW_ROUNDS,
+                now,
+                now,
+            ),
+        )
+        gate = await self._db.execute_fetchone(
+            "SELECT * FROM review_gates WHERE id = ?", (gate_id,)
+        )
+        if gate is None:
+            raise ValueError(f"Review gate not found after create: {gate_id}")
+        return gate
+
+    async def reconcile_work_package_status(self, package_id: str) -> dict | None:
+        """Recompute a work package status from its child task statuses."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            return None
+        if package["status"] in ("review", "waiting_revision"):
+            return package
+
+        tasks = await self._db.execute_fetchall(
+            "SELECT id, status, completion_checks FROM tasks "
+            "WHERE work_package_id = ? ORDER BY created_at",
+            (package_id,),
+        )
+
+        next_status = package["status"]
+        next_review_status = package.get("review_status")
+        task_statuses = [task["status"] for task in tasks]
+
+        if not tasks:
+            next_status = "pending"
+            next_review_status = None
+        elif all(status == "rejected" for status in task_statuses):
+            next_status = "rejected"
+            next_review_status = "rejected"
+        elif any(status in ("failed", "rejected", "cancelled") for status in task_statuses):
+            next_status = "blocked"
+            next_review_status = None
+        elif "blocked" in task_statuses:
+            next_status = "blocked"
+            next_review_status = None
+        elif "in_progress" in task_statuses:
+            next_status = "in_progress"
+            next_review_status = None
+        elif any(status in ("backlog", "pending") for status in task_statuses):
+            next_status = "pending"
+            next_review_status = None
+        elif all(status == "completed" for status in task_statuses):
+            if package.get("review_scope") == NO_REVIEW_SCOPE:
+                next_status = "completed"
+                next_review_status = "skipped"
+            else:
+                next_status = "review"
+                next_review_status = "pending"
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET status = ?, review_status = ?, updated_at = ? "
+            "WHERE id = ? RETURNING *",
+            (next_status, next_review_status, now, package_id),
+        )
+        updated = rows[0] if rows else await self.get_work_package(package_id)
+        if updated and updated["status"] == "review":
+            await self.ensure_review_gate(
+                entity_type="work_package",
+                entity_id=package_id,
+                group_id=updated["group_id"],
+                max_rounds=int(
+                    updated.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+                ),
+            )
+        return updated
+
+    async def reconcile_task_package(self, task_id: str) -> None:
+        """Reconcile the package containing a task, if any."""
+        task = await self._db.execute_fetchone(
+            "SELECT work_package_id FROM tasks WHERE id = ?", (task_id,)
+        )
+        if task and task.get("work_package_id"):
+            await self.reconcile_work_package_status(task["work_package_id"])
+
     async def ensure_default_work_package(self, group_id: str) -> dict:
         """Return or create the group's default work package."""
         group = await self._db.execute_fetchone(
@@ -423,6 +534,8 @@ class TaskBoard:
             fresh = reconciled or await self.get_task(task_id)
             if fresh:
                 task.update(fresh)
+        if task.get("work_package_id"):
+            await self.reconcile_work_package_status(task["work_package_id"])
         return self._normalize_task_return(task)
 
     def _normalize_task_return(self, task: dict) -> dict:
@@ -590,6 +703,8 @@ class TaskBoard:
                     "group_id": updated["group_id"],
                 },
             )
+        if updated and updated.get("work_package_id"):
+            await self.reconcile_work_package_status(updated["work_package_id"])
         return updated
 
     async def mark_backlog_intake_failed(self, task_id: str, error: str) -> dict:
@@ -694,6 +809,8 @@ class TaskBoard:
         if not rows:
             return None
         result = rows[0]
+        if result.get("work_package_id"):
+            await self.reconcile_work_package_status(result["work_package_id"])
         logger.info("Task %s claimed by %s", result["id"], instance_id)
         return result
 
@@ -716,6 +833,8 @@ class TaskBoard:
                 task_id,
                 task["status"],
             )
+            if task["status"] in ("completed", REVIEW_STATUS):
+                await self.reconcile_task_package(task_id)
             return task
 
         now = _utcnow()
@@ -735,10 +854,15 @@ class TaskBoard:
                 task_id,
                 existing["status"],
             )
+            if existing["status"] in ("completed", REVIEW_STATUS):
+                await self.reconcile_task_package(task_id)
             return existing
         if target_status == "completed":
+            await self.reconcile_task_package(task_id)
             await self._resolve_dependencies(task_id)
             await self._check_group_completion(task_id)
+        else:
+            await self.reconcile_task_package(task_id)
         logger.info("Task %s completed", task_id)
         return rows[0]
 
@@ -775,6 +899,7 @@ class TaskBoard:
                     "WHERE id = ? RETURNING *",
                     (next_output, task_id),
                 )
+                await self.reconcile_task_package(task_id)
                 return completed_rows[0] if completed_rows else existing
             logger.warning(
                 "complete_task_with_output(%s) skipped: task is in status '%s', "
@@ -784,8 +909,11 @@ class TaskBoard:
             )
             return existing
         if target_status == "completed":
+            await self.reconcile_task_package(task_id)
             await self._resolve_dependencies(task_id)
             await self._check_group_completion(task_id)
+        else:
+            await self.reconcile_task_package(task_id)
         return rows[0]
 
     async def approve_review_gate(self, task_id: str, *, reason: str) -> dict:
@@ -825,6 +953,7 @@ class TaskBoard:
                 "finished_at": now,
             },
         )
+        await self.reconcile_task_package(task_id)
         await self._resolve_dependencies(task_id)
         await self._check_group_completion(task_id)
         fresh = await self.get_task(task_id)
@@ -868,6 +997,7 @@ class TaskBoard:
             },
         )
         await self._cascade_failure(task_id)
+        await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         fresh = await self.get_task(task_id)
         if fresh is None:
@@ -1047,6 +1177,7 @@ class TaskBoard:
             if fresh is None:
                 raise ValueError(f"Task not found: {task_id}")
             return fresh
+        await self.reconcile_task_package(task_id)
         return rows[0]
 
     async def _append_system_gate_run(self, task_id: str, entry: dict) -> None:
@@ -1070,19 +1201,20 @@ class TaskBoard:
         if not rows:
             raise ValueError(f"Task not found: {task_id}")
         await self._cascade_failure(task_id)
+        await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         return rows[0]
 
-    async def fail_task(self, task_id: str) -> dict:
+    async def fail_task(self, task_id: str, reason: str | None = None) -> dict:
         """Mark a task as failed and cascade failure to blocked dependents."""
         rows = await self._db.execute_returning(
-            "UPDATE tasks SET status = 'failed' "
+            "UPDATE tasks SET status = 'failed', rejection_reason = ? "
             "WHERE id = ? AND status = 'in_progress' RETURNING *",
-            (task_id,),
+            (reason, task_id),
         )
         if not rows:
             existing = await self._db.execute_fetchone(
-                "SELECT id, status FROM tasks WHERE id = ?", (task_id,)
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
             )
             if existing is None:
                 raise ValueError(f"Task not found: {task_id}")
@@ -1092,6 +1224,7 @@ class TaskBoard:
                 task_id,
                 existing["status"],
             )
+            await self.reconcile_task_package(task_id)
             return existing
         await self._cascade_failure(task_id)
         # audit 03 F#16: previously this only cancelled 'pending' children,
@@ -1103,6 +1236,7 @@ class TaskBoard:
             "WHERE parent_id = ? AND status IN ('backlog', 'pending', 'blocked')",
             (task_id,),
         )
+        await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         logger.info("Task %s failed", task_id)
         return rows[0]
@@ -1235,6 +1369,14 @@ class TaskBoard:
             (group_id,),
         )
         if non_terminal:
+            return
+
+        open_package = await self._db.execute_fetchone(
+            "SELECT 1 FROM work_packages WHERE group_id = ? "
+            "AND status NOT IN ('completed', 'rejected') LIMIT 1",
+            (group_id,),
+        )
+        if open_package:
             return
 
         # Durable merge queue gate. A task can be terminal while its
@@ -1375,16 +1517,18 @@ class TaskBoard:
             # Wake any idle agent for this role so it doesn't wait
             # out the poll_interval before picking up work that is
             # now claimable.
-            if transitioned and self._event_bus is not None:
+            if transitioned:
                 task = transitioned[0]
-                await self._event_bus.emit(
-                    "task.available",
-                    {
-                        "task_id": task["id"],
-                        "role": task["assigned_to"],
-                        "group_id": task["group_id"],
-                    },
-                )
+                await self.reconcile_task_package(task["id"])
+                if self._event_bus is not None:
+                    await self._event_bus.emit(
+                        "task.available",
+                        {
+                            "task_id": task["id"],
+                            "role": task["assigned_to"],
+                            "group_id": task["group_id"],
+                        },
+                    )
 
     # ------------------------------------------------------------------
     # Board view
@@ -1723,6 +1867,7 @@ class TaskBoard:
         if not rows:
             raise ValueError(f"Task not found: {task_id}")
         await self._cascade_failure(task_id)
+        await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         return rows[0]
 

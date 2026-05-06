@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from taskbrew.orchestrator.database import Database
-from taskbrew.orchestrator.task_board import TaskBoard
+from taskbrew.orchestrator.task_board import DEFAULT_MAX_REVIEW_ROUNDS, TaskBoard
 
 
 class RecordingEventBus:
@@ -114,3 +114,310 @@ async def test_create_task_ignores_manual_package_for_default(board: TaskBoard):
     assert package["title"] == "Default package for Feature"
     assert package["group_id"] == group["id"]
     assert package["created_by"] == "system"
+
+
+async def test_package_status_tracks_child_task_progress(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Manual package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+
+    assert claimed is not None
+    assert claimed["id"] == task["id"]
+    package = await board.get_work_package(package["id"])
+    assert package["status"] == "in_progress"
+
+    await board.complete_task_with_output(task["id"], "Done.")
+
+    package = await board.get_work_package(package["id"])
+    assert package["status"] == "review"
+    assert package["review_status"] == "pending"
+
+
+async def test_failed_child_blocks_package_review(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Manual package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+
+    assert claimed is not None
+    assert claimed["id"] == task["id"]
+
+    await board.fail_task(task["id"], reason="Tests failed")
+
+    package = await board.get_work_package(package["id"])
+    assert package["status"] == "blocked"
+    assert package["review_status"] is None
+
+
+async def test_unblocked_child_reconciles_its_package(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package_a = await board.create_work_package(
+        group_id=group["id"],
+        title="Package A",
+        created_by="architect-1",
+    )
+    package_b = await board.create_work_package(
+        group_id=group["id"],
+        title="Package B",
+        created_by="architect-1",
+    )
+    task_a = await board.create_task(
+        group_id=group["id"],
+        title="Build foundation",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package_a["id"],
+    )
+    task_b = await board.create_task(
+        group_id=group["id"],
+        title="Build dependent widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package_b["id"],
+        blocked_by=[task_a["id"]],
+    )
+
+    await board.apply_backlog_intake_decision(
+        task_a["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    await board.apply_backlog_intake_decision(
+        task_b["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+
+    package_b = await board.get_work_package(package_b["id"])
+    assert package_b["status"] == "blocked"
+
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    assert claimed["id"] == task_a["id"]
+
+    await board.complete_task_with_output(task_a["id"], "Done.")
+
+    task_b = await board.get_task(task_b["id"])
+    package_b = await board.get_work_package(package_b["id"])
+    assert task_b["status"] == "pending"
+    assert package_b["status"] == "pending"
+
+
+async def test_group_stays_active_while_package_review_pending(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Manual package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    assert claimed["id"] == task["id"]
+
+    await board.complete_task_with_output(task["id"], "Done.")
+
+    package = await board.get_work_package(package["id"])
+    groups = await board.get_groups()
+    completed_group = next(item for item in groups if item["id"] == group["id"])
+    assert package["status"] == "review"
+    assert package["review_status"] == "pending"
+    assert completed_group["status"] == "active"
+    assert completed_group["completed_at"] is None
+
+
+async def test_in_progress_child_wins_over_pending_package_status(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Manual package",
+        created_by="architect-1",
+    )
+    task_a = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+    task_b = await board.create_task(
+        group_id=group["id"],
+        title="Build another widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    for task in (task_a, task_b):
+        await board.apply_backlog_intake_decision(
+            task["id"],
+            needs_review=False,
+            reason="Covered by package review.",
+        )
+
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    assert claimed["id"] == task_a["id"]
+
+    package = await board.get_work_package(package["id"])
+    assert package["status"] == "in_progress"
+
+
+async def test_ensure_review_gate_defaults_and_is_idempotent(board: TaskBoard):
+    group = await board.create_group(title="Feature", created_by="pm")
+
+    gate = await board.ensure_review_gate(
+        entity_type="work_package",
+        entity_id="WP-test",
+        group_id=group["id"],
+    )
+    same_gate = await board.ensure_review_gate(
+        entity_type="work_package",
+        entity_id="WP-test",
+        group_id=group["id"],
+    )
+
+    assert gate["id"] == same_gate["id"]
+    assert gate["max_review_rounds"] == DEFAULT_MAX_REVIEW_ROUNDS
+
+
+async def test_reject_task_reconciles_package_before_group_completion(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Manual package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    rejected = await board.reject_task(task["id"], "No longer needed.")
+
+    package = await board.get_work_package(package["id"])
+    groups = await board.get_groups()
+    completed_group = next(item for item in groups if item["id"] == group["id"])
+    assert rejected["status"] == "rejected"
+    assert package["status"] == "rejected"
+    assert completed_group["status"] == "completed"
+    assert completed_group["completed_at"] is not None
+
+
+async def test_completed_no_review_package_reopens_for_new_child_work(
+    board: TaskBoard,
+):
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Manual package",
+        created_by="architect-1",
+        review_scope="none",
+    )
+    first_task = await board.create_task(
+        group_id=group["id"],
+        title="Build widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    await board.apply_backlog_intake_decision(
+        first_task["id"],
+        needs_review=False,
+        reason="No package review needed.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    assert claimed["id"] == first_task["id"]
+    await board.complete_task_with_output(first_task["id"], "Done.")
+
+    package = await board.get_work_package(package["id"])
+    assert package["status"] == "completed"
+    assert package["review_status"] == "skipped"
+
+    second_task = await board.create_task(
+        group_id=group["id"],
+        title="Build follow-up widget",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+        work_package_id=package["id"],
+    )
+
+    package = await board.get_work_package(package["id"])
+    assert second_task["status"] == "backlog"
+    assert package["status"] == "pending"
+    assert package["review_status"] is None
+
+    await board.apply_backlog_intake_decision(
+        second_task["id"],
+        needs_review=False,
+        reason="No package review needed.",
+    )
+    claimed = await board.claim_task("coder", "coder-2")
+
+    assert claimed is not None
+    assert claimed["id"] == second_task["id"]
+    package = await board.get_work_package(package["id"])
+    assert package["status"] == "in_progress"
+    assert package["review_status"] is None
