@@ -392,9 +392,6 @@ CREATE INDEX IF NOT EXISTS idx_work_packages_group_status
 CREATE INDEX IF NOT EXISTS idx_work_packages_milestone
     ON work_packages(milestone_id, status);
 
-CREATE INDEX IF NOT EXISTS idx_tasks_work_package
-    ON tasks(work_package_id, status);
-
 CREATE INDEX IF NOT EXISTS idx_review_gates_entity
     ON review_gates(entity_type, entity_id);
 
@@ -459,15 +456,11 @@ CREATE INDEX IF NOT EXISTS idx_merge_queue_group_status
 CREATE INDEX IF NOT EXISTS idx_merge_queue_ready
     ON merge_queue(status, next_attempt_at, created_at);
 
-CREATE INDEX IF NOT EXISTS idx_merge_queue_source
-    ON merge_queue(source_type, source_entity_id, status);
-
-CREATE INDEX IF NOT EXISTS idx_merge_queue_package
-    ON merge_queue(work_package_id, status);
-
 """
 
-# Indexes that depend on ALTER TABLE columns — applied after migrations
+# Indexes that depend on ALTER TABLE columns. Existing databases may have
+# older tasks/merge_queue tables, so these run only after compatibility
+# columns and numbered migrations have finished.
 _DEFERRED_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_tasks_chain
     ON tasks(chain_id);
@@ -475,6 +468,15 @@ CREATE INDEX IF NOT EXISTS idx_tasks_chain
 CREATE INDEX IF NOT EXISTS idx_tasks_instance_token
     ON tasks(instance_token)
     WHERE instance_token IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_work_package
+    ON tasks(work_package_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_merge_queue_source
+    ON merge_queue(source_type, source_entity_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_merge_queue_package
+    ON merge_queue(work_package_id, status);
 """
 
 
@@ -578,28 +580,16 @@ class Database:
                 col,
             )
 
-        # Create indexes that depend on ALTER TABLE columns. If the
-        # columns truly don't exist (first-boot old DB), SQLite raises
-        # 'no such column' -- that's recoverable, so catch it. Any other
-        # failure (syntax, IO) is fatal.
-        try:
-            await self._conn.executescript(_DEFERRED_INDEX_SQL)
-        except Exception as exc:  # noqa: BLE001 -- narrowed below
-            msg = str(exc).lower()
-            if "no such column" in msg or "already exists" in msg:
-                logger.debug(
-                    "Deferred index SQL skipped (benign schema state): %s", exc,
-                )
-            else:
-                logger.error("Deferred index SQL failed: %s", exc)
-                raise
-
         # Apply pending schema migrations
         from taskbrew.orchestrator.migration import MigrationManager
         migrator = MigrationManager(self)
         applied = await migrator.apply_pending()
         if applied:
             logger.info("Applied migrations: %s", applied)
+
+        # Create indexes that depend on ALTER TABLE columns after migrations.
+        await self._conn.executescript(_DEFERRED_INDEX_SQL)
+        await self._conn.commit()
 
         # Initialize connection pool for concurrent access
         self._pool = asyncio.Queue(maxsize=self.pool_size)

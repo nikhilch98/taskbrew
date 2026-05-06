@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,80 @@ async def test_tasks_schema_has_package_columns(db: Database):
     }
 
     assert {"work_package_id", "milestone_id", "review_scope"}.issubset(columns)
+
+
+async def test_initialize_upgrades_legacy_db_before_package_indexes(tmp_path: Path):
+    db_path = tmp_path / "legacy-v34.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                group_id TEXT,
+                parent_id TEXT,
+                title TEXT NOT NULL,
+                assigned_to TEXT,
+                claimed_by TEXT,
+                status TEXT NOT NULL DEFAULT 'pending'
+            );
+
+            CREATE TABLE merge_queue (
+                id TEXT PRIMARY KEY,
+                group_id TEXT NOT NULL,
+                parent_task_id TEXT NOT NULL,
+                verifier_task_id TEXT NOT NULL,
+                source_branch TEXT NOT NULL,
+                target_branch TEXT NOT NULL DEFAULT 'main',
+                status TEXT NOT NULL DEFAULT 'queued',
+                next_attempt_at TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            );
+
+            INSERT INTO schema_migrations (version, name, applied_at)
+            VALUES (34, 'add_system_gate_task_fields', '2026-05-01T00:00:00+00:00');
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    database = Database(str(db_path))
+    await database.initialize()
+    try:
+        task_columns = {
+            row["name"] for row in await database.execute_fetchall("PRAGMA table_info(tasks)")
+        }
+        queue_columns = {
+            row["name"]
+            for row in await database.execute_fetchall("PRAGMA table_info(merge_queue)")
+        }
+        indexes = {
+            row["name"]
+            for row in await database.execute_fetchall(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        version = await database.execute_fetchone(
+            "SELECT MAX(version) AS version FROM schema_migrations"
+        )
+    finally:
+        await database.close()
+
+    assert {"work_package_id", "milestone_id", "review_scope"}.issubset(task_columns)
+    assert {"source_type", "source_entity_id", "work_package_id"}.issubset(queue_columns)
+    assert {
+        "idx_tasks_work_package",
+        "idx_merge_queue_source",
+        "idx_merge_queue_package",
+    }.issubset(indexes)
+    assert version["version"] == 36
 
 
 async def test_create_work_package(board: TaskBoard):
