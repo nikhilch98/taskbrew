@@ -43,6 +43,20 @@ CLAIMABLE_STATUS = "pending"
 BACKLOG_STATUS = "backlog"
 REVIEW_STATUS = "review"
 DEFAULT_MAX_REVIEW_ROUNDS = 3
+DEFAULT_PACKAGE_REVIEW_SCOPE = "work_package"
+NO_REVIEW_SCOPE = "none"
+TASK_REVIEW_SCOPE = "task"
+PACKAGE_STATUSES = (
+    "backlog",
+    "pending",
+    "in_progress",
+    "blocked",
+    "review",
+    "waiting_revision",
+    "completed",
+    "rejected",
+    "failed",
+)
 
 
 class TaskBoard:
@@ -145,6 +159,91 @@ class TaskBoard:
         )
 
     # ------------------------------------------------------------------
+    # Work Packages
+    # ------------------------------------------------------------------
+
+    async def create_work_package(
+        self,
+        group_id: str,
+        title: str,
+        description: str | None = None,
+        *,
+        milestone_id: str | None = None,
+        created_by: str | None = None,
+        risk_level: str = "medium",
+        review_scope: str = DEFAULT_PACKAGE_REVIEW_SCOPE,
+    ) -> dict:
+        """Create a work package for a group."""
+        await self._db.register_prefix("WP")
+        package_id = await self._db.generate_task_id("WP")
+        now = _utcnow()
+        await self._db.execute(
+            "INSERT INTO work_packages "
+            "(id, group_id, milestone_id, title, description, status, risk_level, "
+            "review_scope, max_review_rounds, created_by, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+            (
+                package_id,
+                group_id,
+                milestone_id,
+                title,
+                description,
+                risk_level,
+                review_scope,
+                DEFAULT_MAX_REVIEW_ROUNDS,
+                created_by,
+                now,
+                now,
+            ),
+        )
+        package = await self.get_work_package(package_id)
+        if package is None:
+            raise ValueError(f"Work package not found after create: {package_id}")
+        return package
+
+    async def get_work_package(self, package_id: str) -> dict | None:
+        """Return a single work package by ID, or None."""
+        return await self._db.execute_fetchone(
+            "SELECT * FROM work_packages WHERE id = ?", (package_id,)
+        )
+
+    async def get_group_work_packages(self, group_id: str) -> list[dict]:
+        """Return all work packages belonging to a group."""
+        return await self._db.execute_fetchall(
+            "SELECT * FROM work_packages WHERE group_id = ? ORDER BY created_at",
+            (group_id,),
+        )
+
+    async def ensure_default_work_package(self, group_id: str) -> dict:
+        """Return or create the group's default work package."""
+        group = await self._db.execute_fetchone(
+            "SELECT * FROM groups WHERE id = ?", (group_id,)
+        )
+        if group is None:
+            raise ValueError(f"Group not found: {group_id}")
+
+        default_title = f"Default package for {group['title']}"
+        default_description = "Automatically created to keep existing tasks grouped."
+        package = await self._db.execute_fetchone(
+            "SELECT * FROM work_packages "
+            "WHERE group_id = ? AND milestone_id IS NULL "
+            "AND created_by = 'system' AND title = ? AND description = ? "
+            "ORDER BY created_at LIMIT 1",
+            (group_id, default_title, default_description),
+        )
+        if package is not None:
+            return package
+
+        return await self.create_work_package(
+            group_id=group_id,
+            title=default_title,
+            description=default_description,
+            created_by="system",
+            risk_level="medium",
+            review_scope=DEFAULT_PACKAGE_REVIEW_SCOPE,
+        )
+
+    # ------------------------------------------------------------------
     # Tasks
     # ------------------------------------------------------------------
 
@@ -164,6 +263,9 @@ class TaskBoard:
         requires_fanout: bool | None = None,
         branch_name: str | None = None,
         parent_branch: str | None = None,
+        work_package_id: str | None = None,
+        milestone_id: str | None = None,
+        review_scope: str | None = None,
     ) -> dict:
         """Create a new task with an auto-generated ID.
 
@@ -182,6 +284,20 @@ class TaskBoard:
         the integrator role will want to pass ``parent_branch`` set
         to ``integration/<group_id>`` once that layer exists.
         """
+        if work_package_id is None:
+            package = await self.ensure_default_work_package(group_id)
+            work_package_id = package["id"]
+            milestone_id = milestone_id or package.get("milestone_id")
+        else:
+            package = await self.get_work_package(work_package_id)
+            if package is None:
+                raise ValueError(f"Work package not found: {work_package_id}")
+            if package["group_id"] != group_id:
+                raise ValueError(
+                    f"Work package {work_package_id} does not belong to group {group_id}"
+                )
+            milestone_id = milestone_id or package.get("milestone_id")
+
         prefix = self._role_to_prefix.get(assigned_to, assigned_to.upper()[:2])
         # Ensure the prefix is registered.
         await self._db.register_prefix(prefix)
@@ -219,8 +335,8 @@ class TaskBoard:
             " priority, assigned_to, status, created_by, created_at, "
             " revision_of, requires_fanout, branch_name, parent_branch, "
             " intended_status, backlog_intake_status, max_review_rounds, "
-            " review_parent_task_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " review_parent_task_id, work_package_id, milestone_id, review_scope) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 group_id,
@@ -241,6 +357,9 @@ class TaskBoard:
                 "pending",
                 DEFAULT_MAX_REVIEW_ROUNDS,
                 review_parent_task_id,
+                work_package_id,
+                milestone_id,
+                review_scope,
             ),
         )
 
@@ -267,6 +386,8 @@ class TaskBoard:
         task = {
             "id": task_id,
             "group_id": group_id,
+            "work_package_id": work_package_id,
+            "milestone_id": milestone_id,
             "parent_id": parent_id,
             "title": title,
             "description": description,
@@ -288,6 +409,7 @@ class TaskBoard:
             "backlog_intake_status": "pending",
             "backlog_intake_processed_at": None,
             "review_status": None,
+            "review_scope": review_scope,
             "review_round": 0,
             "max_review_rounds": DEFAULT_MAX_REVIEW_ROUNDS,
             "review_parent_task_id": review_parent_task_id,
