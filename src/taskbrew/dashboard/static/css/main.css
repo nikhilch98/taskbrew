@@ -1097,6 +1097,91 @@ body.sidebar-open .main-content {
     border: 1px solid rgba(6, 182, 212, 0.24);
 }
 
+.badge-system-gate {
+    background: rgba(99, 102, 241, 0.12);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.22);
+}
+
+.badge-system-gate.gate-state-running {
+    background: rgba(6, 182, 212, 0.13);
+    color: #67e8f9;
+    border-color: rgba(6, 182, 212, 0.28);
+}
+
+.badge-system-gate.gate-state-failed,
+.badge-system-gate.gate-state-rejected {
+    background: rgba(244, 63, 94, 0.12);
+    color: #fb7185;
+    border-color: rgba(244, 63, 94, 0.24);
+}
+
+.task-card-system-gate {
+    margin-top: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--accent-cyan-lighter);
+}
+
+.task-card-system-gate.gate-state-waiting_revision {
+    color: var(--accent-amber-light);
+}
+
+.task-card-system-gate.gate-state-failed {
+    color: var(--accent-rose-light);
+}
+
+.package-card {
+    cursor: default;
+    border-left: 3px solid var(--accent-blue, #3b82f6);
+}
+
+.package-card:hover {
+    transform: translateY(-1px);
+}
+
+.package-progress {
+    color: var(--text-secondary, #94a3b8);
+    font-size: 12px;
+    margin-top: 6px;
+}
+
+.badge-package-role {
+    background: rgba(59, 130, 246, 0.12);
+    color: var(--accent-blue-light, #60a5fa);
+    border: 1px solid rgba(59, 130, 246, 0.24);
+}
+
+.badge-package-risk {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary, #94a3b8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.badge-package-risk.risk-high,
+.badge-package-risk.risk-critical {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--accent-amber-light, #fbbf24);
+    border-color: rgba(245, 158, 11, 0.24);
+}
+
+.badge-package-risk.risk-critical {
+    background: rgba(244, 63, 94, 0.12);
+    color: var(--accent-rose-light, #fb7185);
+    border-color: rgba(244, 63, 94, 0.24);
+}
+
+.system-gate-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 8px currentColor;
+    animation: dotPulse 1.5s ease-in-out infinite;
+}
+
 .badge-priority-critical {
     background: rgba(244, 63, 94, 0.15);
     color: #fb7185;
@@ -1404,6 +1489,11 @@ body.sidebar-open .agent-sidebar { transform: translateX(0); }
 .sidebar-agent-card:hover {
     border-color: rgba(255, 255, 255, 0.08);
     background: rgba(20, 28, 50, 0.5);
+}
+
+.sidebar-agent-system {
+    border-color: rgba(6, 182, 212, 0.18);
+    background: rgba(6, 182, 212, 0.06);
 }
 
 .sidebar-agent-top {

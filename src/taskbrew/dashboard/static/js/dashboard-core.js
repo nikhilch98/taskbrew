@@ -12,21 +12,43 @@ const ROLE_COLORS = {
     coder:      { bg: 'rgba(245,158,11,0.15)',  border: '#f59e0b', text: '#fbbf24' },
     tester:     { bg: 'rgba(16,185,129,0.15)',  border: '#10b981', text: '#34d399' },
     reviewer:   { bg: 'rgba(236,72,153,0.15)',  border: '#ec4899', text: '#f472b6' },
+    system:     { bg: 'rgba(6,182,212,0.15)',   border: '#06b6d4', text: '#67e8f9' },
 };
 
 const ROLE_EMOJI = {
     pm: '\uD83D\uDCCB', researcher: '\uD83D\uDD0D', architect: '\uD83C\uDFD7\uFE0F',
-    coder: '\uD83D\uDCBB', tester: '\uD83E\uDDEA', reviewer: '\uD83D\uDC41\uFE0F'
+    coder: '\uD83D\uDCBB', tester: '\uD83E\uDDEA', reviewer: '\uD83D\uDC41\uFE0F',
+    system: '\u2699\uFE0F'
 };
 
 const ROLE_TITLE = {
     pm: 'Project Manager', researcher: 'Researcher', architect: 'Architect',
-    coder: 'Coder', tester: 'Tester', reviewer: 'Code Reviewer'
+    coder: 'Coder', tester: 'Tester', reviewer: 'Code Reviewer', system: 'System AI'
 };
 
 const STATUS_ICONS = {
     backlog: 'B', blocked: '\uD83D\uDD12', pending: '\u23F3', in_progress: '\u26A1',
     review: 'R', completed: '\u2705', rejected: '\u274C', failed: '\uD83D\uDCA5'
+};
+
+const BOARD_STATUSES = [
+    'backlog', 'pending', 'in_progress', 'review', 'blocked', 'completed', 'rejected', 'failed'
+];
+
+const BOARD_COLUMNS = {
+    backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
+    pending:     { el: 'tasksPending',    count: 'countPending' },
+    in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
+    review:      { el: 'tasksReview',     count: 'countReview' },
+    blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
+    completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
+    rejected:    { el: 'tasksRejected',   count: 'countRejected' },
+    failed:      { el: 'tasksFailed',     count: 'countFailed' },
+};
+
+const PACKAGE_STATUS_COLUMN = {
+    waiting_revision: 'review',
+    cancelled: 'rejected',
 };
 
 const MAX_LOG_ENTRIES = 200;
@@ -46,6 +68,7 @@ let listSortAsc = true;
 let batchMode = false;
 let selectedTasks = new Set();
 let notifications = [];
+let currentBoardMode = 'tasks';
 
 // ================================================================
 // Toast Notifications
@@ -435,11 +458,11 @@ async function refreshBoard() {
         const params = new URLSearchParams(currentFilters);
         const resp = await fetch('/api/board?' + params.toString());
         const data = await resp.json();
+        const packageBoard = await loadPackageBoard();
 
         // Flatten all tasks for list view and stats
         allTasks = [];
-        const statuses = ['backlog', 'pending', 'in_progress', 'review', 'blocked', 'completed', 'rejected', 'failed'];
-        for (const status of statuses) {
+        for (const status of BOARD_STATUSES) {
             const tasks = data[status] || [];
             for (const t of tasks) {
                 t._status = status;
@@ -455,13 +478,47 @@ async function refreshBoard() {
 
         // Render the appropriate view
         if (currentView === 'board') {
-            renderBoardView(data);
+            if (shouldRenderPackageBoard(packageBoard)) {
+                renderPackageBoard(packageBoard);
+            } else {
+                renderBoardView(data);
+            }
         } else if (currentView === 'list') {
             renderListView();
         }
     } catch (err) {
         showToast('Failed to refresh board: ' + err.message);
     }
+}
+
+async function loadPackageBoard() {
+    if (batchMode || currentFilters.assigned_to || currentFilters.priority) {
+        return null;
+    }
+    try {
+        const params = new URLSearchParams();
+        if (currentFilters.group_id) {
+            params.set('group_id', currentFilters.group_id);
+        }
+        const query = params.toString();
+        const resp = await fetch('/api/work-packages/board' + (query ? '?' + query : ''));
+        if (!resp.ok) {
+            return null;
+        }
+        return await resp.json();
+    } catch (e) {
+        return null;
+    }
+}
+
+function shouldRenderPackageBoard(packageBoard) {
+    if (batchMode) {
+        return false;
+    }
+    return Boolean(
+        packageBoard &&
+        Array.isArray(packageBoard.packages)
+    );
 }
 
 async function refreshGroups() {
@@ -546,19 +603,11 @@ async function refreshFilters() {
 // Board View Rendering
 // ================================================================
 function renderBoardView(data) {
-    const columns = {
-        backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
-        pending:     { el: 'tasksPending',    count: 'countPending' },
-        in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
-        review:      { el: 'tasksReview',     count: 'countReview' },
-        blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
-        completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
-        rejected:    { el: 'tasksRejected',   count: 'countRejected' },
-        failed:      { el: 'tasksFailed',     count: 'countFailed' },
-    };
-
-    for (const [status, cfg] of Object.entries(columns)) {
-        const tasks = data[status] || [];
+    currentBoardMode = 'tasks';
+    for (const [status, cfg] of Object.entries(BOARD_COLUMNS)) {
+        const selectedStatus = currentFilters.status || '';
+        setBoardColumnVisible(status, !selectedStatus || selectedStatus === status);
+        const tasks = selectedStatus && selectedStatus !== status ? [] : (data[status] || []);
         const container = document.getElementById(cfg.el);
         const countEl = document.getElementById(cfg.count);
 
@@ -575,6 +624,101 @@ function renderBoardView(data) {
             container.appendChild(createTaskCard(task, status));
         }
     }
+}
+
+function renderPackageBoard(data) {
+    currentBoardMode = 'packages';
+    for (const [status, cfg] of Object.entries(BOARD_COLUMNS)) {
+        const selectedStatus = currentFilters.status || '';
+        setBoardColumnVisible(status, !selectedStatus || selectedStatus === status);
+        const packages = packagesForColumn(data, status);
+        const container = document.getElementById(cfg.el);
+        const countEl = document.getElementById(cfg.count);
+        if (!container || !countEl) continue;
+
+        countEl.textContent = packages.length;
+        container.innerHTML = '';
+
+        if (packages.length === 0) {
+            container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">' +
+                (STATUS_ICONS[status] || '\uD83D\uDCE6') + '</span> No work packages</div>';
+            continue;
+        }
+
+        for (const pkg of packages) {
+            container.appendChild(createPackageCard(pkg));
+        }
+    }
+}
+
+function packagesForColumn(data, status) {
+    const selectedStatus = currentFilters.status || '';
+    if (selectedStatus && selectedStatus !== status) {
+        return [];
+    }
+    const columns = data.columns || {};
+    const packages = [...(columns[status] || [])];
+    for (const [rawStatus, mappedStatus] of Object.entries(PACKAGE_STATUS_COLUMN)) {
+        if (mappedStatus === status) {
+            packages.push(...(columns[rawStatus] || []));
+        }
+    }
+    return packages;
+}
+
+function createPackageCard(pkg) {
+    const card = document.createElement('div');
+    card.className = 'task-card package-card';
+    card.setAttribute('data-package-id', String(pkg.id || ''));
+    card.setAttribute('role', 'listitem');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute(
+        'aria-label',
+        'Work package ' + String(pkg.id || '') + ': ' + (pkg.title || 'untitled')
+    );
+
+    const counts = pkg.task_counts || {};
+    const completed = counts.completed || 0;
+    const total = counts.total || 0;
+    const riskLevel = pkg.risk_level || 'medium';
+    const riskClass = classToken(riskLevel);
+    const reviewStatus = pkg.review_status || 'not_started';
+
+    let html = '<div class="task-card-header">';
+    html += '<span class="task-card-id">' + escapeHtml(String(pkg.id || '')) + '</span>';
+    html += '<span class="badge badge-package-role">Work Package</span>';
+    html += '</div>';
+    html += '<div class="task-card-title">' + escapeHtml(truncate(pkg.title || '(untitled)', 80)) + '</div>';
+    html += '<div class="package-progress">' + completed + '/' + total + ' tasks complete</div>';
+    html += '<div class="task-card-badges">';
+    html += '<span class="badge badge-system-gate">' +
+        escapeHtml(formatPackageLabel(reviewStatus)) + '</span>';
+    html += '<span class="badge badge-package-risk risk-' + escapeHtml(riskClass) + '">' +
+        escapeHtml(formatPackageLabel(riskLevel)) + '</span>';
+    if (pkg.group_id) {
+        html += '<span class="badge badge-group">' + escapeHtml(pkg.group_id) + '</span>';
+    }
+    html += '</div>';
+
+    card.innerHTML = html;
+    return card;
+}
+
+function formatPackageLabel(value) {
+    return String(value || '')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function setBoardColumnVisible(status, visible) {
+    const col = document.getElementById(STATUS_TO_COL_ID[status] || ('col-' + status));
+    if (col) {
+        col.hidden = !visible;
+    }
+}
+
+function classToken(value) {
+    return String(value || '').replace(/[^\w-]/g, '-');
 }
 
 function createTaskCard(task, status) {
@@ -640,12 +784,20 @@ function createTaskCard(task, status) {
     if (task.needs_review === true || task.needs_review === 1) {
         html += '<span class="badge badge-needs-review">Needs Review</span>';
     }
+    const gateBadge = renderSystemGateBadge(task, status);
+    if (gateBadge) {
+        html += gateBadge;
+    }
 
     html += '</div>';
 
     // Claimed by
     if (task.claimed_by && status === 'in_progress') {
         html += '<div class="task-card-claimed">\u2192 ' + escapeHtml(task.claimed_by) + '</div>';
+    }
+    const gateLine = renderSystemGateLine(task, status);
+    if (gateLine) {
+        html += gateLine;
     }
 
     // Blocked indicator
@@ -667,6 +819,69 @@ function createTaskCard(task, status) {
         if (e.key === ' ') { e.preventDefault(); card.classList.toggle('selected'); }
     });
     return card;
+}
+
+function systemGateState(task, status) {
+    if (status === 'backlog') {
+        const state = task.backlog_intake_status || 'pending';
+        const labels = {
+            pending: 'Queued for system check',
+            running: 'System agent checking',
+            completed: 'System check done',
+            failed: 'System check failed'
+        };
+        return { gate: 'backlog', state, label: labels[state] || 'System check pending' };
+    }
+    if (status === 'review') {
+        const state = task.review_status || 'pending';
+        const labels = {
+            pending: 'Queued for system review',
+            running: 'System agent reviewing',
+            waiting_revision: 'Waiting on revision',
+            failed: 'Review attempt failed',
+            approved: 'Review approved',
+            rejected: 'Review rejected'
+        };
+        return { gate: 'review', state, label: labels[state] || 'System review pending' };
+    }
+    return null;
+}
+
+function asArray(value) {
+    if (Array.isArray(value)) return value;
+    if (!value) return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function latestSystemGateRun(task, gateName) {
+    const runs = asArray(task.system_gate_runs);
+    for (let i = runs.length - 1; i >= 0; i--) {
+        if (!gateName || runs[i].gate === gateName) return runs[i];
+    }
+    return null;
+}
+
+function renderSystemGateBadge(task, status) {
+    const gate = systemGateState(task, status);
+    if (!gate) return '';
+    const cls = 'badge-system-gate gate-' + classToken(gate.gate) +
+        ' gate-state-' + classToken(gate.state);
+    return '<span class="badge ' + cls + '">' + escapeHtml(gate.label) + '</span>';
+}
+
+function renderSystemGateLine(task, status) {
+    const gate = systemGateState(task, status);
+    if (!gate || !['running', 'failed', 'waiting_revision'].includes(gate.state)) {
+        return '';
+    }
+    const cls = 'task-card-system-gate gate-state-' + classToken(gate.state);
+    return '<div class="' + cls + '"><span class="system-gate-dot"></span>' +
+        escapeHtml(gate.label) + '</div>';
 }
 
 // ================================================================
@@ -970,10 +1185,11 @@ function renderAgentSidebar(agents) {
         const roleColor = getRoleColor(role);
         const emoji = getRoleEmoji(role);
         const statusClass = agent.status === 'paused' ? 'sidebar-status-paused' : (agent.status === 'working' ? 'sidebar-status-working' : 'sidebar-status-idle');
-        const statusLabel = agent.status || 'idle';
+        const statusLabel = agent.status_detail || agent.status || 'idle';
 
         const card = document.createElement('div');
         card.className = 'sidebar-agent-card';
+        if (role === 'system') card.classList.add('sidebar-agent-system');
 
         let html = '<div class="sidebar-agent-top">';
         html += '<div class="sidebar-agent-identity">';
@@ -992,6 +1208,9 @@ function renderAgentSidebar(agents) {
         if (agent.current_task) {
             html += '<div class="sidebar-agent-meta">Task: <span class="task-link">' + escapeHtml(String(agent.current_task)) + '</span></div>';
         }
+        if (agent.current_gate) {
+            html += '<div class="sidebar-agent-meta">Gate: ' + escapeHtml(String(agent.current_gate)) + '</div>';
+        }
         if (agent.last_heartbeat) {
             html += '<div class="sidebar-agent-meta">Last seen: ' + timeAgo(agent.last_heartbeat) + '</div>';
         }
@@ -1001,16 +1220,18 @@ function renderAgentSidebar(agents) {
         html += '<div class="' + activityClass + '" id="activity-' + escapeHtml(agent.instance_id || '') + '"></div>';
 
         // Actions
-        html += '<div class="sidebar-agent-actions">';
-        html += '<button class="btn btn-chat" onclick="openChat(\'' + escapeHtml(agent.instance_id || '') + '\')">Chat</button>';
-        html += '</div>';
+        if (role !== 'system') {
+            html += '<div class="sidebar-agent-actions">';
+            html += '<button class="btn btn-chat" onclick="openChat(\'' + escapeHtml(agent.instance_id || '') + '\')">Chat</button>';
+            html += '</div>';
+        }
 
         card.innerHTML = html;
         container.appendChild(card);
     }
 
     // Per-role pause controls
-    const roles = [...new Set(agents.map(a => a.role).filter(Boolean))];
+    const roles = [...new Set(agents.map(a => a.role).filter(r => r && r !== 'system'))];
     if (roles.length > 0) {
         const divider = document.createElement('div');
         divider.style.cssText = 'height:1px;background:var(--border-subtle);margin:12px 0;';
@@ -1068,17 +1289,7 @@ function appendAgentActivity(agentName, kind, text) {
 // Differential Board Updates
 // ================================================================
 function updateColumnCounts() {
-    const columns = {
-        backlog:     { el: 'tasksBacklog',    count: 'countBacklog' },
-        pending:     { el: 'tasksPending',    count: 'countPending' },
-        in_progress: { el: 'tasksInProgress', count: 'countInProgress' },
-        review:      { el: 'tasksReview',     count: 'countReview' },
-        blocked:     { el: 'tasksBlocked',    count: 'countBlocked' },
-        completed:   { el: 'tasksCompleted',  count: 'countCompleted' },
-        rejected:    { el: 'tasksRejected',   count: 'countRejected' },
-        failed:      { el: 'tasksFailed',     count: 'countFailed' },
-    };
-    for (const [status, cfg] of Object.entries(columns)) {
+    for (const [, cfg] of Object.entries(BOARD_COLUMNS)) {
         const container = document.getElementById(cfg.el);
         const countEl = document.getElementById(cfg.count);
         if (container && countEl) {
@@ -1120,12 +1331,17 @@ function _addEmptyStateIfNeeded(col) {
     const container = col.querySelector('.column-tasks');
     if (container && container.querySelectorAll('.task-card').length === 0) {
         const status = col.id.replace('col-', '');
+        const emptyLabel = currentBoardMode === 'packages' ? 'No work packages' : 'No tasks';
         container.innerHTML = '<div class="empty-state"><span class="empty-state-icon">' +
-            (STATUS_ICONS[status] || '\uD83D\uDCE6') + '</span> No tasks</div>';
+            (STATUS_ICONS[status] || '\uD83D\uDCE6') + '</span> ' + emptyLabel + '</div>';
     }
 }
 
 async function updateSingleTask(taskId) {
+    if (currentBoardMode === 'packages') {
+        refreshBoard();
+        return;
+    }
     try {
         const scrollPositions = _saveColumnScrollPositions();
 
@@ -1134,6 +1350,20 @@ async function updateSingleTask(taskId) {
         const task = await resp.json();
         const status = task.status || 'pending';
         task._status = status;
+        const selectedStatus = currentFilters.status || '';
+        if (selectedStatus && selectedStatus !== status) {
+            const existingCard = document.querySelector(
+                '[data-task-id="' + CSS.escape(String(taskId)) + '"]'
+            );
+            if (existingCard) {
+                const currentCol = existingCard.closest('.kanban-column');
+                existingCard.remove();
+                _addEmptyStateIfNeeded(currentCol);
+                updateColumnCounts();
+            }
+            _restoreColumnScrollPositions(scrollPositions);
+            return;
+        }
 
         // Find existing card and update or move it
         const existingCard = document.querySelector('[data-task-id="' + CSS.escape(String(taskId)) + '"]');
@@ -1181,6 +1411,10 @@ async function updateSingleTask(taskId) {
 }
 
 function removeSingleTask(taskId) {
+    if (currentBoardMode === 'packages') {
+        refreshBoard();
+        return;
+    }
     const card = document.querySelector('[data-task-id="' + CSS.escape(String(taskId)) + '"]');
     if (!card) return;
     const col = card.closest('.kanban-column');
@@ -1222,6 +1456,11 @@ function connectWebSocket() {
             } else {
                 refreshBoard();
             }
+            if (type.startsWith('task.system_gate_')) {
+                refreshAgents();
+            }
+        } else if (type.startsWith('work_package.')) {
+            refreshBoard();
         } else if (type.startsWith('pipeline.')) {
             refreshBoard();
         }
@@ -1302,4 +1541,3 @@ function appendLog(event) {
         }
     }
 }
-

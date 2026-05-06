@@ -279,6 +279,24 @@ function openTaskDetail(task) {
     html += tdField('Parent Task', task.parent_id ? escapeHtml(String(task.parent_id)) : 'None', task.parent_id ? 'mono' : 'muted');
     html += '</div></div>';
 
+    const gate = systemGateState(task, s);
+    if (gate || task.needs_review === true || task.needs_review === 1 || task.needs_review_reason) {
+        const latestRun = latestSystemGateRun(task, gate ? gate.gate : null);
+        html += '<div class="task-detail-section"><div class="task-detail-section-title">System Gate</div>';
+        html += '<div class="task-detail-grid">';
+        html += tdField('State', gate ? escapeHtml(gate.label) : 'No active gate');
+        html += tdField('Review Required', (task.needs_review === true || task.needs_review === 1) ? 'Yes' : 'No');
+        if (latestRun) {
+            html += tdField('Latest Outcome', latestRun.outcome ? escapeHtml(String(latestRun.outcome)) : 'running');
+            html += tdField('Latest Update', fmtTs(latestRun.finished_at || latestRun.started_at));
+        }
+        html += '</div>';
+        if (task.needs_review_reason) {
+            html += '<div class="task-detail-description"><div class="value">' + escapeHtml(task.needs_review_reason) + '</div></div>';
+        }
+        html += '</div>';
+    }
+
     // Timeline grid
     html += '<div class="task-detail-section"><div class="task-detail-section-title">Timeline</div>';
     html += '<div class="task-detail-grid">';
