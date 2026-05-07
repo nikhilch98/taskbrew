@@ -63,6 +63,7 @@ PACKAGE_STATUSES = (
     "failed",
 )
 PACKAGE_INTEGRATING_STATUS = "integrating"
+PACKAGE_INTEGRATION_TASK_TYPE = "package_integration"
 PACKAGE_INTEGRATION_TASK_TYPES = frozenset({"implementation", "bug_fix", "revision"})
 DEFAULT_PACKAGE_DESCRIPTION = "Automatically created to keep existing tasks grouped."
 MERGE_QUEUE_OPEN_STATUSES = (
@@ -841,16 +842,55 @@ class TaskBoard:
             raise ValueError(f"Review gate not found after create: {gate_id}")
         return gate
 
+    async def reopen_ready_work_package_review_gate(
+        self,
+        package_id: str,
+    ) -> dict | None:
+        """Reopen a package review gate after package revisions are integrated."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            return None
+        if package["status"] != "review" or package.get("review_status") != "pending":
+            return None
+
+        gate = await self.ensure_review_gate(
+            entity_type="work_package",
+            entity_id=package_id,
+            group_id=package["group_id"],
+            max_rounds=int(
+                package.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+            ),
+        )
+        if gate.get("status") == "pending":
+            return gate
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE review_gates SET status = 'pending', outcome = NULL, "
+            "reason = NULL, completed_at = NULL, review_round = ?, "
+            "max_review_rounds = ?, updated_at = ? "
+            "WHERE id = ? AND entity_type = 'work_package' "
+            "AND status IN ('waiting_revision', 'failed') RETURNING *",
+            (
+                int(package.get("review_round") or 0),
+                int(package.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS),
+                now,
+                gate["id"],
+            ),
+        )
+        return rows[0] if rows else gate
+
     async def reconcile_work_package_status(self, package_id: str) -> dict | None:
         """Recompute a work package status from its child task statuses."""
         package = await self.get_work_package(package_id)
         if package is None:
             return None
-        if package["status"] in ("review", "waiting_revision", PACKAGE_INTEGRATING_STATUS):
+        if package["status"] in ("review", "waiting_revision"):
             return package
 
         tasks = await self._db.execute_fetchall(
-            "SELECT id, status, completion_checks FROM tasks "
+            "SELECT id, title, status, task_type, completion_checks, branch_name, "
+            "parent_branch, created_at, completed_at FROM tasks "
             "WHERE work_package_id = ? ORDER BY created_at",
             (package_id,),
         )
@@ -858,6 +898,16 @@ class TaskBoard:
         next_status = package["status"]
         next_review_status = package.get("review_status")
         task_statuses = [task["status"] for task in tasks]
+        active_integration_task = any(
+            task.get("task_type") == PACKAGE_INTEGRATION_TASK_TYPE
+            and task.get("status") not in TERMINAL_STATUSES
+            for task in tasks
+        )
+        waiting_package_revision = package.get("review_status") == "waiting_revision" and any(
+            task.get("task_type") == "revision"
+            and task.get("status") not in TERMINAL_STATUSES
+            for task in tasks
+        )
 
         if not tasks:
             next_status = "pending"
@@ -865,6 +915,9 @@ class TaskBoard:
         elif all(status == "rejected" for status in task_statuses):
             next_status = "rejected"
             next_review_status = "rejected"
+        elif active_integration_task:
+            next_status = PACKAGE_INTEGRATING_STATUS
+            next_review_status = "integration_pending"
         elif any(status in ("failed", "rejected", "cancelled") for status in task_statuses):
             next_status = "blocked"
             next_review_status = None
@@ -873,15 +926,24 @@ class TaskBoard:
             next_review_status = None
         elif "in_progress" in task_statuses:
             next_status = "in_progress"
-            next_review_status = None
+            next_review_status = "waiting_revision" if waiting_package_revision else None
         elif any(status in ("backlog", "pending") for status in task_statuses):
             next_status = "pending"
-            next_review_status = None
+            next_review_status = "waiting_revision" if waiting_package_revision else None
         elif all(status == "completed" for status in task_statuses):
             if package.get("review_scope") == NO_REVIEW_SCOPE:
                 next_status = "completed"
                 next_review_status = "skipped"
             else:
+                source_tasks = await self._package_source_tasks_for_integration(
+                    package_id
+                )
+                if await self._package_needs_pre_review_integration(
+                    package_id,
+                    source_tasks,
+                ):
+                    await self._ensure_package_integration_task(package, source_tasks)
+                    return await self.get_work_package(package_id)
                 next_status = "review"
                 next_review_status = "pending"
 
@@ -901,6 +963,7 @@ class TaskBoard:
                     updated.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
                 ),
             )
+            await self.reopen_ready_work_package_review_gate(package_id)
         return updated
 
     async def reconcile_task_package(self, task_id: str) -> None:
@@ -1779,6 +1842,238 @@ class TaskBoard:
         await self.reconcile_task_package(task_id)
         return rows[0]
 
+    async def create_package_revision_tasks(
+        self,
+        package_id: str,
+        revisions: list[dict],
+        *,
+        reason: str,
+    ) -> list[dict]:
+        """Create package-level revision tasks after a package review finding."""
+        package = await self.get_work_package(package_id)
+        if package is None:
+            raise ValueError(f"Work package not found: {package_id}")
+        if package["status"] not in ("review", "waiting_revision"):
+            return []
+        if not revisions:
+            raise ValueError("At least one package revision is required")
+
+        review_round = int(package.get("review_round") or 0)
+        max_review_rounds = int(
+            package.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+        )
+        if max_review_rounds > 0 and review_round >= max_review_rounds:
+            return []
+
+        now = _utcnow()
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET status = 'pending', "
+            "review_status = 'waiting_revision', review_reason = ?, "
+            "review_round = COALESCE(review_round, 0) + 1, updated_at = ? "
+            "WHERE id = ? AND status IN ('review', 'waiting_revision') "
+            "AND (COALESCE(max_review_rounds, ?) <= 0 "
+            "OR COALESCE(review_round, 0) < COALESCE(max_review_rounds, ?)) "
+            "RETURNING *",
+            (
+                reason,
+                now,
+                package_id,
+                DEFAULT_MAX_REVIEW_ROUNDS,
+                DEFAULT_MAX_REVIEW_ROUNDS,
+            ),
+        )
+        if not rows:
+            return []
+        updated = rows[0]
+
+        created: list[dict] = []
+        try:
+            for index, revision in enumerate(revisions, start=1):
+                revision_task = await self.create_task(
+                    group_id=updated["group_id"],
+                    title=revision.get("title")
+                    or f"Package revision {index} for {package_id}",
+                    task_type=revision.get("task_type") or "revision",
+                    assigned_to=revision.get("assigned_to") or "coder",
+                    created_by="system",
+                    description=revision.get("description")
+                    or reason
+                    or "Address the package review finding.",
+                    priority=revision.get("priority") or "high",
+                    work_package_id=package_id,
+                    milestone_id=updated.get("milestone_id"),
+                    review_scope=NO_REVIEW_SCOPE,
+                )
+                created.append(revision_task)
+        except BaseException:
+            await self._db.execute(
+                "UPDATE work_packages SET status = 'review', "
+                "review_status = 'running', "
+                "review_round = ?, updated_at = ? WHERE id = ?",
+                (review_round, _utcnow(), package_id),
+            )
+            raise
+
+        await self.reconcile_work_package_status(package_id)
+        return created
+
+    async def _package_needs_pre_review_integration(
+        self,
+        package_id: str,
+        source_tasks: list[dict],
+    ) -> bool:
+        if self._package_repo_dir is None or not source_tasks:
+            return False
+        if await self._package_open_integration_task(package_id) is not None:
+            return False
+
+        latest_integration = await self._latest_completed_package_integration_task(
+            package_id
+        )
+        if latest_integration is None:
+            return True
+
+        integration_done_at = self._task_finished_or_created_at(latest_integration)
+        return any(
+            self._task_finished_or_created_at(task) > integration_done_at
+            for task in source_tasks
+        )
+
+    async def _ensure_package_integration_task(
+        self,
+        package: dict,
+        source_tasks: list[dict],
+    ) -> dict | None:
+        package_id = package["id"]
+        existing = await self._package_open_integration_task(package_id)
+        if existing is not None:
+            return existing
+        if not source_tasks:
+            return None
+
+        package_branch = package.get("branch_name") or self._package_branch_name(
+            package_id
+        )
+        parent_branch = self._package_parent_branch_for_sources(source_tasks)
+        description = self._package_integration_task_description(
+            package,
+            source_tasks,
+            package_branch=package_branch,
+            parent_branch=parent_branch,
+        )
+
+        now = _utcnow()
+        await self._db.execute(
+            "UPDATE work_packages SET status = ?, review_status = ?, "
+            "branch_name = ?, updated_at = ? WHERE id = ?",
+            (
+                PACKAGE_INTEGRATING_STATUS,
+                "integration_pending",
+                package_branch,
+                now,
+                package_id,
+            ),
+        )
+        return await self.create_task(
+            group_id=package["group_id"],
+            title=f"Integrate package {package_id} for review",
+            task_type=PACKAGE_INTEGRATION_TASK_TYPE,
+            assigned_to="coder",
+            created_by="system",
+            description=description,
+            priority="high",
+            branch_name=package_branch,
+            parent_branch=parent_branch,
+            work_package_id=package_id,
+            milestone_id=package.get("milestone_id"),
+            review_scope=NO_REVIEW_SCOPE,
+        )
+
+    def _package_branch_name(self, package_id: str) -> str:
+        return f"package/{package_id.lower()}"
+
+    def _package_parent_branch_for_sources(self, source_tasks: list[dict]) -> str:
+        targets = {
+            self._package_target_branch(task)
+            for task in source_tasks
+            if task.get("branch_name")
+        }
+        if len(targets) == 1:
+            return next(iter(targets))
+        return "main"
+
+    def _package_integration_task_description(
+        self,
+        package: dict,
+        source_tasks: list[dict],
+        *,
+        package_branch: str,
+        parent_branch: str,
+    ) -> str:
+        source_lines = []
+        for task in source_tasks:
+            source_lines.append(
+                f"- {task['id']}: {task.get('branch_name')} ({task.get('title')})"
+            )
+        sources = "\n".join(source_lines) or "- No source branches found."
+        return (
+            f"Integrate Work Package {package['id']} before package review.\n\n"
+            f"Work package: {package.get('title') or package['id']}\n"
+            f"Target package branch: {package_branch}\n"
+            f"Base branch: {parent_branch}\n\n"
+            f"Source task branches:\n{sources}\n\n"
+            "Instructions:\n"
+            "1. Create or update the package branch from the base branch.\n"
+            "2. Merge or replay each source task branch into the package branch.\n"
+            "3. Resolve conflicts, run relevant tests, and commit the integrated result.\n"
+            "4. Complete this task only after the package branch contains all "
+            "source deliverables."
+        )
+
+    def _task_finished_or_created_at(self, task: dict) -> str:
+        return task.get("completed_at") or task.get("created_at") or ""
+
+    async def _package_open_integration_task(self, package_id: str) -> dict | None:
+        return await self._db.execute_fetchone(
+            "SELECT id, group_id, title, task_type, status, branch_name, "
+            "parent_branch, created_at, completed_at "
+            "FROM tasks WHERE work_package_id = ? AND task_type = ? "
+            "AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (package_id, PACKAGE_INTEGRATION_TASK_TYPE),
+        )
+
+    async def _latest_completed_package_integration_task(
+        self,
+        package_id: str,
+    ) -> dict | None:
+        return await self._db.execute_fetchone(
+            "SELECT id, group_id, title, task_type, status, branch_name, "
+            "parent_branch, created_at, completed_at "
+            "FROM tasks WHERE work_package_id = ? AND task_type = ? "
+            "AND status = 'completed' AND branch_name IS NOT NULL "
+            "AND branch_name != '' "
+            "ORDER BY completed_at DESC, created_at DESC LIMIT 1",
+            (package_id, PACKAGE_INTEGRATION_TASK_TYPE),
+        )
+
+    async def _package_source_tasks_for_integration(
+        self,
+        package_id: str,
+    ) -> list[dict]:
+        if self._package_repo_dir is None:
+            return []
+        task_type_placeholders = ",".join("?" for _ in PACKAGE_INTEGRATION_TASK_TYPES)
+        return await self._db.execute_fetchall(
+            "SELECT id, group_id, title, task_type, status, branch_name, "
+            "parent_branch, created_at, completed_at "
+            "FROM tasks WHERE work_package_id = ? AND status = 'completed' "
+            "AND branch_name IS NOT NULL AND branch_name != '' "
+            f"AND task_type IN ({task_type_placeholders}) "
+            "ORDER BY created_at",
+            (package_id, *sorted(PACKAGE_INTEGRATION_TASK_TYPES)),
+        )
+
     async def _queue_work_package_integration(self, package_id: str) -> list[dict]:
         if self._package_merge_queue is None:
             return []
@@ -1842,15 +2137,16 @@ class TaskBoard:
     async def _package_integration_tasks(self, package_id: str) -> list[dict]:
         if self._package_repo_dir is None:
             return []
-        task_type_placeholders = ",".join("?" for _ in PACKAGE_INTEGRATION_TASK_TYPES)
-        return await self._db.execute_fetchall(
+        package_branch_tasks = await self._db.execute_fetchall(
             "SELECT id, group_id, task_type, status, branch_name, parent_branch "
-            "FROM tasks WHERE work_package_id = ? AND status = 'completed' "
-            "AND branch_name IS NOT NULL AND branch_name != '' "
-            f"AND task_type IN ({task_type_placeholders}) "
-            "ORDER BY created_at",
-            (package_id, *sorted(PACKAGE_INTEGRATION_TASK_TYPES)),
+            "FROM tasks WHERE work_package_id = ? AND task_type = ? "
+            "AND status = 'completed' AND branch_name IS NOT NULL "
+            "AND branch_name != '' ORDER BY completed_at DESC, created_at DESC",
+            (package_id, PACKAGE_INTEGRATION_TASK_TYPE),
         )
+        if package_branch_tasks:
+            return [package_branch_tasks[0]]
+        return await self._package_source_tasks_for_integration(package_id)
 
     def _package_target_branch(self, task: dict) -> str:
         parent_branch = task.get("parent_branch") or "main"

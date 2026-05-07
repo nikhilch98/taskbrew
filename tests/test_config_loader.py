@@ -431,6 +431,33 @@ class TestSystemAgentConfig:
         assert cfg.system_agent.provider == "gemini"
         assert cfg.system_agent.model == "gemini-3-pro-preview"
         assert cfg.system_agent.reasoning_effort == "high"
+        assert cfg.system_agent.max_instances == 1
+
+    def test_system_agent_max_instances_parsed(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "team.yaml"
+        cfg_file.write_text(
+            self.TEAM_YAML_WITH_SYSTEM_AGENT
+            + "\n"
+            + "  max_instances: 3\n"
+        )
+        cfg = load_team_config(cfg_file)
+
+        assert cfg.system_agent.max_instances == 3
+
+    def test_system_agent_max_instances_inherits_team_default_when_omitted(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        cfg_file = tmp_path / "team.yaml"
+        cfg_file.write_text(
+            self.TEAM_YAML_WITH_SYSTEM_AGENT.replace(
+                "max_instances: 1",
+                "max_instances: 3",
+            )
+        )
+        cfg = load_team_config(cfg_file)
+
+        assert cfg.system_agent.max_instances == 3
 
     def test_system_agent_defaults_to_cli_provider_balanced_model(
         self,
@@ -526,6 +553,7 @@ def test_repository_default_team_uses_codex_gpt55_without_verifier_pipeline() ->
         "provider": "codex",
         "model": "gpt-5.5",
         "reasoning_effort": "xhigh",
+        "max_instances": 1,
     }
 
     pipeline_edges = team_data.get("pipeline", {}).get("edges", [])

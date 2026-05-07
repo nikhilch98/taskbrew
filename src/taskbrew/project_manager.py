@@ -56,6 +56,9 @@ def _default_team_yaml(
     slug = project_id or _slugify(project_name)
     db_path = str(DEFAULT_DATA_DIR / f"{slug}.db")
     system_agent = system_agent_setting(cli_provider, system_agent_settings)
+    system_agent_max_instances = 1
+    if isinstance(system_agent_settings, dict):
+        system_agent_max_instances = system_agent_settings.get("max_instances", 1)
     reasoning_line = ""
     if system_agent.get("reasoning_effort"):
         reasoning_line = f'  reasoning_effort: "{system_agent["reasoning_effort"]}"\n'
@@ -68,6 +71,7 @@ def _default_team_yaml(
         f'  provider: "{system_agent["provider"]}"\n'
         f'  model: "{system_agent["model"]}"\n'
         f"{reasoning_line}"
+        f"  max_instances: {system_agent_max_instances}\n"
         "\n"
         "database:\n"
         f'  path: "{db_path}"\n'

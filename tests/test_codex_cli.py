@@ -187,6 +187,42 @@ def _make_mock_process(stdout_lines: list[str], returncode: int = 0):
     return process
 
 
+class _ChunkedStdout:
+    def __init__(self, payload: bytes, chunk_size: int = 8192) -> None:
+        self.payload = payload
+        self.chunk_size = chunk_size
+        self.offset = 0
+
+    async def read(self, size: int = -1) -> bytes:
+        if self.offset >= len(self.payload):
+            return b""
+        if size is None or size < 0:
+            size = len(self.payload) - self.offset
+        size = min(size, self.chunk_size)
+        start = self.offset
+        self.offset += size
+        return self.payload[start:self.offset]
+
+
+def _make_chunked_process(
+    stdout_payload: bytes,
+    returncode: int = 0,
+    chunk_size: int = 8192,
+):
+    process = AsyncMock()
+    process.returncode = None
+    process.stdout = _ChunkedStdout(stdout_payload, chunk_size=chunk_size)
+    process.stderr = AsyncMock()
+    process.stderr.read = AsyncMock(return_value=b"")
+
+    async def _wait():
+        process.returncode = returncode
+
+    process.wait = _wait
+    process.kill = MagicMock()
+    return process
+
+
 @pytest.mark.asyncio
 async def test_query_simple_message():
     lines = [
@@ -208,6 +244,29 @@ async def test_query_simple_message():
     assert isinstance(messages[1], ResultMessage)
     assert messages[1].result == "Hello"
     assert messages[1].usage["input_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_query_handles_oversized_jsonl_event():
+    huge_message = "x" * 150_000
+    payload = (
+        json.dumps({"type": "agent_message", "message": huge_message})
+        + "\n"
+        + json.dumps({"type": "turn.completed"})
+        + "\n"
+    ).encode("utf-8")
+    process = _make_chunked_process(payload, chunk_size=4096)
+
+    with patch("taskbrew.agents.codex_cli._find_cli", return_value="/usr/bin/codex"), \
+         patch("asyncio.create_subprocess_exec", return_value=process):
+        messages = []
+        async for msg in query(prompt="hi", options=CodexOptions()):
+            messages.append(msg)
+
+    assert isinstance(messages[0], AssistantMessage)
+    assert messages[0].content[0].text == huge_message
+    assert isinstance(messages[-1], ResultMessage)
+    assert messages[-1].result == huge_message
 
 
 @pytest.mark.asyncio

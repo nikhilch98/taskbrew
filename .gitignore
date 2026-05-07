@@ -52,3 +52,6 @@ test_output*
 # Tool caches
 .pytest_cache/
 .ruff_cache/
+
+# Local Superpowers scratch artifacts
+.superpowers/

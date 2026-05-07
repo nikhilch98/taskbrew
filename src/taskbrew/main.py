@@ -202,7 +202,9 @@ class Orchestrator:
         self.merge_queue = None
         self.merge_broker = None
         self.system_gate_manager = None
+        self.system_gate_managers = []
         self._system_gate_task = None
+        self._system_gate_tasks = []
 
         # Shutdown state
         self._shutting_down = False
@@ -240,7 +242,11 @@ class Orchestrator:
             self._escalation_stop.set()
         if self.merge_broker:
             self.merge_broker.stop()
-        if self.system_gate_manager:
+        system_gate_managers = getattr(self, "system_gate_managers", None) or []
+        if system_gate_managers:
+            for manager in system_gate_managers:
+                manager.stop()
+        elif self.system_gate_manager:
             self.system_gate_manager.stop()
 
         # Phase 2 — wait for agent tasks, then force-cancel stragglers
@@ -391,20 +397,29 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
         if team_config.dashboard_host in ("0.0.0.0", "::")
         else team_config.dashboard_host
     )
-    system_agent_config = build_system_agent_config(
-        team_config,
-        project_dir=project_dir,
-        api_url=f"http://{connect_host}:{team_config.dashboard_port}",
+    system_agent_instances = max(
+        1,
+        int(getattr(getattr(team_config, "system_agent", None), "max_instances", 1) or 1),
     )
-    analyzer = AgentRunnerSystemGateAnalyzer(
-        config=system_agent_config,
-        project_dir=project_dir,
-        event_bus=event_bus,
-    )
-    orch.system_gate_manager = SystemGateManager(
-        board=task_board,
-        analyzer=analyzer,
-    )
+    for index in range(1, system_agent_instances + 1):
+        system_agent_config = build_system_agent_config(
+            team_config,
+            project_dir=project_dir,
+            api_url=f"http://{connect_host}:{team_config.dashboard_port}",
+            instance_name=f"system-agent-{index}",
+        )
+        analyzer = AgentRunnerSystemGateAnalyzer(
+            config=system_agent_config,
+            project_dir=project_dir,
+            event_bus=event_bus,
+        )
+        orch.system_gate_managers.append(
+            SystemGateManager(
+                board=task_board,
+                analyzer=analyzer,
+            )
+        )
+    orch.system_gate_manager = orch.system_gate_managers[0]
 
     # Instantiate intelligence managers centrally
     from taskbrew.intelligence.quality import QualityManager
@@ -558,13 +573,25 @@ async def _orphan_recovery_loop(
 
 
 def _start_system_gate_manager(orch: Orchestrator) -> None:
-    if not orch.system_gate_manager:
+    managers = getattr(orch, "system_gate_managers", None)
+    if not managers and orch.system_gate_manager:
+        managers = [orch.system_gate_manager]
+    if not managers:
         return
-    if orch._system_gate_task is not None and not orch._system_gate_task.done():
+
+    live_tasks = [
+        task for task in getattr(orch, "_system_gate_tasks", [])
+        if task is not None and not task.done()
+    ]
+    if live_tasks:
+        orch._system_gate_tasks = live_tasks
+        orch._system_gate_task = live_tasks[0]
         return
-    system_gate_task = asyncio.create_task(orch.system_gate_manager.run())
-    orch._system_gate_task = system_gate_task
-    orch.agent_tasks.append(system_gate_task)
+
+    system_gate_tasks = [asyncio.create_task(manager.run()) for manager in managers]
+    orch._system_gate_tasks = system_gate_tasks
+    orch._system_gate_task = system_gate_tasks[0]
+    orch.agent_tasks.extend(system_gate_tasks)
 
 
 # Tools that mutate filesystem state and therefore justify a worktree.

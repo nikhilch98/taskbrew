@@ -21,3 +21,12 @@ def test_task_tools_server_has_create_task_tool():
     assert "create_task" in tool_names
     assert "create_work_package" in tool_names
     assert "update_work_package" in tool_names
+
+
+def test_create_task_tool_exposes_review_scope_override():
+    from taskbrew.tools.task_tools import build_task_tools_server
+
+    server = build_task_tools_server(api_url="http://localhost:8420")
+    create_task = server._tool_manager._tools["create_task"]
+
+    assert "review_scope" in create_task.parameters["properties"]

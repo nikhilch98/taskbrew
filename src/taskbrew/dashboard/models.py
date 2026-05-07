@@ -76,6 +76,7 @@ class SystemAgentProfile(BaseModel):
     provider: Optional[str] = Field(default=None, max_length=32)
     model: Optional[str] = Field(default=None, max_length=128)
     reasoning_effort: Optional[str] = Field(default=None, max_length=32)
+    max_instances: Optional[int] = Field(default=None, ge=1)
 
 
 class CreateProjectBody(BaseModel):

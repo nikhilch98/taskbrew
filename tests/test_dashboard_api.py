@@ -1314,6 +1314,7 @@ async def test_create_project_with_system_agent_profile(app_client, tmp_path):
                 "provider": "gemini",
                 "model": "gemini-3-pro-preview",
                 "reasoning_effort": "high",
+                "max_instances": 3,
             },
         },
     )
@@ -1330,6 +1331,7 @@ async def test_create_project_with_system_agent_profile(app_client, tmp_path):
         "provider": "gemini",
         "model": "gemini-3-pro-preview",
         "reasoning_effort": "high",
+        "max_instances": 3,
     }
 
     set_project_deps(None, None)
@@ -1353,6 +1355,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
         '  provider: "claude"\n'
         '  model: "claude-sonnet-4-6"\n'
         '  reasoning_effort: "high"\n'
+        '  max_instances: 2\n'
         'database:\n'
         '  path: "data/settings.db"\n'
         'dashboard:\n'
@@ -1390,6 +1393,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
             "provider": "claude",
             "model": "claude-sonnet-4-6",
             "reasoning_effort": "high",
+            "max_instances": 2,
         }
 
         update = await client.put(
@@ -1399,6 +1403,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
                     "provider": "codex",
                     "model": "gpt-5.4-mini",
                     "reasoning_effort": "low",
+                    "max_instances": 3,
                 },
             },
         )
@@ -1409,6 +1414,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
             "provider": "codex",
             "model": "gpt-5.4-mini",
             "reasoning_effort": "low",
+            "max_instances": 3,
         }
 
     with open(team_yaml) as f:
@@ -1417,6 +1423,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
         "provider": "codex",
         "model": "gpt-5.4-mini",
         "reasoning_effort": "low",
+        "max_instances": 3,
     }
 
     set_orchestrator(None)

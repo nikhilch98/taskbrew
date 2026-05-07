@@ -566,10 +566,12 @@ function ensureSystemAgentProfile() {
     const profile = t.system_agent || {};
     const provider = profile.provider || t.cli_provider || 'codex';
     const model = profile.model || defaultSystemModelForProvider(provider);
+    const maxInstances = parseInt(profile.max_instances || t.default_max_instances || 1, 10) || 1;
     settingsData.team.system_agent = {
         provider: provider,
         model: model,
         reasoning_effort: profile.reasoning_effort || defaultReasoningForModel(model),
+        max_instances: Math.max(1, maxInstances),
     };
     return settingsData.team.system_agent;
 }
@@ -597,15 +599,18 @@ function renderSystemAgentSettings() {
         '</select></div>';
     html += '<div class="settings-field"><label>System Model</label><select id="s_system_model" onchange="updateSystemAgentModel(this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">' + modelOptions + '</select></div>';
     html += '<div class="settings-field" style="' + (reasoningSelect ? '' : 'display:none') + '"><label>' + escapeHtml(reasoningLabelForModel(profile.model)) + '</label>' + reasoningSelect + '</div>';
+    html += '<div class="settings-field"><label>System Max Instances <span class="restart-badge">Requires restart</span></label><input id="s_system_max_instances" type="number" min="1" value="' + (profile.max_instances || 1) + '" onchange="updateSystemAgentMaxInstances(this.value)"></div>';
     return html;
 }
 
 function updateSystemAgentProvider(provider) {
+    const current = ensureSystemAgentProfile();
     const model = defaultSystemModelForProvider(provider);
     settingsData.team.system_agent = {
         provider: provider,
         model: model,
         reasoning_effort: defaultReasoningForModel(model),
+        max_instances: current.max_instances || 1,
     };
     renderTeamSettings(document.getElementById('settingsContent'));
 }
@@ -619,6 +624,11 @@ function updateSystemAgentModel(model) {
 
 function updateSystemAgentReasoning(effort) {
     ensureSystemAgentProfile().reasoning_effort = effort;
+}
+
+function updateSystemAgentMaxInstances(value) {
+    const parsed = parseInt(value, 10) || 1;
+    ensureSystemAgentProfile().max_instances = Math.max(1, parsed);
 }
 
 function renderRoleSettings(c, role) {
@@ -766,10 +776,13 @@ function initializeProjectWizardRoleModels(provider) {
 
 function initializeProjectWizardSystemAgent(provider) {
     const model = defaultSystemModelForProvider(provider);
+    const previous = projectWizardData.system_agent || {};
+    const maxInstances = parseInt(previous.max_instances || 1, 10) || 1;
     projectWizardData.system_agent = {
         provider: provider,
         model: model,
         reasoning_effort: defaultReasoningForModel(model),
+        max_instances: Math.max(1, maxInstances),
     };
 }
 
@@ -799,6 +812,13 @@ function setProjectWizardSystemReasoning(effort) {
         projectWizardData.system_agent = {};
     }
     projectWizardData.system_agent.reasoning_effort = effort;
+}
+
+function setProjectWizardSystemMaxInstances(value) {
+    if (!projectWizardData.system_agent) {
+        projectWizardData.system_agent = {};
+    }
+    projectWizardData.system_agent.max_instances = Math.max(1, parseInt(value, 10) || 1);
 }
 
 function setProjectWizardRoleModel(role, model) {
@@ -880,7 +900,11 @@ function renderProjectSystemAgentSection() {
         });
         html += '</select>';
     }
-    html += '</div></div>';
+    html += '</div>' +
+        '<div class="wizard-role-model-row">' +
+        '<label>Instances</label>' +
+        '<input type="number" min="1" value="' + escapeHtml(profile.max_instances || 1) + '" onchange="setProjectWizardSystemMaxInstances(this.value)">' +
+        '</div></div>';
     return html;
 }
 

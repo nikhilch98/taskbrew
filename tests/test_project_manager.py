@@ -354,6 +354,7 @@ class TestScaffolding:
             "provider": "codex",
             "model": "gpt-5.5",
             "reasoning_effort": "xhigh",
+            "max_instances": 1,
         }
 
     def test_create_project_defaults_to_codex_gpt55_for_all_default_agents(
@@ -375,6 +376,7 @@ class TestScaffolding:
             "provider": "codex",
             "model": "gpt-5.5",
             "reasoning_effort": "xhigh",
+            "max_instances": 1,
         }
 
     def test_role_model_settings_override_scaffold_defaults(
@@ -413,6 +415,7 @@ class TestScaffolding:
                 "provider": "gemini",
                 "model": "gemini-3-pro-preview",
                 "reasoning_effort": "high",
+                "max_instances": 3,
             },
         )
 
@@ -423,6 +426,7 @@ class TestScaffolding:
             "provider": "gemini",
             "model": "gemini-3-pro-preview",
             "reasoning_effort": "high",
+            "max_instances": 3,
         }
 
     def test_pm_routes_to_architect(

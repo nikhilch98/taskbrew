@@ -177,6 +177,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         work_package_id: str = "",
         work_package_title: str = "",
         work_package_description: str = "",
+        review_scope: str = "",
     ) -> str:
         """Create a new task on the task board and assign it to an agent role.
 
@@ -200,6 +201,11 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             work_package_id: Optional Work Package ID to attach this task to.
             work_package_title: Optional title to apply to that Work Package when your design names it.
             work_package_description: Optional description to apply to that Work Package.
+            review_scope: Optional review granularity override.
+                - Leave empty for the default package-level review flow.
+                - "task" only for exceptional high-risk tasks that need a
+                  dedicated task review before package review.
+                - "none" to disable task-level review for this task.
             requires_fanout: Optional override for the fan-out gate.
                 - Leave empty ("") to use the task_type default (tech_design
                   requires fan-out; everything else does not).
@@ -229,6 +235,8 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             payload["work_package_title"] = work_package_title
         if work_package_description:
             payload["work_package_description"] = work_package_description
+        if review_scope:
+            payload["review_scope"] = review_scope
         denial = gate_or_error("create_task")
         if denial:
             return denial

@@ -276,6 +276,7 @@ async def test_process_pending_once_processes_one_backlog_task_once(
         title="Build risky widget",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     analyzer = FakeAnalyzer(
         backlog_results=[
@@ -329,6 +330,46 @@ async def test_backlog_intake_skips_task_level_review_for_planning_tasks(
     assert updated["status"] == "pending"
     assert updated["needs_review"] == 0
     assert "Planning tasks are validated" in updated["needs_review_reason"]
+    gate_runs = json.loads(updated["system_gate_runs"])
+    assert gate_runs[-1]["needs_review"] is False
+
+
+async def test_backlog_intake_uses_package_review_for_package_backed_tasks(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="CLI addition package",
+        description="Implement and verify the CLI addition slice.",
+        created_by="architect-1",
+        review_scope="work_package",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        title="Implement add_numbers.py",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    analyzer = FakeAnalyzer(
+        backlog_results=[
+            BacklogIntakeResult(
+                needs_review=True,
+                reason="This would duplicate package review.",
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer, batch_size=10)
+
+    counts = await manager.process_pending_once()
+
+    assert counts == {"backlog": 1, "review": 0, "package_review": 0}
+    assert analyzer.backlog_contexts == []
+    updated = await board.get_task(task["id"])
+    assert updated["status"] == "pending"
+    assert updated["needs_review"] == 0
+    assert "package-level review" in updated["needs_review_reason"]
     gate_runs = json.loads(updated["system_gate_runs"])
     assert gate_runs[-1]["needs_review"] is False
 
@@ -495,6 +536,247 @@ async def test_process_pending_once_approves_package_review(board: TaskBoard):
     assert completed_group["completed_at"] is not None
 
 
+async def test_package_review_needs_revision_creates_package_revision_task(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package review bundle",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(
+                outcome="needs_revision",
+                reason="Package branch misses the required test.",
+                revisions=[
+                    RevisionRequest(
+                        title="Add package-level test coverage",
+                        description="Add and run the missing package regression test.",
+                        assigned_to="coder",
+                        task_type="revision",
+                        priority="high",
+                    )
+                ],
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts["package_review"] == 1
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "pending"
+    assert updated_package["review_status"] == "waiting_revision"
+    assert updated_package["review_reason"] == "Package branch misses the required test."
+    revision = await board._db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision'",
+        (package["id"],),
+    )
+    assert revision is not None
+    assert revision["title"] == "Add package-level test coverage"
+    assert revision["assigned_to"] == "coder"
+    assert revision["status"] == "backlog"
+    assert revision["review_scope"] == "none"
+    assert "missing package regression test" in revision["description"]
+    gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate["status"] == "waiting_revision"
+    assert gate["outcome"] == "needs_revision"
+    runs = json.loads(gate["system_gate_runs"])
+    assert runs[-1]["revision_task_ids"] == [revision["id"]]
+
+
+async def test_process_pending_once_recovers_legacy_waiting_package_review(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Legacy waiting package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate is not None
+    await board._db.execute(
+        "UPDATE work_packages SET status = 'waiting_revision', "
+        "review_status = 'waiting_revision', review_reason = ? WHERE id = ?",
+        ("Legacy review finding.", package["id"]),
+    )
+    await board._db.execute(
+        "UPDATE review_gates SET status = 'waiting_revision', "
+        "outcome = 'needs_revision', reason = ? WHERE id = ?",
+        ("Legacy review finding.", gate["id"]),
+    )
+
+    analyzer = FakeAnalyzer()
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts["package_review"] == 1
+    assert analyzer.review_contexts == []
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "pending"
+    assert updated_package["review_status"] == "waiting_revision"
+    revision = await board._db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision'",
+        (package["id"],),
+    )
+    assert revision is not None
+    assert revision["status"] == "backlog"
+    assert revision["assigned_to"] == "coder"
+    assert revision["description"] == "Legacy review finding."
+    recovered_gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE id = ?",
+        (gate["id"],),
+    )
+    runs = json.loads(recovered_gate["system_gate_runs"])
+    assert runs[-1]["outcome"] == "needs_revision_recovered"
+    assert runs[-1]["revision_task_ids"] == [revision["id"]]
+
+
+async def test_process_pending_once_reopens_ready_package_review_gate(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Ready package with stale gate",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    await board._db.execute(
+        "UPDATE review_gates SET status = 'waiting_revision', "
+        "outcome = 'needs_revision', reason = ? "
+        "WHERE entity_type = 'work_package' AND entity_id = ?",
+        ("Previous review finding.", package["id"]),
+    )
+    analyzer = FakeAnalyzer(
+        review_results=[ReviewResult(outcome="approved", reason="Package is ready.")]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts["package_review"] == 1
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "completed"
+    assert updated_package["review_status"] == "approved"
+    gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate["status"] == "completed"
+    assert gate["outcome"] == "approved"
+    assert len(analyzer.review_contexts) == 1
+
+
+async def test_two_managers_process_distinct_package_reviews_in_parallel(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    for index in range(2):
+        package = await board.create_work_package(
+            group_id=group["id"],
+            title=f"Package review bundle {index}",
+            created_by="architect-1",
+        )
+        task = await board.create_task(
+            group_id=group["id"],
+            title=f"Build package feature {index}",
+            task_type="implementation",
+            assigned_to="coder",
+            work_package_id=package["id"],
+        )
+        await board.apply_backlog_intake_decision(
+            task["id"],
+            needs_review=False,
+            reason="Covered by package review.",
+        )
+        claimed = await board.claim_task("coder", f"coder-{index}")
+        assert claimed is not None
+        assert claimed["id"] == task["id"]
+        await board.complete_task_with_output(
+            task["id"],
+            f"Implemented package feature {index}.",
+        )
+
+    analyzer = TwoCallerReviewAnalyzer()
+    first_manager = SystemGateManager(board=board, analyzer=analyzer)
+    second_manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    first = asyncio.create_task(first_manager.process_pending_once())
+    second = asyncio.create_task(second_manager.process_pending_once())
+    entered_two = False
+    try:
+        await asyncio.wait_for(analyzer.both_entered.wait(), timeout=1)
+        entered_two = True
+    finally:
+        analyzer.release.set()
+    counts = await asyncio.gather(first, second)
+
+    assert entered_two
+    assert sum(count["package_review"] for count in counts) == 2
+
+
 async def test_package_review_context_includes_branch_diff_and_integration_queue(
     db: Database,
     event_bus: RecordingEventBus,
@@ -541,11 +823,34 @@ async def test_package_review_context_includes_branch_diff_and_integration_queue
     claimed = await task_board.claim_task("coder", "coder-1")
     assert claimed is not None
     await task_board.complete_task_with_output(task["id"], "Added the script.")
+
+    package_branch = f"package/{package['id'].lower()}"
+    _git(repo, "checkout", "-b", package_branch)
+    _git(repo, "merge", "--no-edit", "feat/cd-001")
+    _git(repo, "checkout", "main")
+
+    integration_task = await db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'package_integration'",
+        (package["id"],),
+    )
+    assert integration_task is not None
+    await task_board.apply_backlog_intake_decision(
+        integration_task["id"],
+        needs_review=False,
+        reason="Package integration is reviewed at the package gate.",
+    )
+    claimed_integration = await task_board.claim_task("coder", "coder-2")
+    assert claimed_integration is not None
+    assert claimed_integration["id"] == integration_task["id"]
+    await task_board.complete_task_with_output(
+        integration_task["id"],
+        "Merged task branches into the package branch.",
+    )
     await queue.enqueue_package_integration(
         group_id=group["id"],
         work_package_id=package["id"],
-        parent_task_id=task["id"],
-        source_branch="feat/cd-001",
+        parent_task_id=integration_task["id"],
+        source_branch=package_branch,
         target_branch="main",
     )
 
@@ -561,8 +866,8 @@ async def test_package_review_context_includes_branch_diff_and_integration_queue
     assert context["integration_queue"][0]["source_type"] == "package_approval"
     assert context["integration_queue"][0]["work_package_id"] == package["id"]
     diff = context["branch_diffs"][0]
-    assert diff["task_id"] == task["id"]
-    assert diff["source_branch"] == "feat/cd-001"
+    assert diff["task_id"] == integration_task["id"]
+    assert diff["source_branch"] == package_branch
     assert "add_two_numbers.py" in diff["diff_stat"]
     assert "add script" in diff["commit_log"]
 
@@ -806,6 +1111,7 @@ async def test_process_pending_once_retries_running_backlog_without_audit(
         title="Retry unaudited running backlog",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     await board._db.execute(
         "UPDATE tasks SET backlog_intake_status = 'running' WHERE id = ?",
@@ -833,6 +1139,7 @@ async def test_process_pending_once_retries_running_backlog_with_naive_timestamp
         title="Retry naive timestamp backlog",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     runs = json.dumps(
         [
@@ -875,6 +1182,7 @@ async def test_active_running_backlog_does_not_starve_pending_backlog(
         title="Pending backlog",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     await board._db.execute(
         "UPDATE tasks SET backlog_intake_status = 'running', system_gate_runs = ? "
@@ -914,6 +1222,7 @@ async def test_many_active_running_backlog_rows_do_not_starve_pending_backlog(
         title="Pending backlog after active rows",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     for active in active_tasks:
         await board._db.execute(
@@ -944,6 +1253,7 @@ async def test_process_pending_once_retries_stale_running_backlog_task(
         title="Retry stranded backlog",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     await board._db.execute(
         "UPDATE tasks SET backlog_intake_status = 'running' WHERE id = ?",
@@ -1352,6 +1662,7 @@ async def test_queued_backlog_retry_after_failure_does_not_reenter_analyzer(
         title="Fail backlog once",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     await board._db.execute(
         "UPDATE tasks SET backlog_intake_status = 'running' WHERE id = ?",
@@ -1429,6 +1740,7 @@ async def test_backlog_analyzer_exception_marks_intake_failed(board: TaskBoard):
         title="Fail backlog analysis",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     analyzer = FakeAnalyzer(backlog_results=[RuntimeError("model unavailable")])
     manager = SystemGateManager(board=board, analyzer=analyzer)
@@ -1449,6 +1761,7 @@ async def test_backlog_cancelled_error_marks_failed_and_reraises(board: TaskBoar
         title="Cancelled backlog analysis",
         task_type="implementation",
         assigned_to="coder",
+        review_scope="task",
     )
     analyzer = FakeAnalyzer(backlog_results=[asyncio.CancelledError("stopping")])
     manager = SystemGateManager(board=board, analyzer=analyzer)
@@ -1722,3 +2035,28 @@ async def test_start_system_gate_manager_restarts_done_task() -> None:
 
     manager.release.set()
     await second_task
+
+
+async def test_start_system_gate_manager_starts_configured_manager_pool() -> None:
+    from taskbrew.main import _start_system_gate_manager
+
+    managers = [FakeSystemGateManager() for _ in range(3)]
+    orch = SimpleNamespace(
+        system_gate_manager=managers[0],
+        system_gate_managers=managers,
+        _system_gate_task=None,
+        _system_gate_tasks=[],
+        agent_tasks=[],
+    )
+
+    _start_system_gate_manager(orch)
+    await asyncio.sleep(0)
+
+    assert len(orch._system_gate_tasks) == 3
+    assert orch._system_gate_task is orch._system_gate_tasks[0]
+    assert orch.agent_tasks == orch._system_gate_tasks
+    assert [manager.run_count for manager in managers] == [1, 1, 1]
+
+    for manager in managers:
+        manager.release.set()
+    await asyncio.gather(*orch._system_gate_tasks)

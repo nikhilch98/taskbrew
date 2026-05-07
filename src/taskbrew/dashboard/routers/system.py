@@ -305,12 +305,14 @@ async def get_team_settings():
             "provider": system_agent.provider,
             "model": system_agent.model,
             "reasoning_effort": system_agent.reasoning_effort,
+            "max_instances": system_agent.max_instances,
         }
     else:
         system_agent_profile = system_agent_setting(
             getattr(tc, "cli_provider", "codex") or "codex",
             {},
         )
+        system_agent_profile["max_instances"] = getattr(tc, "default_max_instances", 1)
     return {
         "name": tc.team_name,
         "project_dir": pd,
@@ -356,15 +358,22 @@ async def update_team_settings(body: UpdateTeamSettingsBody):
     if "group_prefixes" in body:
         tc_s.group_prefixes = body["group_prefixes"]
     if "system_agent" in body:
+        raw_system_agent = body["system_agent"]
         resolved_system_agent = system_agent_setting(
             getattr(tc_s, "cli_provider", "codex") or "codex",
-            body["system_agent"],
+            raw_system_agent,
+        )
+        system_agent_max_instances = raw_system_agent.get(
+            "max_instances",
+            getattr(tc_s.system_agent, "max_instances", tc_s.default_max_instances),
         )
         tc_s.system_agent = SystemAgentConfig(
             provider=resolved_system_agent["provider"],
             model=resolved_system_agent["model"],
             reasoning_effort=resolved_system_agent.get("reasoning_effort"),
+            max_instances=system_agent_max_instances,
         )
+        resolved_system_agent["max_instances"] = system_agent_max_instances
 
     # Persist to YAML file
     if pd:

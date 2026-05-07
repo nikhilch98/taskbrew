@@ -97,6 +97,7 @@ class SystemAgentConfig:
     provider: str = "codex"
     model: str = "gpt-5.5"
     reasoning_effort: str | None = "xhigh"
+    max_instances: int = 1
 
 
 @dataclass
@@ -198,7 +199,14 @@ def load_team_config(path: Path) -> TeamConfig:
     )
 
     cli_provider = data.get("cli_provider", "codex")
-    system_agent_raw = system_agent_setting(cli_provider, data.get("system_agent", {}))
+    system_agent_config_raw = data.get("system_agent", {}) or {}
+    system_agent_raw = system_agent_setting(cli_provider, system_agent_config_raw)
+    system_agent_max_instances = defaults.get("max_instances", 1)
+    if isinstance(system_agent_config_raw, dict):
+        system_agent_max_instances = system_agent_config_raw.get(
+            "max_instances",
+            system_agent_max_instances,
+        )
 
     team_config = TeamConfig(
         team_name=_get_required(data, "team_name", "team.yaml"),
@@ -220,6 +228,7 @@ def load_team_config(path: Path) -> TeamConfig:
             provider=system_agent_raw["provider"],
             model=system_agent_raw["model"],
             reasoning_effort=system_agent_raw.get("reasoning_effort"),
+            max_instances=system_agent_max_instances,
         ),
         auth_enabled=auth_raw.get("enabled", False),
         auth_tokens=auth_raw.get("tokens", []),
@@ -233,6 +242,7 @@ def load_team_config(path: Path) -> TeamConfig:
     # Fix 2: Numeric bounds validation
     _validate_range(team_config.dashboard_port, "dashboard.port", 1, 65535)
     _validate_range(team_config.default_max_instances, "defaults.max_instances", 1)
+    _validate_range(team_config.system_agent.max_instances, "system_agent.max_instances", 1)
     _validate_range(team_config.default_poll_interval, "defaults.poll_interval_seconds", 1)
 
     return team_config

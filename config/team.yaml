@@ -4,6 +4,7 @@ system_agent:
   provider: codex
   model: gpt-5.5
   reasoning_effort: xhigh
+  max_instances: 1
 database:
   path: ~/.taskbrew/data/taskbrew.db
 dashboard:

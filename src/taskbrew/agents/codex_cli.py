@@ -274,6 +274,33 @@ async def _drain_stderr(process: asyncio.subprocess.Process, sink: list[bytes]) 
         sink.append(chunk)
 
 
+async def _iter_stdout_lines(stdout: Any, chunk_size: int = 65536) -> AsyncIterator[bytes]:
+    """Yield stdout lines without using StreamReader.readline's size limit."""
+    read = getattr(stdout, "read", None)
+    if callable(read):
+        buffer = bytearray()
+        while True:
+            chunk = await read(chunk_size)
+            if not chunk:
+                break
+            if isinstance(chunk, str):
+                chunk = chunk.encode("utf-8")
+            buffer.extend(chunk)
+            while True:
+                newline_index = buffer.find(b"\n")
+                if newline_index < 0:
+                    break
+                line = bytes(buffer[:newline_index])
+                del buffer[:newline_index + 1]
+                yield line
+        if buffer:
+            yield bytes(buffer)
+        return
+
+    async for raw_line in stdout:
+        yield raw_line
+
+
 def _extract_text(event: dict[str, Any]) -> str:
     """Extract assistant text from known Codex JSON event shapes."""
     if isinstance(event.get("message"), str):
@@ -344,7 +371,7 @@ async def _query_impl(
 
     try:
         assert process.stdout is not None
-        async for raw_line in process.stdout:
+        async for raw_line in _iter_stdout_lines(process.stdout):
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line:
                 continue

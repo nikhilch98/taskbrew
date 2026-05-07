@@ -709,6 +709,29 @@ async def test_package_review_approval_creates_final_integration_queue_item(
     assert claimed is not None
     await board.complete_task_with_output(task["id"], "Implemented package feature.")
 
+    package_branch = f"package/{package['id'].lower()}"
+    _git(repo, "checkout", "-b", package_branch)
+    _git(repo, "merge", "--no-edit", "feat/cd-001")
+    _git(repo, "checkout", "main")
+
+    integration_task = await db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'package_integration'",
+        (package["id"],),
+    )
+    assert integration_task is not None
+    await board.apply_backlog_intake_decision(
+        integration_task["id"],
+        needs_review=False,
+        reason="Package integration is reviewed at the package gate.",
+    )
+    claimed_integration = await board.claim_task("coder", "coder-2")
+    assert claimed_integration is not None
+    assert claimed_integration["id"] == integration_task["id"]
+    await board.complete_task_with_output(
+        integration_task["id"],
+        "Merged task branches into the package branch.",
+    )
+
     approved = await board.approve_work_package_review(
         package["id"],
         reason="Package satisfies spec.",
@@ -719,12 +742,12 @@ async def test_package_review_approval_creates_final_integration_queue_item(
     rows = await db.execute_fetchall("SELECT * FROM merge_queue")
     assert len(rows) == 1
     assert rows[0]["group_id"] == group["id"]
-    assert rows[0]["parent_task_id"] == task["id"]
-    assert rows[0]["verifier_task_id"] == task["id"]
+    assert rows[0]["parent_task_id"] == integration_task["id"]
+    assert rows[0]["verifier_task_id"] == integration_task["id"]
     assert rows[0]["source_type"] == "package_approval"
     assert rows[0]["source_entity_id"] == package["id"]
     assert rows[0]["work_package_id"] == package["id"]
-    assert rows[0]["source_branch"] == "feat/cd-001"
+    assert rows[0]["source_branch"] == package_branch
     assert rows[0]["target_branch"] == "main"
 
     board_data = await board.get_work_package_board(group_id=group["id"])
@@ -737,7 +760,7 @@ async def test_package_review_approval_creates_final_integration_queue_item(
     )
 
     detail = await board.get_work_package_detail(package["id"])
-    assert detail["integration_queue"][0]["source_branch"] == "feat/cd-001"
+    assert detail["integration_queue"][0]["source_branch"] == package_branch
 
     await queue.complete(rows[0]["id"], status="merged")
     await board._check_group_completion(task["id"])
@@ -746,7 +769,7 @@ async def test_package_review_approval_creates_final_integration_queue_item(
     group_row = await db.execute_fetchone("SELECT * FROM groups WHERE id = ?", (group["id"],))
     assert group_row["status"] == "active"
 
-    _git(repo, "merge", "--no-edit", "feat/cd-001")
+    _git(repo, "merge", "--no-edit", package_branch)
     await board._check_group_completion(task["id"])
 
     completed_package = await board.get_work_package(package["id"])
@@ -763,3 +786,271 @@ async def test_package_integration_targets_main_for_revision_feature_branches(
     assert board._package_target_branch({"parent_branch": "feat/cd-001"}) == "main"
     assert board._package_target_branch({"parent_branch": "bugfix/cd-001"}) == "main"
     assert board._package_target_branch({"parent_branch": "release/next"}) == "release/next"
+
+
+async def test_package_waits_for_integration_task_before_review(
+    db: Database,
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "checkout", "-b", "feat/cd-001")
+    (repo / "feature.py").write_text("print('feature')\n")
+    _git(repo, "add", "feature.py")
+    _git(repo, "commit", "-m", "add feature")
+    _git(repo, "checkout", "main")
+
+    board = TaskBoard(db, group_prefixes={"pm": "FEAT"}, event_bus=RecordingEventBus())
+    await board.register_prefixes({"pm": "PM", "architect": "AR", "coder": "CD"})
+    queue = MergeQueue(db)
+    board.configure_package_integration(merge_queue=queue, repo_dir=str(repo))
+
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package review bundle",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+        branch_name="feat/cd-001",
+        parent_branch="main",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    package = await board.get_work_package(package["id"])
+    assert package["status"] == "integrating"
+    gates = await db.execute_fetchall("SELECT * FROM review_gates")
+    assert gates == []
+
+    integration_tasks = await db.execute_fetchall(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'package_integration'",
+        (package["id"],),
+    )
+    assert len(integration_tasks) == 1
+    integration_task = integration_tasks[0]
+    assert integration_task["assigned_to"] == "coder"
+    assert integration_task["status"] == "backlog"
+    assert integration_task["branch_name"] == f"package/{package['id'].lower()}"
+    assert "feat/cd-001" in integration_task["description"]
+
+
+async def test_completed_package_integration_task_opens_package_review(
+    db: Database,
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "checkout", "-b", "feat/cd-001")
+    (repo / "feature.py").write_text("print('feature')\n")
+    _git(repo, "add", "feature.py")
+    _git(repo, "commit", "-m", "add feature")
+    _git(repo, "checkout", "main")
+    _git(repo, "checkout", "-b", "package/wp-001")
+    _git(repo, "merge", "--no-edit", "feat/cd-001")
+    _git(repo, "checkout", "main")
+
+    board = TaskBoard(db, group_prefixes={"pm": "FEAT"}, event_bus=RecordingEventBus())
+    await board.register_prefixes({"pm": "PM", "architect": "AR", "coder": "CD"})
+    queue = MergeQueue(db)
+    board.configure_package_integration(merge_queue=queue, repo_dir=str(repo))
+
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package review bundle",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+        branch_name="feat/cd-001",
+        parent_branch="main",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    integration_task = await db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'package_integration'",
+        (package["id"],),
+    )
+    assert integration_task is not None
+    await board.apply_backlog_intake_decision(
+        integration_task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed_integration = await board.claim_task("coder", "coder-2")
+    assert claimed_integration is not None
+    await board.complete_task_with_output(
+        integration_task["id"],
+        "Merged task branches into package branch.",
+    )
+
+    package = await board.get_work_package(package["id"])
+    assert package["status"] == "review"
+    assert package["review_status"] == "pending"
+    gate = await db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate is not None
+    assert gate["status"] == "pending"
+
+
+async def test_package_revision_completion_requires_fresh_package_integration(
+    db: Database,
+    tmp_path: Path,
+):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "checkout", "-b", "feat/cd-001")
+    (repo / "feature.py").write_text("print('feature')\n")
+    _git(repo, "add", "feature.py")
+    _git(repo, "commit", "-m", "add feature")
+    _git(repo, "checkout", "main")
+    _git(repo, "checkout", "-b", "package/wp-001")
+    _git(repo, "merge", "--no-edit", "feat/cd-001")
+    _git(repo, "checkout", "main")
+
+    board = TaskBoard(db, group_prefixes={"pm": "FEAT"}, event_bus=RecordingEventBus())
+    await board.register_prefixes({"pm": "PM", "architect": "AR", "coder": "CD"})
+    queue = MergeQueue(db)
+    board.configure_package_integration(merge_queue=queue, repo_dir=str(repo))
+
+    group = await board.create_group(title="Feature", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package review bundle",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+        branch_name="feat/cd-001",
+        parent_branch="main",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    integration_task = await db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'package_integration'",
+        (package["id"],),
+    )
+    assert integration_task is not None
+    await board.apply_backlog_intake_decision(
+        integration_task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed_integration = await board.claim_task("coder", "coder-2")
+    assert claimed_integration is not None
+    await board.complete_task_with_output(
+        integration_task["id"],
+        "Merged task branches into package branch.",
+    )
+
+    revisions = await board.create_package_revision_tasks(
+        package["id"],
+        [
+            {
+                "title": "Fix package test gap",
+                "description": "Add the missing regression test.",
+                "assigned_to": "coder",
+                "task_type": "revision",
+            }
+        ],
+        reason="Package review found a missing test.",
+    )
+    assert len(revisions) == 1
+    await db.execute(
+        "UPDATE review_gates SET status = 'waiting_revision', "
+        "outcome = 'needs_revision', reason = ? "
+        "WHERE entity_type = 'work_package' AND entity_id = ?",
+        ("Package review found a missing test.", package["id"]),
+    )
+    revision = await board.get_task(revisions[0]["id"])
+    assert revision is not None
+    _git(repo, "checkout", "-b", revision["branch_name"])
+    (repo / "test_feature.py").write_text("assert True\n")
+    _git(repo, "add", "test_feature.py")
+    _git(repo, "commit", "-m", "add package regression test")
+    _git(repo, "checkout", "main")
+
+    await board.apply_backlog_intake_decision(
+        revision["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed_revision = await board.claim_task("coder", "coder-3")
+    assert claimed_revision is not None
+    assert claimed_revision["id"] == revision["id"]
+    await board.complete_task_with_output(revision["id"], "Added the regression test.")
+
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "integrating"
+    integration_tasks = await db.execute_fetchall(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'package_integration' "
+        "ORDER BY created_at",
+        (package["id"],),
+    )
+    assert len(integration_tasks) == 2
+    assert integration_tasks[-1]["status"] == "backlog"
+    assert revision["branch_name"] in integration_tasks[-1]["description"]
+
+    _git(repo, "checkout", "package/wp-001")
+    _git(repo, "merge", "--no-edit", revision["branch_name"])
+    _git(repo, "checkout", "main")
+
+    await board.apply_backlog_intake_decision(
+        integration_tasks[-1]["id"],
+        needs_review=False,
+        reason="Package integration is reviewed at the package gate.",
+    )
+    claimed_package_integration = await board.claim_task("coder", "coder-4")
+    assert claimed_package_integration is not None
+    assert claimed_package_integration["id"] == integration_tasks[-1]["id"]
+    await board.complete_task_with_output(
+        integration_tasks[-1]["id"],
+        "Merged revision into package branch.",
+    )
+
+    ready_package = await board.get_work_package(package["id"])
+    assert ready_package["status"] == "review"
+    assert ready_package["review_status"] == "pending"
+    ready_gate = await db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' AND entity_id = ?",
+        (package["id"],),
+    )
+    assert ready_gate["status"] == "pending"
+    assert ready_gate["outcome"] is None
