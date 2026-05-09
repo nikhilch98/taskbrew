@@ -147,6 +147,41 @@ async def test_scale_up_calls_factory(
     assert "coder-auto-2" in factory_calls
 
 
+async def test_paused_role_does_not_scale_up(
+    task_board: TaskBoard, instance_mgr: InstanceManager
+):
+    """Paused roles must not spawn auto-scaled instances for pending work."""
+    auto_cfg = AutoScaleConfig(enabled=True, scale_up_threshold=0)
+    role = _make_role(max_instances=5, auto_scale=auto_cfg)
+    roles = {"coder": role}
+    instance_mgr.pause_role("coder")
+
+    group = await task_board.create_group(title="Feature", created_by="pm")
+    task = await task_board.create_task(
+        group_id=group["id"],
+        title="Queued task",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await _release_task(task_board, task)
+
+    factory_calls = []
+
+    async def factory(iid, rcfg):
+        factory_calls.append(iid)
+        return asyncio.current_task()
+
+    scaler = AutoScaler(
+        task_board, instance_mgr, roles,
+        agent_factory=factory,
+    )
+
+    await scaler._check_and_scale()
+
+    assert factory_calls == []
+    assert scaler.get_scaling_status()["extra_instances"] == {}
+
+
 async def test_scale_down_calls_stopper(
     task_board: TaskBoard, instance_mgr: InstanceManager, db: Database
 ):

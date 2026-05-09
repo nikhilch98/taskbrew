@@ -134,6 +134,8 @@ class AutoScaler:
         for role_name, role_cfg in self._roles.items():
             if not role_cfg.auto_scale or not role_cfg.auto_scale.enabled:
                 continue
+            if self._instances.is_role_paused(role_name):
+                continue
 
             # Count pending tasks for this role
             board = await self._board.get_board(assigned_to=role_name)
