@@ -796,6 +796,98 @@ async def test_process_pending_once_recovers_legacy_waiting_package_review(
     assert runs[-1]["revision_task_ids"] == [revision["id"]]
 
 
+async def test_process_pending_once_recovers_blocked_package_review_after_failed_revision(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Blocked package review",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(
+                outcome="needs_revision",
+                reason="Package still needs simulator verification.",
+                revisions=[
+                    RevisionRequest(
+                        title="Complete simulator verification",
+                        description="Run the simulator checks and document the result.",
+                    )
+                ],
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+    await manager.process_pending_once()
+
+    first_revision = await board._db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision'",
+        (package["id"],),
+    )
+    assert first_revision is not None
+    await board.apply_backlog_intake_decision(
+        first_revision["id"],
+        needs_review=False,
+        reason="Package revision is covered by package review.",
+    )
+    claimed_revision = await board.claim_task("coder", "coder-2")
+    assert claimed_revision is not None
+    assert claimed_revision["id"] == first_revision["id"]
+    await board.fail_task(first_revision["id"], "Simulator could not boot.")
+
+    blocked_package = await board.get_work_package(package["id"])
+    assert blocked_package["status"] == "blocked"
+
+    recovery_manager = SystemGateManager(board=board, analyzer=FakeAnalyzer())
+    counts = await recovery_manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 0, "package_review": 1}
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "pending"
+    assert updated_package["review_status"] == "waiting_revision"
+    revisions = await board._db.execute_fetchall(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision' "
+        "ORDER BY created_at",
+        (package["id"],),
+    )
+    assert len(revisions) == 2
+    recovery_revision = revisions[-1]
+    assert recovery_revision["status"] == "backlog"
+    assert recovery_revision["title"] == (
+        f"Recover package {package['id']} after failed revision"
+    )
+    assert "Package still needs simulator verification." in recovery_revision["description"]
+    assert first_revision["id"] in recovery_revision["description"]
+    assert "Simulator could not boot." in recovery_revision["description"]
+    recovered_gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    runs = json.loads(recovered_gate["system_gate_runs"])
+    assert runs[-1]["outcome"] == "needs_revision_recovered"
+    assert runs[-1]["revision_task_ids"] == [recovery_revision["id"]]
+    assert runs[-1]["failed_task_ids"] == [first_revision["id"]]
+
+
 async def test_process_pending_once_reopens_ready_package_review_gate(
     board: TaskBoard,
 ):

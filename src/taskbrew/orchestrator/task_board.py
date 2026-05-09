@@ -958,10 +958,15 @@ class TaskBoard:
             and task.get("status") not in TERMINAL_STATUSES
             for task in tasks
         )
-        waiting_package_revision = package.get("review_status") == "waiting_revision" and any(
-            task.get("task_type") == "revision"
-            and task.get("status") not in TERMINAL_STATUSES
+        active_revision_statuses = [
+            task.get("status")
             for task in tasks
+            if task.get("task_type") == "revision"
+            and task.get("status") not in TERMINAL_STATUSES
+        ]
+        waiting_package_revision = (
+            package.get("review_status") == "waiting_revision"
+            and bool(active_revision_statuses)
         )
 
         if not tasks:
@@ -973,6 +978,14 @@ class TaskBoard:
         elif active_integration_task:
             next_status = PACKAGE_INTEGRATING_STATUS
             next_review_status = "integration_pending"
+        elif waiting_package_revision:
+            if "blocked" in active_revision_statuses:
+                next_status = "blocked"
+            elif "in_progress" in active_revision_statuses:
+                next_status = "in_progress"
+            else:
+                next_status = "pending"
+            next_review_status = "waiting_revision"
         elif any(status in ("failed", "rejected", "cancelled") for status in task_statuses):
             next_status = "blocked"
             next_review_status = None
@@ -1908,7 +1921,15 @@ class TaskBoard:
         package = await self.get_work_package(package_id)
         if package is None:
             raise ValueError(f"Work package not found: {package_id}")
-        if package["status"] not in ("review", "waiting_revision"):
+        blocked_review_gate = None
+        if package["status"] == "blocked":
+            blocked_review_gate = await self._db.execute_fetchone(
+                "SELECT id FROM review_gates "
+                "WHERE entity_type = 'work_package' AND entity_id = ? "
+                "AND status = 'waiting_revision' AND outcome = 'needs_revision'",
+                (package_id,),
+            )
+        if package["status"] not in ("review", "waiting_revision") and not blocked_review_gate:
             return []
         if not revisions:
             raise ValueError("At least one package revision is required")
@@ -1925,7 +1946,7 @@ class TaskBoard:
             "UPDATE work_packages SET status = 'pending', "
             "review_status = 'waiting_revision', review_reason = ?, "
             "review_round = COALESCE(review_round, 0) + 1, updated_at = ? "
-            "WHERE id = ? AND status IN ('review', 'waiting_revision') "
+            "WHERE id = ? AND status IN ('review', 'waiting_revision', 'blocked') "
             "AND (COALESCE(max_review_rounds, ?) <= 0 "
             "OR COALESCE(review_round, 0) < COALESCE(max_review_rounds, ?)) "
             "RETURNING *",

@@ -1034,7 +1034,17 @@ class SystemGateManager:
             "JOIN work_packages wp ON wp.id = rg.entity_id "
             "WHERE rg.entity_type = 'work_package' "
             "AND rg.status = 'waiting_revision' "
-            "AND wp.status = 'waiting_revision' "
+            "AND ("
+            "  wp.status = 'waiting_revision' "
+            "  OR ("
+            "    wp.status = 'blocked' "
+            "    AND EXISTS ("
+            "      SELECT 1 FROM tasks failed "
+            "      WHERE failed.work_package_id = wp.id "
+            "      AND failed.status IN ('failed', 'rejected', 'cancelled')"
+            "    )"
+            "  )"
+            ") "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM tasks t "
             "  WHERE t.work_package_id = wp.id "
@@ -1047,12 +1057,40 @@ class SystemGateManager:
         recovered = 0
         for row in rows:
             reason = row["reason"] or "Package review requested revision."
+            failed_tasks = await self._board._db.execute_fetchall(
+                "SELECT id, title, status, COALESCE(rejection_reason, '') AS reason "
+                "FROM tasks WHERE work_package_id = ? "
+                "AND status IN ('failed', 'rejected', 'cancelled') "
+                "ORDER BY created_at",
+                (row["package_id"],),
+            )
+            failed_summary = "\n".join(
+                f"- {task['id']} ({task['status']}): {task['title']}"
+                + (f" - {task['reason']}" if task.get("reason") else "")
+                for task in failed_tasks
+            )
+            description = reason
+            if failed_summary:
+                description = (
+                    f"{reason}\n\n"
+                    "A previous package revision task reached a terminal "
+                    "state before the package review could continue. Recover "
+                    "the package by addressing the review finding and the "
+                    "failed task context below, then complete this revision "
+                    "with clear verification evidence.\n\n"
+                    f"Failed child tasks:\n{failed_summary}"
+                )
             created = await self._board.create_package_revision_tasks(
                 row["package_id"],
                 [
                     {
-                        "title": f"Revise package {row['package_id']} after review",
-                        "description": reason,
+                        "title": (
+                            f"Recover package {row['package_id']} after "
+                            "failed revision"
+                            if failed_tasks
+                            else f"Revise package {row['package_id']} after review"
+                        ),
+                        "description": description,
                         "assigned_to": "coder",
                         "task_type": "revision",
                         "priority": "high",
@@ -1069,6 +1107,7 @@ class SystemGateManager:
                     "outcome": "needs_revision_recovered",
                     "reason": reason,
                     "revision_task_ids": [task["id"] for task in created],
+                    "failed_task_ids": [task["id"] for task in failed_tasks],
                     "finished_at": _utcnow(),
                 },
             )
