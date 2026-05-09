@@ -66,6 +66,11 @@ class InstanceManager:
         """
         now = _utcnow()
         await self._db.execute(
+            "UPDATE tasks SET status = 'pending', claimed_by = NULL, started_at = NULL "
+            "WHERE status = 'in_progress' AND claimed_by = ?",
+            (instance_id,),
+        )
+        await self._db.execute(
             "INSERT OR REPLACE INTO agent_instances "
             "(instance_id, role, status, current_task, started_at, last_heartbeat) "
             "VALUES (?, ?, 'idle', NULL, ?, NULL)",

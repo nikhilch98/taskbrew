@@ -65,6 +65,43 @@ async def test_register_instance(mgr: InstanceManager):
     assert result["last_heartbeat"] is None
 
 
+async def test_register_instance_releases_previous_in_progress_task(
+    mgr: InstanceManager,
+    db: Database,
+):
+    """Re-registering an instance after restart should release its old task."""
+    role_cfg = _make_role()
+    await mgr.register_instance("coder-1", role_cfg)
+    board = TaskBoard(db)
+    await board.register_prefixes({"coder": "CD"})
+    group = await board.create_group(title="Feature", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Implement restart-safe work",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="No review needed.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await mgr.update_status("coder-1", "working", current_task=claimed["id"])
+    await mgr.heartbeat("coder-1")
+
+    await mgr.register_instance("coder-1", role_cfg)
+
+    released = await board.get_task(task["id"])
+    assert released["status"] == "pending"
+    assert released["claimed_by"] is None
+    assert released["started_at"] is None
+    instance = await mgr.get_instance("coder-1")
+    assert instance["status"] == "idle"
+    assert instance["current_task"] is None
+
+
 async def test_update_status(mgr: InstanceManager, db: Database):
     """update_status should change the status and current_task."""
     role_cfg = _make_role()
