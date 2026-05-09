@@ -1331,6 +1331,7 @@ async def test_retry_loop_fails_fast_on_non_retryable(
         f"expected 1 attempt for non-retryable error, got {attempts[0]}"
     )
     assert row["status"] == "failed"
+    assert row["rejection_reason"] == "schema violation"
 
 
 async def test_retry_loop_retries_on_retryable(

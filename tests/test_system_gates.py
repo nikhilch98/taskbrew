@@ -888,6 +888,91 @@ async def test_process_pending_once_recovers_blocked_package_review_after_failed
     assert runs[-1]["failed_task_ids"] == [first_revision["id"]]
 
 
+async def test_process_pending_once_blocks_package_recovery_when_provider_unavailable(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Quota-blocked package review",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(
+                outcome="needs_revision",
+                reason="Package still needs verification.",
+                revisions=[
+                    RevisionRequest(
+                        title="Complete package verification",
+                        description="Run the package checks and document the result.",
+                    )
+                ],
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+    await manager.process_pending_once()
+
+    first_revision = await board._db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision'",
+        (package["id"],),
+    )
+    assert first_revision is not None
+    await board.apply_backlog_intake_decision(
+        first_revision["id"],
+        needs_review=False,
+        reason="Package revision is covered by package review.",
+    )
+    claimed_revision = await board.claim_task("coder", "coder-2")
+    assert claimed_revision is not None
+    await board.fail_task(
+        first_revision["id"],
+        "provider unavailable: You've hit your usage limit.",
+    )
+
+    recovery_manager = SystemGateManager(board=board, analyzer=FakeAnalyzer())
+    counts = await recovery_manager.process_pending_once()
+
+    assert counts == {"backlog": 0, "review": 0, "package_review": 1}
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "blocked"
+    assert updated_package["review_status"] == "waiting_revision"
+    assert "provider unavailable" in updated_package["review_reason"]
+    revisions = await board._db.execute_fetchall(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision'",
+        (package["id"],),
+    )
+    assert len(revisions) == 1
+    gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate["status"] == "blocked"
+    assert gate["outcome"] == "needs_revision"
+    assert "provider unavailable" in gate["reason"]
+    runs = json.loads(gate["system_gate_runs"])
+    assert runs[-1]["outcome"] == "needs_revision_blocked_provider_unavailable"
+    assert runs[-1]["failed_task_ids"] == [first_revision["id"]]
+
+
 async def test_process_pending_once_reopens_ready_package_review_gate(
     board: TaskBoard,
 ):

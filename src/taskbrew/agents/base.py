@@ -35,6 +35,21 @@ class AgentEvent:
     data: dict[str, Any] = field(default_factory=dict)
 
 
+_PROVIDER_UNAVAILABLE_MARKERS = (
+    "you've hit your usage limit",
+    "you have hit your usage limit",
+    "usage limit",
+    "purchase more credits",
+    "insufficient quota",
+    "quota exceeded",
+)
+
+
+def _provider_result_is_unavailable(result: object) -> bool:
+    text = str(result or "").lower()
+    return any(marker in text for marker in _PROVIDER_UNAVAILABLE_MARKERS)
+
+
 class AgentRunner:
     """Wraps the Claude Agent SDK to run a single agent with monitoring."""
 
@@ -173,6 +188,10 @@ class AgentRunner:
                 _ping()  # any incoming SDK message is activity
                 if isinstance(message, ResultMessage):
                     result_text = (message.result or "") if hasattr(message, "result") else ""
+                    if getattr(message, "is_error", False) or _provider_result_is_unavailable(
+                        result_text
+                    ):
+                        raise RuntimeError(f"provider unavailable: {result_text[:500]}")
                     self._log.append(AgentEvent(
                         agent_name=self.name,
                         event_type="complete",

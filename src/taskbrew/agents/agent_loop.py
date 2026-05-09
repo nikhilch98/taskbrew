@@ -1662,7 +1662,8 @@ class AgentLoop:
             )
         except Exception as e:
             task_logger.error("Agent %s failed task %s: %s", self.instance_id, task["id"], e, exc_info=True)
-            await self.board.fail_task(task["id"])
+            failure_reason = str(e) or type(e).__name__
+            await self.board.fail_task(task["id"], reason=failure_reason)
 
             # Generate debugging context for the failure
             debug_context = None

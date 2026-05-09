@@ -33,6 +33,15 @@ _GATE_RECENT_ATTEMPTS: dict[
 ] = {}
 _PLANNING_ROLES = {"pm", "architect"}
 _PLANNING_TASK_TYPES = {"goal", "tech_design", "architecture_review"}
+_PROVIDER_UNAVAILABLE_REASON_MARKERS = (
+    "provider unavailable",
+    "you've hit your usage limit",
+    "you have hit your usage limit",
+    "usage limit",
+    "purchase more credits",
+    "insufficient quota",
+    "quota exceeded",
+)
 
 
 def _utcnow() -> str:
@@ -44,6 +53,11 @@ def _is_planning_task(task: dict) -> bool:
         str(task.get("assigned_to") or "").lower() in _PLANNING_ROLES
         or str(task.get("task_type") or "").lower() in _PLANNING_TASK_TYPES
     )
+
+
+def _is_provider_unavailable_reason(reason: object) -> bool:
+    text = str(reason or "").lower()
+    return any(marker in text for marker in _PROVIDER_UNAVAILABLE_REASON_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -1069,6 +1083,48 @@ class SystemGateManager:
                 + (f" - {task['reason']}" if task.get("reason") else "")
                 for task in failed_tasks
             )
+            provider_unavailable_tasks = [
+                task
+                for task in failed_tasks
+                if _is_provider_unavailable_reason(task.get("reason"))
+            ]
+            if provider_unavailable_tasks:
+                block_reason = (
+                    "Package review recovery is paused because the last "
+                    "revision task failed due to provider unavailable capacity. "
+                    "Restore CLI provider capacity or switch providers, then "
+                    "retry the package review."
+                )
+                if failed_summary:
+                    block_reason = f"{block_reason}\n\nFailed child tasks:\n{failed_summary}"
+                now = _utcnow()
+                await self._board._db.execute(
+                    "UPDATE work_packages SET status = 'blocked', "
+                    "review_status = 'waiting_revision', review_reason = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (block_reason, now, row["package_id"]),
+                )
+                await self._board._db.execute(
+                    "UPDATE review_gates SET status = 'blocked', "
+                    "outcome = 'needs_revision', reason = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (block_reason, now, row["gate_id"]),
+                )
+                await self._board._append_review_gate_run(
+                    row["gate_id"],
+                    {
+                        "gate": "package_review",
+                        "outcome": "needs_revision_blocked_provider_unavailable",
+                        "reason": block_reason,
+                        "failed_task_ids": [task["id"] for task in failed_tasks],
+                        "provider_unavailable_task_ids": [
+                            task["id"] for task in provider_unavailable_tasks
+                        ],
+                        "finished_at": _utcnow(),
+                    },
+                )
+                recovered += 1
+                continue
             description = reason
             if failed_summary:
                 description = (
