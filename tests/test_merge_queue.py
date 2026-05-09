@@ -366,6 +366,73 @@ async def test_package_merge_marks_package_complete_before_group_is_terminal(
     assert group_row["status"] == "active"
 
 
+async def test_package_finalization_closes_stale_blocked_queue_when_branch_landed(
+    tmp_path,
+    board: TaskBoard,
+):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "checkout", "-b", "package/wp-001")
+    (repo / "planning.md").write_text("landed\n")
+    _git(repo, "add", "planning.md")
+    _git(repo, "commit", "-m", "package planning")
+    _git(repo, "checkout", "main")
+    _git(repo, "merge", "--no-edit", "package/wp-001")
+
+    board.configure_package_integration(repo_dir=str(repo))
+    group = await board.create_group(title="Feature", origin="human", created_by="human")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Planning package",
+        created_by="architect-1",
+    )
+    integration_task = await board.create_task(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        title="Integrate planning package",
+        task_type="package_integration",
+        assigned_to="coder",
+        created_by="system",
+        branch_name="package/wp-001",
+        parent_branch="main",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'completed' WHERE id = ?",
+        (integration_task["id"],),
+    )
+    await board._db.execute(
+        "UPDATE work_packages SET status = 'integrating', review_status = 'approved' "
+        "WHERE id = ?",
+        (package["id"],),
+    )
+    queue = MergeQueue(board._db)
+    queued = await queue.enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        parent_task_id=integration_task["id"],
+        source_branch="package/wp-001",
+        target_branch="main",
+    )
+    await queue.complete(
+        queued["id"],
+        status="root_refresh_blocked",
+        details="Primary checkout refresh failed before restart.",
+    )
+
+    await board._finalize_integrated_work_packages_for_group(group["id"])
+
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "completed"
+    row = await board._db.execute_fetchone(
+        "SELECT status, last_error FROM merge_queue WHERE id = ?",
+        (queued["id"],),
+    )
+    assert row["status"] == "already_merged"
+    assert row["last_error"] == "Source branch is already integrated"
+    task = await board.get_task(integration_task["id"])
+    assert task["merge_status"] == "merged"
+
+
 async def test_package_merge_conflict_creates_package_revision_task(tmp_path, board: TaskBoard):
     repo = tmp_path / "repo"
     _init_repo(repo)

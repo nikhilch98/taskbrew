@@ -2178,11 +2178,60 @@ class TaskBoard:
             )
         return rows
 
+    async def _close_integrated_package_merge_rows(self, package_id: str) -> int:
+        if self._package_repo_dir is None:
+            return 0
+
+        open_statuses = ",".join("?" for _ in MERGE_QUEUE_OPEN_STATUSES)
+        rows = await self._db.execute_fetchall(
+            "SELECT * FROM merge_queue WHERE work_package_id = ? "
+            f"AND status IN ({open_statuses}) ORDER BY created_at",
+            (package_id, *MERGE_QUEUE_OPEN_STATUSES),
+        )
+        closed = 0
+        for row in rows:
+            source_branch = row.get("source_branch")
+            target_branch = row.get("target_branch") or "main"
+            if not source_branch or source_branch == target_branch:
+                continue
+            if not await self._branch_is_integrated(
+                source_branch,
+                target_branch,
+                task_id=row["parent_task_id"],
+            ):
+                continue
+            now = _utcnow()
+            placeholders = ",".join("?" for _ in MERGE_QUEUE_OPEN_STATUSES)
+            updated_rows = await self._db.execute_returning(
+                "UPDATE merge_queue SET status = 'already_merged', "
+                "leased_by = NULL, leased_until = NULL, next_attempt_at = NULL, "
+                "last_error = ?, root_refresh_status = COALESCE(root_refresh_status, ?), "
+                "updated_at = ?, completed_at = COALESCE(completed_at, ?) "
+                f"WHERE id = ? AND status IN ({placeholders}) RETURNING *",
+                (
+                    "Source branch is already integrated",
+                    "skipped_already_integrated",
+                    now,
+                    now,
+                    row["id"],
+                    *MERGE_QUEUE_OPEN_STATUSES,
+                ),
+            )
+            if not updated_rows:
+                continue
+            await self._db.execute(
+                "UPDATE tasks SET merge_status = ? WHERE id IN (?, ?)",
+                ("merged", row["parent_task_id"], row["verifier_task_id"]),
+            )
+            closed += 1
+        return closed
+
     async def _package_integration_ready(self, package_id: str) -> bool:
         tasks = await self._package_integration_tasks(package_id)
         if not tasks:
             return True
 
+        await self._close_integrated_package_merge_rows(package_id)
         task_ids = [task["id"] for task in tasks]
         placeholders = ",".join("?" for _ in task_ids)
         open_statuses = ",".join("?" for _ in MERGE_QUEUE_OPEN_STATUSES)
