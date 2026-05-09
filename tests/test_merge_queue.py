@@ -285,6 +285,87 @@ async def test_merge_broker_merges_branch_and_refreshes_root(tmp_path, board: Ta
     assert counts == {"merged": 1}
 
 
+async def test_package_merge_marks_package_complete_before_group_is_terminal(
+    tmp_path,
+    board: TaskBoard,
+):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "checkout", "-b", "package/wp-001")
+    (repo / "package.txt").write_text("landed\n")
+    _git(repo, "add", "package.txt")
+    _git(repo, "commit", "-m", "package work")
+    _git(repo, "checkout", "main")
+
+    board.configure_package_integration(repo_dir=str(repo))
+    group = await board.create_group(title="Feature", origin="human", created_by="human")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Package integration",
+        created_by="architect-1",
+    )
+    integration_task = await board.create_task(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        title="Integrate package",
+        task_type="package_integration",
+        assigned_to="coder",
+        created_by="system",
+        branch_name="package/wp-001",
+        parent_branch="main",
+    )
+    other_package = await board.create_work_package(
+        group_id=group["id"],
+        title="Still open package",
+        created_by="architect-1",
+    )
+    await board.create_task(
+        group_id=group["id"],
+        work_package_id=other_package["id"],
+        title="Still open work",
+        task_type="implementation",
+        assigned_to="coder",
+        created_by="architect-1",
+    )
+    await board._db.execute(
+        "UPDATE tasks SET status = 'completed' WHERE id = ?",
+        (integration_task["id"],),
+    )
+    await board._db.execute(
+        "UPDATE work_packages SET status = 'integrating', review_status = 'approved' "
+        "WHERE id = ?",
+        (package["id"],),
+    )
+    queue = MergeQueue(board._db)
+    await queue.enqueue_package_integration(
+        group_id=group["id"],
+        work_package_id=package["id"],
+        parent_task_id=integration_task["id"],
+        source_branch="package/wp-001",
+        target_branch="main",
+    )
+    broker = MergeBroker(
+        merge_queue=queue,
+        task_board=board,
+        event_bus=EventBus(),
+        repo_dir=str(repo),
+        poll_interval=0.01,
+    )
+
+    assert await broker.process_once() is True
+
+    row = await board._db.execute_fetchone("SELECT * FROM merge_queue")
+    assert row["status"] == "merged"
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "completed"
+    assert updated_package["completed_at"] is not None
+    group_row = await board._db.execute_fetchone(
+        "SELECT * FROM groups WHERE id = ?",
+        (group["id"],),
+    )
+    assert group_row["status"] == "active"
+
+
 async def test_package_merge_conflict_creates_package_revision_task(tmp_path, board: TaskBoard):
     repo = tmp_path / "repo"
     _init_repo(repo)

@@ -418,6 +418,9 @@ class MergeBroker:
                     f"landed on {row['target_branch']}"
                 ),
             )
+            await self.task_board._finalize_integrated_work_packages_for_group(
+                row["group_id"]
+            )
         await self.task_board._db.execute(
             "UPDATE tasks SET merge_status = ? WHERE id IN (?, ?)",
             ("merged", row["parent_task_id"], row["verifier_task_id"]),
