@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 from starlette.responses import Response
 
+from taskbrew.dashboard.artifact_ingest import ingest_artifact_paths
 from taskbrew.orchestrator.merge_queue import MergeQueue
 
 from taskbrew.dashboard.models import (
@@ -142,6 +143,7 @@ async def create_work_package(body: CreateWorkPackageBody):
             created_by=body.created_by,
             risk_level=body.risk_level,
             review_scope=body.review_scope,
+            max_review_rounds=body.max_review_rounds,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
@@ -771,13 +773,32 @@ async def reassign_task(task_id: str, body: ReassignTaskBody):
 @router.post("/api/tasks/{task_id}/complete")
 async def complete_task_endpoint(task_id: str, body: CompleteTaskBody = CompleteTaskBody()):
     orch = get_orch()
+    ingested_artifacts: list[str] = []
     if body.status == "completed":
-        result = await orch.task_board.complete_task(task_id)
+        task = await orch.task_board.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+        ingested_artifacts = await ingest_artifact_paths(
+            task_board=orch.task_board,
+            orch=orch,
+            task_id=task_id,
+            group_id=task.get("group_id"),
+            artifact_paths=body.artifact_paths,
+        )
+        if body.summary is not None:
+            result = await orch.task_board.complete_task_with_output(
+                task_id, body.summary,
+            )
+        else:
+            result = await orch.task_board.complete_task(task_id)
     elif body.status == "failed":
         result = await orch.task_board.fail_task(task_id)
     else:
         raise HTTPException(status_code=400, detail=f"Invalid status: {body.status}")
     await orch.event_bus.emit("task.completed", {"task_id": task_id, "status": body.status})
+    if isinstance(result, dict):
+        result = dict(result)
+        result["ingested_artifacts"] = ingested_artifacts
     return result
 
 

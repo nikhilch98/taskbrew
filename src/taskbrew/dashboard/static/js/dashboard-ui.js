@@ -567,11 +567,16 @@ function ensureSystemAgentProfile() {
     const provider = profile.provider || t.cli_provider || 'codex';
     const model = profile.model || defaultSystemModelForProvider(provider);
     const maxInstances = parseInt(profile.max_instances || t.default_max_instances || 1, 10) || 1;
+    const reviewRoundsRaw = profile.max_review_rounds;
+    const reviewRounds = reviewRoundsRaw === 0 || reviewRoundsRaw
+        ? parseInt(reviewRoundsRaw, 10)
+        : 3;
     settingsData.team.system_agent = {
         provider: provider,
         model: model,
         reasoning_effort: profile.reasoning_effort || defaultReasoningForModel(model),
         max_instances: Math.max(1, maxInstances),
+        max_review_rounds: Math.max(0, Number.isNaN(reviewRounds) ? 3 : reviewRounds),
     };
     return settingsData.team.system_agent;
 }
@@ -600,6 +605,7 @@ function renderSystemAgentSettings() {
     html += '<div class="settings-field"><label>System Model</label><select id="s_system_model" onchange="updateSystemAgentModel(this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">' + modelOptions + '</select></div>';
     html += '<div class="settings-field" style="' + (reasoningSelect ? '' : 'display:none') + '"><label>' + escapeHtml(reasoningLabelForModel(profile.model)) + '</label>' + reasoningSelect + '</div>';
     html += '<div class="settings-field"><label>System Max Instances <span class="restart-badge">Requires restart</span></label><input id="s_system_max_instances" type="number" min="1" value="' + (profile.max_instances || 1) + '" onchange="updateSystemAgentMaxInstances(this.value)"></div>';
+    html += '<div class="settings-field"><label>System Review Rounds</label><input id="s_system_max_review_rounds" type="number" min="0" value="' + (profile.max_review_rounds || 0) + '" onchange="updateSystemAgentMaxReviewRounds(this.value)"></div>';
     return html;
 }
 
@@ -611,6 +617,7 @@ function updateSystemAgentProvider(provider) {
         model: model,
         reasoning_effort: defaultReasoningForModel(model),
         max_instances: current.max_instances || 1,
+        max_review_rounds: current.max_review_rounds ?? 3,
     };
     renderTeamSettings(document.getElementById('settingsContent'));
 }
@@ -629,6 +636,14 @@ function updateSystemAgentReasoning(effort) {
 function updateSystemAgentMaxInstances(value) {
     const parsed = parseInt(value, 10) || 1;
     ensureSystemAgentProfile().max_instances = Math.max(1, parsed);
+}
+
+function updateSystemAgentMaxReviewRounds(value) {
+    const parsed = parseInt(value, 10);
+    ensureSystemAgentProfile().max_review_rounds = Math.max(
+        0,
+        Number.isNaN(parsed) ? 3 : parsed
+    );
 }
 
 function renderRoleSettings(c, role) {
@@ -778,11 +793,16 @@ function initializeProjectWizardSystemAgent(provider) {
     const model = defaultSystemModelForProvider(provider);
     const previous = projectWizardData.system_agent || {};
     const maxInstances = parseInt(previous.max_instances || 1, 10) || 1;
+    const reviewRoundsRaw = previous.max_review_rounds;
+    const reviewRounds = reviewRoundsRaw === 0 || reviewRoundsRaw
+        ? parseInt(reviewRoundsRaw, 10)
+        : 3;
     projectWizardData.system_agent = {
         provider: provider,
         model: model,
         reasoning_effort: defaultReasoningForModel(model),
         max_instances: Math.max(1, maxInstances),
+        max_review_rounds: Math.max(0, Number.isNaN(reviewRounds) ? 3 : reviewRounds),
     };
 }
 
@@ -819,6 +839,17 @@ function setProjectWizardSystemMaxInstances(value) {
         projectWizardData.system_agent = {};
     }
     projectWizardData.system_agent.max_instances = Math.max(1, parseInt(value, 10) || 1);
+}
+
+function setProjectWizardSystemMaxReviewRounds(value) {
+    if (!projectWizardData.system_agent) {
+        projectWizardData.system_agent = {};
+    }
+    const parsed = parseInt(value, 10);
+    projectWizardData.system_agent.max_review_rounds = Math.max(
+        0,
+        Number.isNaN(parsed) ? 3 : parsed
+    );
 }
 
 function setProjectWizardRoleModel(role, model) {
@@ -904,6 +935,10 @@ function renderProjectSystemAgentSection() {
         '<div class="wizard-role-model-row">' +
         '<label>Instances</label>' +
         '<input type="number" min="1" value="' + escapeHtml(profile.max_instances || 1) + '" onchange="setProjectWizardSystemMaxInstances(this.value)">' +
+        '</div>' +
+        '<div class="wizard-role-model-row">' +
+        '<label>Review Rounds</label>' +
+        '<input type="number" min="0" value="' + escapeHtml(profile.max_review_rounds || 0) + '" onchange="setProjectWizardSystemMaxReviewRounds(this.value)">' +
         '</div></div>';
     return html;
 }

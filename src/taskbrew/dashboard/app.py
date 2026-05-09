@@ -370,6 +370,11 @@ def create_app(
 
     orch_obj = _build_orch()
     if orch_obj is not None:
+        system_agent = getattr(getattr(orch_obj, "team_config", None), "system_agent", None)
+        if system_agent is not None:
+            orch_obj.task_board.set_default_package_review_rounds(
+                getattr(system_agent, "max_review_rounds", 3)
+            )
         set_orchestrator(orch_obj)
 
     # Initialize pipeline config from team.yaml or auto-migrate

@@ -2303,11 +2303,19 @@
             var provider = profile.provider || t.cli_provider || 'codex';
             var model = profile.model || defaultSystemModelForProvider(provider);
             var maxInstances = parseInt(profile.max_instances || t.default_max_instances || 1, 10) || 1;
+            var reviewRoundsRaw = profile.max_review_rounds;
+            var reviewRounds = reviewRoundsRaw === 0 || reviewRoundsRaw
+                ? parseInt(reviewRoundsRaw, 10)
+                : 3;
             settingsData.team.system_agent = {
                 provider: provider,
                 model: model,
                 reasoning_effort: profile.reasoning_effort || defaultReasoningForModel(model),
-                max_instances: Math.max(1, maxInstances)
+                max_instances: Math.max(1, maxInstances),
+                max_review_rounds: Math.max(
+                    0,
+                    Number.isNaN(reviewRounds) ? 3 : reviewRounds
+                )
             };
             return settingsData.team.system_agent;
         }
@@ -2346,6 +2354,8 @@
             }
             html += '<div class="form-group"><label class="form-label" for="system-max-instances">Max Instances <span class="restart-badge">Requires restart</span></label>' +
                 '<input type="number" class="form-input" id="system-max-instances" min="1" value="' + (profile.max_instances || 1) + '" onchange="updateSystemAgentMaxInstances(this.value)"></div>';
+            html += '<div class="form-group"><label class="form-label" for="system-max-review-rounds">System Review Rounds</label>' +
+                '<input type="number" class="form-input" id="system-max-review-rounds" min="0" value="' + (profile.max_review_rounds || 0) + '" onchange="updateSystemAgentMaxReviewRounds(this.value)"></div>';
             html += '</div>';
             return html;
         }
@@ -2357,7 +2367,8 @@
                 provider: provider,
                 model: model,
                 reasoning_effort: defaultReasoningForModel(model),
-                max_instances: current.max_instances || 1
+                max_instances: current.max_instances || 1,
+                max_review_rounds: current.max_review_rounds ?? 3
             };
             markUnsaved();
             renderTeamSettings();
@@ -2379,6 +2390,15 @@
         function updateSystemAgentMaxInstances(value) {
             var parsed = parseInt(value, 10) || 1;
             ensureSystemAgentProfile().max_instances = Math.max(1, parsed);
+            markUnsaved();
+        }
+
+        function updateSystemAgentMaxReviewRounds(value) {
+            var parsed = parseInt(value, 10);
+            ensureSystemAgentProfile().max_review_rounds = Math.max(
+                0,
+                Number.isNaN(parsed) ? 3 : parsed
+            );
             markUnsaved();
         }
 

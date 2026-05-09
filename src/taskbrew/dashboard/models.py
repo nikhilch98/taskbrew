@@ -51,6 +51,7 @@ class CreateWorkPackageBody(BaseModel):
     created_by: Optional[str] = Field(default=None, max_length=128)
     risk_level: str = Field(default="medium", max_length=32)
     review_scope: str = Field(default="work_package", max_length=32)
+    max_review_rounds: Optional[int] = Field(default=None, ge=0)
 
 
 class UpdateWorkPackageBody(BaseModel):
@@ -77,6 +78,7 @@ class SystemAgentProfile(BaseModel):
     model: Optional[str] = Field(default=None, max_length=128)
     reasoning_effort: Optional[str] = Field(default=None, max_length=32)
     max_instances: Optional[int] = Field(default=None, ge=1)
+    max_review_rounds: Optional[int] = Field(default=None, ge=0)
 
 
 class CreateProjectBody(BaseModel):
@@ -166,6 +168,8 @@ class ReassignTaskBody(BaseModel):
 
 class CompleteTaskBody(BaseModel):
     status: str = "completed"
+    summary: Optional[str] = Field(default=None, max_length=20000)
+    artifact_paths: Optional[list[str]] = Field(default=None, max_length=50)
 
 
 class UpdateTaskBody(BaseModel):

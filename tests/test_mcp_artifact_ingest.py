@@ -41,6 +41,7 @@ async def mcp_env(tmp_path):
     # about: project_dir, team_config, artifact_store, worktree_manager.
     orch = MagicMock()
     orch.project_dir = str(project_dir)
+    orch.event_bus = event_bus
     orch.team_config = MagicMock()
     orch.team_config.artifacts_base_dir = "artifacts"
     from taskbrew.orchestrator.artifact_store import ArtifactStore
@@ -219,3 +220,77 @@ async def test_complete_task_with_no_artifact_paths_still_works(mcp_client):
     assert resp.status_code == 200
     assert resp.json()["status"] == "approved"
     assert resp.json()["ingested_artifacts"] == []
+
+
+async def test_record_check_ingests_artifact_paths(mcp_client):
+    """Check logs declared on record_check should be copied into the same
+    artifact store used by the dashboard artifact viewer."""
+    c, env = mcp_client
+    log_path = env["worktree_path"] / "artifacts" / f"{env['task_id']}-tests.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("pytest failed: expected 1 got 2\n")
+
+    resp = await c.post(
+        "/mcp/tools/record_check",
+        json={
+            "task_id": env["task_id"],
+            "check_name": "tests",
+            "status": "fail",
+            "details": "1 test failed",
+            "artifact_paths": [f"artifacts/{env['task_id']}-tests.log"],
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ingested_artifacts"] == [f"{env['task_id']}-tests.log"]
+
+    dest = (
+        env["artifacts_dir"]
+        / env["group_id"]
+        / env["task_id"]
+        / f"{env['task_id']}-tests.log"
+    )
+    assert dest.exists()
+    assert "pytest failed" in dest.read_text()
+
+
+async def test_api_complete_task_ingests_artifact_paths(mcp_env):
+    """The public task completion API used by task-tools should also ingest
+    artifact paths, otherwise stdio MCP agents cannot populate artifacts."""
+    from taskbrew.dashboard.routers._deps import set_orchestrator
+    from taskbrew.dashboard.routers.tasks import router as tasks_router
+
+    env = mcp_env
+    env["orch"].task_board = env["board"]
+    set_orchestrator(env["orch"])
+
+    app = FastAPI()
+    app.include_router(tasks_router)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        artifact = env["worktree_path"] / "release_notes.md"
+        artifact.write_text("release notes from the agent\n")
+
+        resp = await c.post(
+            f"/api/tasks/{env['task_id']}/complete",
+            json={
+                "status": "completed",
+                "summary": "Done with release notes.",
+                "artifact_paths": ["release_notes.md"],
+            },
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["output_text"] == "Done with release notes."
+    assert body["ingested_artifacts"] == ["release_notes.md"]
+
+    dest = (
+        env["artifacts_dir"]
+        / env["group_id"]
+        / env["task_id"]
+        / "release_notes.md"
+    )
+    assert dest.exists()
+    assert "release notes" in dest.read_text()

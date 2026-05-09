@@ -13,6 +13,7 @@ import json
 import os
 import urllib.request
 import urllib.error
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -27,6 +28,36 @@ from taskbrew.tools._tool_gating import gate_or_error
 # compromised agent could attribute task creation to another role.
 _ENV_ROLE = "TASKBREW_AGENT_ROLE"
 _ENV_INSTANCE = "TASKBREW_AGENT_INSTANCE"
+
+
+def _dashboard_auth_token() -> str:
+    """Return a dashboard bearer token when one is available locally."""
+    for name in (
+        "TASKBREW_API_TOKEN",
+        "TASKBREW_AUTH_TOKEN",
+        "TASKBREW_DASHBOARD_TOKEN",
+        "AUTH_TOKEN",
+    ):
+        value = os.environ.get(name)
+        if value:
+            return value
+    try:
+        token_path = Path.home() / ".taskbrew" / "auth-token.txt"
+        if token_path.is_file():
+            return token_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return ""
+
+
+def _json_headers(*, require_auth: bool = False) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    token = _dashboard_auth_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    elif require_auth:
+        headers["Authorization"] = "Bearer task-tools"
+    return headers
 
 
 def _check_assigned_by(llm_value: str) -> tuple[bool, str | None]:
@@ -69,6 +100,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         description: str = "",
         risk_level: str = "medium",
         review_scope: str = "work_package",
+        max_review_rounds: int | None = None,
     ) -> str:
         """Create a visible Work Package for a goal group.
 
@@ -79,6 +111,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             description: Package spec, acceptance criteria, and boundaries.
             risk_level: low, medium, high, or critical.
             review_scope: work_package (default) or none.
+            max_review_rounds: Fixed review/revision rounds; 0 means unlimited.
         """
         denial = gate_or_error("create_work_package")
         if denial:
@@ -93,6 +126,8 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             "risk_level": risk_level,
             "review_scope": review_scope,
         }
+        if max_review_rounds is not None:
+            payload["max_review_rounds"] = max(0, int(max_review_rounds))
         if description:
             payload["description"] = description
         data = json.dumps(payload).encode()
@@ -327,30 +362,46 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
     def complete_task(
         task_id: str,
         status: str = "completed",
+        summary: str = "",
+        artifact_paths: list[str] | None = None,
     ) -> str:
         """Mark a task as completed (or failed).
 
         Use this after you have finished working on a task to update its status
-        on the board.
+        on the board. When you produce files that should appear in the dashboard
+        artifact viewer, pass their relative paths in ``artifact_paths`` and put
+        your final completion summary in ``summary``.
 
         Args:
             task_id: The ID of the task to complete (e.g. TSK-042).
             status: Final status — "completed" (default) or "failed".
+            summary: Final agent output to store with the task.
+            artifact_paths: Relative paths to files produced in your worktree.
         """
         denial = gate_or_error("complete_task")
         if denial:
             return denial
         payload: dict = {"status": status}
+        if summary:
+            payload["summary"] = summary
+        if artifact_paths:
+            payload["artifact_paths"] = artifact_paths
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
             f"{api_url}/api/tasks/{task_id}/complete",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=_json_headers(),
             method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 result = json.loads(resp.read())
+                ingested = result.get("ingested_artifacts") or []
+                if ingested:
+                    return (
+                        f"Task {task_id} marked as {result.get('status', status)}. "
+                        f"Ingested artifacts: {', '.join(ingested)}."
+                    )
                 return f"Task {task_id} marked as {result.get('status', status)}."
         except urllib.error.HTTPError as e:
             body = e.read().decode()
@@ -359,6 +410,67 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
             return f"Error completing task (connection failed — is the dashboard running?): {e.reason}"
         except Exception as e:
             return f"Error completing task (unexpected error): {e}"
+
+    @mcp.tool()
+    def record_check(
+        task_id: str,
+        check_name: str,
+        status: str,
+        details: str = "",
+        command: str = "",
+        duration_ms: int = 0,
+        artifact_paths: list[str] | None = None,
+    ) -> str:
+        """Record a build, test, lint, or verification check for a task.
+
+        Args:
+            task_id: The ID of the task being checked.
+            check_name: Stable check label, such as build, tests, lint.
+            status: pass, fail, or skipped.
+            details: Short result summary or skip reason.
+            command: Command that was run.
+            duration_ms: Runtime in milliseconds if known.
+            artifact_paths: Relative paths to full logs or evidence files.
+        """
+        denial = gate_or_error("record_check")
+        if denial:
+            return denial
+        payload: dict = {
+            "task_id": task_id,
+            "check_name": check_name,
+            "status": status,
+        }
+        if details:
+            payload["details"] = details
+        if command:
+            payload["command"] = command
+        if duration_ms:
+            payload["duration_ms"] = duration_ms
+        if artifact_paths:
+            payload["artifact_paths"] = artifact_paths
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{api_url}/mcp/tools/record_check",
+            data=data,
+            headers=_json_headers(require_auth=True),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+                ingested = result.get("ingested_artifacts") or []
+                suffix = (
+                    f" Ingested artifacts: {', '.join(ingested)}."
+                    if ingested else ""
+                )
+                return f"Recorded check {check_name} for {task_id}: {status}.{suffix}"
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            return f"Error recording check (HTTP {e.code}): {body}"
+        except urllib.error.URLError as e:
+            return f"Error recording check (connection failed): {e.reason}"
+        except Exception as e:
+            return f"Error recording check (unexpected error): {e}"
 
     @mcp.tool()
     def update_task(

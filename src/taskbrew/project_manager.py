@@ -57,8 +57,13 @@ def _default_team_yaml(
     db_path = str(DEFAULT_DATA_DIR / f"{slug}.db")
     system_agent = system_agent_setting(cli_provider, system_agent_settings)
     system_agent_max_instances = 1
+    system_agent_max_review_rounds = 3
     if isinstance(system_agent_settings, dict):
         system_agent_max_instances = system_agent_settings.get("max_instances", 1)
+        system_agent_max_review_rounds = system_agent_settings.get(
+            "max_review_rounds",
+            3,
+        )
     reasoning_line = ""
     if system_agent.get("reasoning_effort"):
         reasoning_line = f'  reasoning_effort: "{system_agent["reasoning_effort"]}"\n'
@@ -72,6 +77,7 @@ def _default_team_yaml(
         f'  model: "{system_agent["model"]}"\n'
         f"{reasoning_line}"
         f"  max_instances: {system_agent_max_instances}\n"
+        f"  max_review_rounds: {system_agent_max_review_rounds}\n"
         "\n"
         "database:\n"
         f'  path: "{db_path}"\n'
@@ -258,6 +264,11 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "- ALWAYS branch from the latest `main` for new tasks\n"
             "- NEVER branch from another feature/fix branch\n"
             "- Before starting work: git checkout main && git pull\n"
+            "\n"
+            "Verification:\n"
+            "- For each build, test, or lint check you run, call record_check with pass/fail/skipped, command, and details.\n"
+            "- If a check fails, save the full log in an artifact file and pass it via artifact_paths on record_check.\n"
+            "- When completing, pass any final artifacts via artifact_paths on complete_task.\n"
         ),
         "tools": [
             "Read",
@@ -267,6 +278,7 @@ _DEFAULT_ROLES: dict[str, dict] = {
             "Glob",
             "Grep",
             "mcp__task-tools__create_task",
+            "mcp__task-tools__record_check",
             "mcp__task-tools__complete_task",
         ],
         "model": "claude-sonnet-4-6",

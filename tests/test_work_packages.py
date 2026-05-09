@@ -439,6 +439,19 @@ async def test_ensure_review_gate_defaults_and_is_idempotent(board: TaskBoard):
     assert gate["max_review_rounds"] == DEFAULT_MAX_REVIEW_ROUNDS
 
 
+async def test_work_package_uses_configured_default_review_rounds(db: Database):
+    board = TaskBoard(db, default_package_review_rounds=0)
+    group = await board.create_group(title="Feature", created_by="pm")
+
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Unlimited review package",
+        created_by="architect-1",
+    )
+
+    assert package["max_review_rounds"] == 0
+
+
 async def test_reject_task_reconciles_package_before_group_completion(
     board: TaskBoard,
 ):

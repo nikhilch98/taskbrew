@@ -78,6 +78,27 @@ MERGE_QUEUE_OPEN_STATUSES = (
 MERGE_QUEUE_SUCCESS_STATUSES = ("merged", "already_merged")
 
 
+def normalize_max_review_rounds(
+    value: int | str | None,
+    default: int = DEFAULT_MAX_REVIEW_ROUNDS,
+) -> int:
+    """Return a non-negative review round limit; 0 means unlimited."""
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, parsed)
+
+
+def review_round_limit_reached(record: dict) -> bool:
+    """Return True when a task/package has exhausted fixed review rounds."""
+    max_rounds = normalize_max_review_rounds(record.get("max_review_rounds"))
+    review_round = int(record.get("review_round") or 0)
+    return max_rounds > 0 and review_round >= max_rounds
+
+
 class TaskBoard:
     """High-level CRUD interface for groups, tasks, and dependencies.
 
@@ -95,9 +116,13 @@ class TaskBoard:
         db: Database,
         group_prefixes: dict[str, str] | None = None,
         event_bus=None,
+        default_package_review_rounds: int | None = None,
     ) -> None:
         self._db = db
         self._group_prefixes: dict[str, str] = dict(group_prefixes or {})
+        self._default_package_review_rounds = normalize_max_review_rounds(
+            default_package_review_rounds
+        )
         # Mapping from role name to task-ID prefix (e.g. "coder" -> "CD").
         self._role_to_prefix: dict[str, str] = {}
         # Optional event bus -- used to emit ``task.available`` when a
@@ -109,6 +134,34 @@ class TaskBoard:
         self._event_bus = event_bus
         self._package_merge_queue = None
         self._package_repo_dir: Path | None = None
+
+    def set_default_package_review_rounds(self, value: int | str | None) -> None:
+        """Set the default review/revision round limit for new packages."""
+        self._default_package_review_rounds = normalize_max_review_rounds(value)
+
+    async def apply_default_package_review_rounds_to_active_packages(
+        self,
+        value: int | str | None,
+    ) -> int:
+        """Apply the project default to packages that are not terminal."""
+        max_rounds = normalize_max_review_rounds(value)
+        self._default_package_review_rounds = max_rounds
+        rows = await self._db.execute_returning(
+            "UPDATE work_packages SET max_review_rounds = ?, updated_at = ? "
+            "WHERE status NOT IN ('completed', 'rejected', 'failed') "
+            "RETURNING id",
+            (max_rounds, _utcnow()),
+        )
+        if rows:
+            ids = [row["id"] for row in rows]
+            placeholders = ",".join("?" for _ in ids)
+            await self._db.execute(
+                "UPDATE review_gates SET max_review_rounds = ?, updated_at = ? "
+                f"WHERE entity_type = 'work_package' "
+                f"AND entity_id IN ({placeholders})",
+                (max_rounds, _utcnow(), *ids),
+            )
+        return len(rows)
 
     def configure_package_integration(self, *, merge_queue=None, repo_dir: str | None = None) -> None:
         """Wire package approval to the durable merge queue.
@@ -205,6 +258,7 @@ class TaskBoard:
         created_by: str | None = None,
         risk_level: str = "medium",
         review_scope: str = DEFAULT_PACKAGE_REVIEW_SCOPE,
+        max_review_rounds: int | None = None,
     ) -> dict:
         """Create a work package for a group."""
         group = await self._db.execute_fetchone(
@@ -229,7 +283,10 @@ class TaskBoard:
                 description,
                 risk_level,
                 review_scope,
-                DEFAULT_MAX_REVIEW_ROUNDS,
+                normalize_max_review_rounds(
+                    max_review_rounds,
+                    self._default_package_review_rounds,
+                ),
                 created_by,
                 now,
                 now,
@@ -830,7 +887,7 @@ class TaskBoard:
                 entity_type,
                 entity_id,
                 group_id,
-                max_rounds or DEFAULT_MAX_REVIEW_ROUNDS,
+                normalize_max_review_rounds(max_rounds),
                 now,
                 now,
             ),
@@ -857,9 +914,7 @@ class TaskBoard:
             entity_type="work_package",
             entity_id=package_id,
             group_id=package["group_id"],
-            max_rounds=int(
-                package.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
-            ),
+            max_rounds=normalize_max_review_rounds(package.get("max_review_rounds")),
         )
         if gate.get("status") == "pending":
             return gate
@@ -873,7 +928,7 @@ class TaskBoard:
             "AND status IN ('waiting_revision', 'failed') RETURNING *",
             (
                 int(package.get("review_round") or 0),
-                int(package.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS),
+                normalize_max_review_rounds(package.get("max_review_rounds")),
                 now,
                 gate["id"],
             ),
@@ -959,8 +1014,8 @@ class TaskBoard:
                 entity_type="work_package",
                 entity_id=package_id,
                 group_id=updated["group_id"],
-                max_rounds=int(
-                    updated.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+                max_rounds=normalize_max_review_rounds(
+                    updated.get("max_review_rounds")
                 ),
             )
             await self.reopen_ready_work_package_review_gate(package_id)
@@ -1682,8 +1737,8 @@ class TaskBoard:
             raise ValueError("At least one revision is required")
         original_review_status = original.get("review_status") or "pending"
         original_review_round = int(original.get("review_round") or 0)
-        max_review_rounds = int(
-            original.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+        max_review_rounds = normalize_max_review_rounds(
+            original.get("max_review_rounds")
         )
         if max_review_rounds > 0 and original_review_round >= max_review_rounds:
             return []
@@ -1859,8 +1914,8 @@ class TaskBoard:
             raise ValueError("At least one package revision is required")
 
         review_round = int(package.get("review_round") or 0)
-        max_review_rounds = int(
-            package.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS
+        max_review_rounds = normalize_max_review_rounds(
+            package.get("max_review_rounds")
         )
         if max_review_rounds > 0 and review_round >= max_review_rounds:
             return []

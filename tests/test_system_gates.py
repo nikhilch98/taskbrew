@@ -608,6 +608,125 @@ async def test_package_review_needs_revision_creates_package_revision_task(
     assert runs[-1]["revision_task_ids"] == [revision["id"]]
 
 
+async def test_package_review_rejects_when_review_round_limit_reached(
+    board: TaskBoard,
+):
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Exhausted package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+    await board._db.execute(
+        "UPDATE work_packages SET review_round = 3, max_review_rounds = 3 "
+        "WHERE id = ?",
+        (package["id"],),
+    )
+
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(
+                outcome="needs_revision",
+                reason="Package branch still misses required tests.",
+                revisions=[RevisionRequest(title="Add package tests")],
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts["package_review"] == 1
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "rejected"
+    assert updated_package["review_status"] == "rejected"
+    assert "review round limit" in updated_package["review_reason"]
+    revision = await board._db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision'",
+        (package["id"],),
+    )
+    assert revision is None
+    gate = await board._db.execute_fetchone(
+        "SELECT * FROM review_gates WHERE entity_type = 'work_package' "
+        "AND entity_id = ?",
+        (package["id"],),
+    )
+    assert gate["status"] == "completed"
+    assert gate["outcome"] == "rejected"
+
+
+async def test_package_review_unlimited_rounds_can_create_revision_after_round_three(
+    db: Database,
+):
+    board = TaskBoard(db, default_package_review_rounds=0)
+    await board.register_prefixes({"pm": "PM", "architect": "AR", "coder": "CD"})
+    group = await _create_group(board)
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Unlimited package",
+        created_by="architect-1",
+    )
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Build package feature",
+        task_type="implementation",
+        assigned_to="coder",
+        work_package_id=package["id"],
+    )
+    await board.apply_backlog_intake_decision(
+        task["id"],
+        needs_review=False,
+        reason="Covered by package review.",
+    )
+    claimed = await board.claim_task("coder", "coder-1")
+    assert claimed is not None
+    await board.complete_task_with_output(task["id"], "Implemented package feature.")
+    await board._db.execute(
+        "UPDATE work_packages SET review_round = 3 WHERE id = ?",
+        (package["id"],),
+    )
+
+    analyzer = FakeAnalyzer(
+        review_results=[
+            ReviewResult(
+                outcome="needs_revision",
+                reason="One more package fix is needed.",
+                revisions=[RevisionRequest(title="Add final package test")],
+            )
+        ]
+    )
+    manager = SystemGateManager(board=board, analyzer=analyzer)
+
+    counts = await manager.process_pending_once()
+
+    assert counts["package_review"] == 1
+    updated_package = await board.get_work_package(package["id"])
+    assert updated_package["status"] == "pending"
+    assert updated_package["review_status"] == "waiting_revision"
+    assert updated_package["review_round"] == 4
+    revision = await board._db.execute_fetchone(
+        "SELECT * FROM tasks WHERE work_package_id = ? AND task_type = 'revision'",
+        (package["id"],),
+    )
+    assert revision is not None
+    assert revision["title"] == "Add final package test"
+
+
 async def test_process_pending_once_recovers_legacy_waiting_package_review(
     board: TaskBoard,
 ):

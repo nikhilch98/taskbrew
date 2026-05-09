@@ -5,6 +5,7 @@ system_agent:
   model: gpt-5.5
   reasoning_effort: xhigh
   max_instances: 1
+  max_review_rounds: 3
 database:
   path: ~/.taskbrew/data/taskbrew.db
 dashboard:

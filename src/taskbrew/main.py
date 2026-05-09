@@ -325,7 +325,16 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
         if role.can_create_groups and role.group_type:
             group_prefixes[name] = role.group_type
 
-    task_board = TaskBoard(db, group_prefixes=group_prefixes, event_bus=event_bus)
+    task_board = TaskBoard(
+        db,
+        group_prefixes=group_prefixes,
+        event_bus=event_bus,
+        default_package_review_rounds=getattr(
+            getattr(team_config, "system_agent", None),
+            "max_review_rounds",
+            3,
+        ),
+    )
 
     # Register role prefixes
     role_prefixes = {name: role.prefix for name, role in roles.items()}
@@ -948,7 +957,8 @@ def _cmd_init(args):
             f'system_agent:\n'
             f'  provider: "{system_agent["provider"]}"\n'
             f'  model: "{system_agent["model"]}"\n'
-            f'  reasoning_effort: "{system_agent["reasoning_effort"]}"\n\n'
+            f'  reasoning_effort: "{system_agent["reasoning_effort"]}"\n'
+            f"  max_review_rounds: 3\n\n"
             f'# Uncomment to add MCP tool servers:\n'
             f'# mcp_servers:\n'
             f'#   my-tool:\n'

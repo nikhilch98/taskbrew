@@ -17,12 +17,13 @@ from taskbrew.agents.base import AgentRunner
 from taskbrew.config import AgentConfig
 from taskbrew.orchestrator.task_board import (
     BACKLOG_STATUS,
-    DEFAULT_MAX_REVIEW_ROUNDS,
     NO_REVIEW_SCOPE,
     PACKAGE_INTEGRATION_TASK_TYPE,
     REVIEW_STATUS,
     TASK_REVIEW_SCOPE,
     TaskBoard,
+    normalize_max_review_rounds,
+    review_round_limit_reached,
 )
 
 logger = logging.getLogger(__name__)
@@ -909,13 +910,21 @@ class SystemGateManager:
             await self._mark_package_review_failed(gate_id, result.reason)
             return True
         if outcome == "needs_revision":
-            await self._mark_package_review_needs_revision(
+            package = await self._board.get_work_package(package_id)
+            if package is None:
+                raise ValueError(f"Work package not found: {package_id}")
+            if review_round_limit_reached(package):
+                await self._board.reject_work_package_review(
+                    package_id,
+                    reason=self._package_review_round_limit_reason(package, result),
+                )
+                return True
+            return await self._mark_package_review_needs_revision(
                 gate_id,
                 package_id,
                 result.reason,
                 result.revisions or [RevisionRequest(description=result.reason)],
             )
-            return True
         raise SystemGateAnalysisError(f"Unsupported review outcome: {outcome}")
 
     async def _mark_package_review_failed(self, gate_id: str, reason: str) -> None:
@@ -941,13 +950,33 @@ class SystemGateManager:
         package_id: str,
         reason: str,
         revisions: list[RevisionRequest],
-    ) -> None:
+    ) -> bool:
         now = _utcnow()
         created = await self._board.create_package_revision_tasks(
             package_id,
             [self._revision_to_dict(revision) for revision in revisions],
             reason=reason,
         )
+        if not created:
+            package = await self._board.get_work_package(package_id)
+            if package is None:
+                raise ValueError(f"Work package not found: {package_id}")
+            terminal_reason = (
+                self._package_review_round_limit_reason(
+                    package,
+                    ReviewResult(outcome="needs_revision", reason=reason),
+                )
+                if review_round_limit_reached(package)
+                else (
+                    "Package review requested revisions, but no revision task "
+                    f"could be created. Last review finding: {reason}"
+                )
+            )
+            await self._board.reject_work_package_review(
+                package_id,
+                reason=terminal_reason,
+            )
+            return True
         await self._board._db.execute(
             "UPDATE review_gates SET status = 'waiting_revision', "
             "outcome = 'needs_revision', reason = ?, updated_at = ? "
@@ -971,6 +1000,7 @@ class SystemGateManager:
                 group_id=task.get("group_id"),
                 created_by="system",
             )
+        return True
 
     async def _reopen_ready_package_review_gates(self, limit: int) -> int:
         if limit <= 0:
@@ -1056,9 +1086,7 @@ class SystemGateManager:
         task = await self._board.get_task(task_id)
         if task is None:
             raise ValueError(f"Task not found: {task_id}")
-        review_round = int(task.get("review_round") or 0)
-        max_rounds = int(task.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS)
-        return max_rounds > 0 and review_round >= max_rounds
+        return review_round_limit_reached(task)
 
     async def _review_round_limit_reason(
         self,
@@ -1068,9 +1096,23 @@ class SystemGateManager:
         task = await self._board.get_task(task_id)
         if task is None:
             raise ValueError(f"Task not found: {task_id}")
-        max_rounds = int(task.get("max_review_rounds") or DEFAULT_MAX_REVIEW_ROUNDS)
+        max_rounds = normalize_max_review_rounds(task.get("max_review_rounds"))
         return (
             f"Task failed to pass review after {max_rounds} review rounds. "
+            f"Last review finding: {result.reason}"
+        )
+
+    def _package_review_round_limit_reason(
+        self,
+        package: dict,
+        result: ReviewResult,
+    ) -> str:
+        max_rounds = normalize_max_review_rounds(package.get("max_review_rounds"))
+        if max_rounds <= 0:
+            return result.reason
+        return (
+            f"Work package failed to pass review after the configured "
+            f"review round limit of {max_rounds}. "
             f"Last review finding: {result.reason}"
         )
 

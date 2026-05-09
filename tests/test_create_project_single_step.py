@@ -58,6 +58,7 @@ def test_create_project_wizard_tracks_system_agent_profile():
         assert "system_agent" in source
         assert "renderProjectSystemAgentSection" in source
         assert "setProjectWizardSystemProvider" in source
+        assert "setProjectWizardSystemMaxReviewRounds" in source
 
 
 def test_create_project_wizard_defaults_to_codex_gpt55_without_verifier():
@@ -79,6 +80,7 @@ def test_settings_page_contains_system_agent_controls():
 
     assert "System AI Profile" in source
     assert "updateSystemAgentProvider" in source
+    assert "System Review Rounds" in source
     assert "system_agent" in source
 
 

@@ -1315,6 +1315,7 @@ async def test_create_project_with_system_agent_profile(app_client, tmp_path):
                 "model": "gemini-3-pro-preview",
                 "reasoning_effort": "high",
                 "max_instances": 3,
+                "max_review_rounds": 0,
             },
         },
     )
@@ -1332,6 +1333,7 @@ async def test_create_project_with_system_agent_profile(app_client, tmp_path):
         "model": "gemini-3-pro-preview",
         "reasoning_effort": "high",
         "max_instances": 3,
+        "max_review_rounds": 0,
     }
 
     set_project_deps(None, None)
@@ -1356,6 +1358,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
         '  model: "claude-sonnet-4-6"\n'
         '  reasoning_effort: "high"\n'
         '  max_instances: 2\n'
+        '  max_review_rounds: 4\n'
         'database:\n'
         '  path: "data/settings.db"\n'
         'dashboard:\n'
@@ -1375,6 +1378,12 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
     db = Database(str(tmp_path / "settings.db"))
     await db.initialize()
     board = TaskBoard(db, group_prefixes={})
+    group = await board.create_group(title="Settings group", created_by="pm")
+    package = await board.create_work_package(
+        group_id=group["id"],
+        title="Settings package",
+        created_by="architect-1",
+    )
     event_bus = EventBus()
     instance_mgr = InstanceManager(db)
 
@@ -1394,6 +1403,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
             "model": "claude-sonnet-4-6",
             "reasoning_effort": "high",
             "max_instances": 2,
+            "max_review_rounds": 4,
         }
 
         update = await client.put(
@@ -1404,6 +1414,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
                     "model": "gpt-5.4-mini",
                     "reasoning_effort": "low",
                     "max_instances": 3,
+                    "max_review_rounds": 0,
                 },
             },
         )
@@ -1415,7 +1426,10 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
             "model": "gpt-5.4-mini",
             "reasoning_effort": "low",
             "max_instances": 3,
+            "max_review_rounds": 0,
         }
+        updated_package = await board.get_work_package(package["id"])
+        assert updated_package["max_review_rounds"] == 0
 
     with open(team_yaml) as f:
         persisted = yaml.safe_load(f)
@@ -1424,6 +1438,7 @@ async def test_team_settings_system_agent_round_trip(tmp_path):
         "model": "gpt-5.4-mini",
         "reasoning_effort": "low",
         "max_instances": 3,
+        "max_review_rounds": 0,
     }
 
     set_orchestrator(None)

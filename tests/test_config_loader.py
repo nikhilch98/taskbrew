@@ -432,6 +432,7 @@ class TestSystemAgentConfig:
         assert cfg.system_agent.model == "gemini-3-pro-preview"
         assert cfg.system_agent.reasoning_effort == "high"
         assert cfg.system_agent.max_instances == 1
+        assert cfg.system_agent.max_review_rounds == 3
 
     def test_system_agent_max_instances_parsed(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "team.yaml"
@@ -443,6 +444,19 @@ class TestSystemAgentConfig:
         cfg = load_team_config(cfg_file)
 
         assert cfg.system_agent.max_instances == 3
+
+    def test_system_agent_allows_unlimited_package_review_rounds(
+        self, tmp_path: Path
+    ) -> None:
+        cfg_file = tmp_path / "team.yaml"
+        cfg_file.write_text(
+            self.TEAM_YAML_WITH_SYSTEM_AGENT
+            + "\n"
+            + "  max_review_rounds: 0\n"
+        )
+        cfg = load_team_config(cfg_file)
+
+        assert cfg.system_agent.max_review_rounds == 0
 
     def test_system_agent_max_instances_inherits_team_default_when_omitted(
         self,
@@ -554,6 +568,7 @@ def test_repository_default_team_uses_codex_gpt55_without_verifier_pipeline() ->
         "model": "gpt-5.5",
         "reasoning_effort": "xhigh",
         "max_instances": 1,
+        "max_review_rounds": 3,
     }
 
     pipeline_edges = team_data.get("pipeline", {}).get("edges", [])

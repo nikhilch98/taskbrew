@@ -10,10 +10,11 @@ to the shared :class:`AuthManager` when auth is enabled.
 from __future__ import annotations
 
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException, Header
 from typing import Optional
+
+from taskbrew.dashboard.artifact_ingest import ingest_artifact_paths
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -88,9 +89,6 @@ def _get_token(authorization: Optional[str] = Header(None)) -> str:
     return token
 
 
-_MAX_INGEST_ARTIFACT_COUNT = 50
-
-
 async def _ingest_artifact_paths(
     *,
     task_id: str,
@@ -109,75 +107,14 @@ async def _ingest_artifact_paths(
 
     Returns the list of basenames successfully ingested.
     """
-    if not artifact_paths or not isinstance(artifact_paths, list):
-        return []
-    if not _task_board or not _orchestrator_getter:
-        return []
-    orch = _orchestrator_getter()
-    worktree_mgr = getattr(orch, "worktree_manager", None) if orch else None
-    if not worktree_mgr:
-        return []
-
-    # Look up the task's claimant so we know which agent's worktree
-    # to read from.
-    task = await _task_board.get_task(task_id)
-    if not task:
-        return []
-    claimed_by = task.get("claimed_by") or ""
-    worktree_path = worktree_mgr.get_worktree_path(claimed_by)
-    if not worktree_path or not os.path.isdir(worktree_path):
-        return []
-
-    # Cap how many paths we'll process per call so a hostile / careless
-    # agent can't trigger 10k file copies.
-    paths_to_process = artifact_paths[:_MAX_INGEST_ARTIFACT_COUNT]
-
-    from taskbrew.orchestrator.artifact_store import ArtifactStore
-    base = orch.artifact_store.base_dir if hasattr(orch, "artifact_store") else None
-    if not base:
-        # Fall back to project_dir/artifacts to match the dashboard's
-        # _artifact_base_dir resolution.
-        tc = getattr(orch, "team_config", None)
-        artifacts_subdir = getattr(tc, "artifacts_base_dir", "artifacts") if tc else "artifacts"
-        base = os.path.join(orch.project_dir, artifacts_subdir)
-    store = ArtifactStore(base_dir=str(base))
-
-    worktree_real = os.path.realpath(worktree_path)
-    ingested: list[str] = []
-    for path_entry in paths_to_process:
-        if not isinstance(path_entry, str) or not path_entry.strip():
-            continue
-        # Reject absolute and parent-traversal inputs at the API
-        # boundary; rely on realpath containment as defense-in-depth.
-        if path_entry.startswith("/") or ".." in path_entry.split("/"):
-            logger.warning(
-                "Rejecting artifact_path %r for task %s: not relative or contains '..'",
-                path_entry, task_id,
-            )
-            continue
-        full = os.path.realpath(os.path.join(worktree_path, path_entry))
-        if full != worktree_real and not full.startswith(worktree_real + os.sep):
-            logger.warning(
-                "Rejecting artifact_path %r for task %s: outside worktree",
-                path_entry, task_id,
-            )
-            continue
-        try:
-            dest = store.ingest_file(group_id, task_id, full)
-        except Exception as exc:
-            logger.warning(
-                "Failed to ingest artifact %r for task %s: %s",
-                path_entry, task_id, exc,
-            )
-            continue
-        if dest:
-            ingested.append(os.path.basename(dest))
-    if ingested:
-        logger.info(
-            "Ingested %d artifact(s) for task %s: %s",
-            len(ingested), task_id, ingested,
-        )
-    return ingested
+    orch = _orchestrator_getter() if _orchestrator_getter else None
+    return await ingest_artifact_paths(
+        task_board=_task_board,
+        orch=orch,
+        task_id=task_id,
+        group_id=group_id,
+        artifact_paths=artifact_paths,
+    )
 
 
 @router.post("/mcp/tools/complete_task")
@@ -561,11 +498,16 @@ async def mcp_record_check(
 
     db = _task_board._db
     existing = await db.execute_fetchone(
-        "SELECT completion_checks FROM tasks WHERE id = ?",
+        "SELECT completion_checks, group_id FROM tasks WHERE id = ?",
         (task_id,),
     )
     if existing is None:
         raise HTTPException(404, f"task not found: {task_id}")
+    ingested = await _ingest_artifact_paths(
+        task_id=task_id,
+        group_id=existing.get("group_id") or "",
+        artifact_paths=artifact_paths,
+    )
 
     import json
     raw = existing.get("completion_checks") or "{}"
@@ -600,7 +542,12 @@ async def mcp_record_check(
         except Exception:
             logger.debug("task.check_recorded event emit failed", exc_info=True)
 
-    return {"status": "ok", "task_id": task_id, "checks": current}
+    return {
+        "status": "ok",
+        "task_id": task_id,
+        "checks": current,
+        "ingested_artifacts": ingested,
+    }
 
 
 @router.post("/mcp/tools/get_my_connections")

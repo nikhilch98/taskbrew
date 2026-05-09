@@ -306,6 +306,7 @@ async def get_team_settings():
             "model": system_agent.model,
             "reasoning_effort": system_agent.reasoning_effort,
             "max_instances": system_agent.max_instances,
+            "max_review_rounds": system_agent.max_review_rounds,
         }
     else:
         system_agent_profile = system_agent_setting(
@@ -313,6 +314,7 @@ async def get_team_settings():
             {},
         )
         system_agent_profile["max_instances"] = getattr(tc, "default_max_instances", 1)
+        system_agent_profile["max_review_rounds"] = 3
     return {
         "name": tc.team_name,
         "project_dir": pd,
@@ -367,13 +369,23 @@ async def update_team_settings(body: UpdateTeamSettingsBody):
             "max_instances",
             getattr(tc_s.system_agent, "max_instances", tc_s.default_max_instances),
         )
+        system_agent_max_review_rounds = raw_system_agent.get(
+            "max_review_rounds",
+            getattr(tc_s.system_agent, "max_review_rounds", 3),
+        )
         tc_s.system_agent = SystemAgentConfig(
             provider=resolved_system_agent["provider"],
             model=resolved_system_agent["model"],
             reasoning_effort=resolved_system_agent.get("reasoning_effort"),
             max_instances=system_agent_max_instances,
+            max_review_rounds=system_agent_max_review_rounds,
         )
         resolved_system_agent["max_instances"] = system_agent_max_instances
+        resolved_system_agent["max_review_rounds"] = system_agent_max_review_rounds
+        if getattr(orch, "task_board", None) is not None:
+            await orch.task_board.apply_default_package_review_rounds_to_active_packages(
+                system_agent_max_review_rounds,
+            )
 
     # Persist to YAML file
     if pd:
