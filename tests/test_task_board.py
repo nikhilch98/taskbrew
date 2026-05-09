@@ -401,6 +401,41 @@ async def test_fail_task_cascades_to_blocked_dependents(board: TaskBoard):
     assert task_b_after["status"] == "failed"
 
 
+async def test_fail_task_releases_claiming_agent_instance(board: TaskBoard):
+    """Failing a task should not leave the agent showing terminal work."""
+    group = await board.create_group(title="Release failed task agent", created_by="pm")
+    task = await board.create_task(
+        group_id=group["id"],
+        title="Implement retry",
+        task_type="implementation",
+        assigned_to="coder",
+    )
+    await _release_task(board, task)
+    claimed = await board.claim_task(role="coder", instance_id="coder-1")
+    await board._db.execute(
+        "INSERT INTO agent_instances "
+        "(instance_id, role, status, current_task, started_at, last_heartbeat) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "coder-1",
+            "coder",
+            "working",
+            claimed["id"],
+            claimed["started_at"],
+            claimed["started_at"],
+        ),
+    )
+
+    await board.fail_task(claimed["id"], reason="CLI reported failure.")
+
+    instance = await board._db.execute_fetchone(
+        "SELECT status, current_task FROM agent_instances WHERE instance_id = ?",
+        ("coder-1",),
+    )
+    assert instance["status"] == "idle"
+    assert instance["current_task"] is None
+
+
 async def test_fail_task_cascades_recursively(board: TaskBoard):
     """Failure should cascade through multi-level dependency chains."""
     group = await board.create_group(title="Deep cascade", created_by="pm")

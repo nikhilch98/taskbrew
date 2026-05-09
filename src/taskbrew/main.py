@@ -569,6 +569,13 @@ async def _orphan_recovery_loop(
                 for inst_id in stale_ids:
                     await orch.instance_manager.update_status(inst_id, "idle")
 
+            released = await orch.task_board.release_agent_instances_for_inactive_tasks()
+            if released:
+                _logger.info(
+                    "Released %d agent instance(s) pointing at terminal tasks",
+                    released,
+                )
+
             # 2. Recover blocked tasks whose deps are all terminal
             stuck = await orch.task_board.recover_stuck_blocked_tasks()
             if stuck:
@@ -635,6 +642,13 @@ async def start_agents(orch: Orchestrator, *, start_paused: bool = True):
         logger.info("Recovered %d orphaned in_progress tasks to pending", len(recovered))
         for t in recovered:
             await orch.event_bus.emit("task.recovered", {"task_id": t["id"]})
+
+    released = await orch.task_board.release_agent_instances_for_inactive_tasks()
+    if released:
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "Released %d agent instance(s) pointing at terminal tasks", released,
+        )
 
     # Recover blocked tasks whose dependencies are all terminal
     stuck = await orch.task_board.recover_stuck_blocked_tasks()

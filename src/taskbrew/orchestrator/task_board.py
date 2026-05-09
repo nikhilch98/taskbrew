@@ -1551,6 +1551,26 @@ class TaskBoard:
             return REVIEW_STATUS, "pending"
         return "completed", None
 
+    async def _release_agent_instances_for_task(self, task_id: str) -> None:
+        await self._db.execute(
+            "UPDATE agent_instances SET status = 'idle', current_task = NULL "
+            "WHERE current_task = ? AND status = 'working'",
+            (task_id,),
+        )
+
+    async def release_agent_instances_for_inactive_tasks(self) -> int:
+        """Clear working agent rows that still point at non-in-progress tasks."""
+        rows = await self._db.execute_returning(
+            "UPDATE agent_instances SET status = 'idle', current_task = NULL "
+            "WHERE status = 'working' "
+            "AND current_task IN ("
+            "    SELECT id FROM tasks "
+            "    WHERE status != 'in_progress'"
+            ") "
+            "RETURNING *"
+        )
+        return len(rows)
+
     async def complete_task(self, task_id: str) -> dict:
         """Mark a task as completed and resolve downstream dependencies."""
         task = await self.get_task(task_id)
@@ -1585,8 +1605,10 @@ class TaskBoard:
                 existing["status"],
             )
             if existing["status"] in ("completed", REVIEW_STATUS):
+                await self._release_agent_instances_for_task(task_id)
                 await self.reconcile_task_package(task_id)
             return existing
+        await self._release_agent_instances_for_task(task_id)
         if target_status == "completed":
             await self.reconcile_task_package(task_id)
             await self._resolve_dependencies(task_id)
@@ -1629,6 +1651,7 @@ class TaskBoard:
                     "WHERE id = ? RETURNING *",
                     (next_output, task_id),
                 )
+                await self._release_agent_instances_for_task(task_id)
                 await self.reconcile_task_package(task_id)
                 return completed_rows[0] if completed_rows else existing
             logger.warning(
@@ -1638,6 +1661,7 @@ class TaskBoard:
                 existing["status"],
             )
             return existing
+        await self._release_agent_instances_for_task(task_id)
         if target_status == "completed":
             await self.reconcile_task_package(task_id)
             await self._resolve_dependencies(task_id)
@@ -2451,6 +2475,7 @@ class TaskBoard:
         )
         if not rows:
             raise ValueError(f"Task not found: {task_id}")
+        await self._release_agent_instances_for_task(task_id)
         await self._cascade_failure(task_id)
         await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
@@ -2475,8 +2500,11 @@ class TaskBoard:
                 task_id,
                 existing["status"],
             )
+            if existing["status"] in ("completed", "failed", "rejected", "cancelled"):
+                await self._release_agent_instances_for_task(task_id)
             await self.reconcile_task_package(task_id)
             return existing
+        await self._release_agent_instances_for_task(task_id)
         await self._cascade_failure(task_id)
         # audit 03 F#16: previously this only cancelled 'pending' children,
         # leaving blocked children orphaned when the parent fails. A child
@@ -3149,6 +3177,7 @@ class TaskBoard:
         )
         if not rows:
             raise ValueError(f"Task not found: {task_id}")
+        await self._release_agent_instances_for_task(task_id)
         await self._cascade_failure(task_id)
         await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
