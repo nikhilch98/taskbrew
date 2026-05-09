@@ -770,7 +770,12 @@ async def start_agents(orch: Orchestrator, *, start_paused: bool = True):
         orch.agent_tasks.append(scaler_task)
 
 
-async def run_server(project_manager):
+async def run_server(
+    project_manager,
+    *,
+    start_paused: bool = True,
+    auto_resume_project_id: str | None = None,
+):
     """Start the dashboard server. Agents are started separately via start_agents()."""
     import uvicorn
     from taskbrew.dashboard.app import create_app
@@ -785,7 +790,9 @@ async def run_server(project_manager):
 
     # If there's an active project, start its agents
     if project_manager.orchestrator:
-        await start_agents(project_manager.orchestrator)
+        await start_agents(project_manager.orchestrator, start_paused=start_paused)
+        if auto_resume_project_id and not start_paused:
+            project_manager.mark_auto_resume_consumed(auto_resume_project_id)
 
     # Use active project's config for host/port, or defaults
     orch = project_manager.orchestrator
@@ -845,6 +852,8 @@ async def async_main(args):
         from taskbrew.project_manager import ProjectManager, _slugify
 
         pm = ProjectManager()
+        start_paused = True
+        auto_resume_project_id = None
 
         # Auto-migration: if --project-dir passed, register and activate
         if args.project_dir:
@@ -855,14 +864,22 @@ async def async_main(args):
             except ValueError:
                 pass  # already registered
             slug = _slugify(name)
+            if pm.should_auto_resume_on_activate(slug):
+                start_paused = False
+                auto_resume_project_id = slug
             await pm.activate_project(slug)
         else:
             # Try to activate the last-used project from registry
             active = pm.get_active()
             if active:
                 try:
+                    if pm.should_auto_resume_on_activate(active["id"]):
+                        start_paused = False
+                        auto_resume_project_id = active["id"]
                     await pm.activate_project(active["id"])
                 except Exception as e:
+                    start_paused = True
+                    auto_resume_project_id = None
                     logging.getLogger(__name__).warning(
                         "Failed to activate saved project '%s': %s", active["id"], e
                     )
@@ -878,12 +895,21 @@ async def async_main(args):
                         pass
                     slug = _slugify(name)
                     try:
+                        if pm.should_auto_resume_on_activate(slug):
+                            start_paused = False
+                            auto_resume_project_id = slug
                         await pm.activate_project(slug)
                     except Exception as e:
+                        start_paused = True
+                        auto_resume_project_id = None
                         logging.getLogger(__name__).warning("Auto-activation failed: %s", e)
 
         try:
-            await run_server(pm)
+            await run_server(
+                pm,
+                start_paused=start_paused,
+                auto_resume_project_id=auto_resume_project_id,
+            )
         finally:
             # Shut down the orchestrator but DON'T clear the active project
             # so it persists across server restarts
