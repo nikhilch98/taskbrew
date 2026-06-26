@@ -1162,21 +1162,6 @@ class AgentLoop:
             "Task %s has failing checks %s; re-queued for fix (attempt %d/2).",
             task["id"], failed_checks, current_retries + 1,
         )
-        await self.event_bus.emit(
-            "task.completion_blocked",
-            {
-                "task_id": task["id"],
-                "group_id": task["group_id"],
-                "reason": "fanout_required",
-                "retries": current_retries + 1,
-                "agent_id": self.instance_id,
-            },
-        )
-        logger.warning(
-            "Task %s returned without creating coder/verifier tasks; "
-            "re-queued for fan-out (attempt %d/2).",
-            task["id"], current_retries + 1,
-        )
 
     async def _should_require_verification(
         self,

@@ -2518,11 +2518,19 @@ class TaskBoard:
         # leaving blocked children orphaned when the parent fails. A child
         # linked purely by parent_id (no task_dependencies row) can still
         # be blocked -- cascade to those too.
+        child_packages = await self._db.execute_fetchall(
+            "SELECT DISTINCT work_package_id FROM tasks "
+            "WHERE parent_id = ? AND status IN ('backlog', 'pending', 'blocked') "
+            "AND work_package_id IS NOT NULL",
+            (task_id,),
+        )
         await self._db.execute(
             "UPDATE tasks SET status = 'cancelled' "
             "WHERE parent_id = ? AND status IN ('backlog', 'pending', 'blocked')",
             (task_id,),
         )
+        for pkg_row in child_packages:
+            await self.reconcile_work_package_status(pkg_row["work_package_id"])
         await self.reconcile_task_package(task_id)
         await self._check_group_completion(task_id)
         logger.info("Task %s failed", task_id)
