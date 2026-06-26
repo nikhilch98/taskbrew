@@ -650,7 +650,7 @@ class Database:
         This is provided for callers that manage connections manually
         rather than using the ``acquire()`` context manager.
         """
-        if self._pool is not None and not self._pool.full():
+        if self._pool is not None:
             await self._pool.put(conn)
         else:
             await conn.close()

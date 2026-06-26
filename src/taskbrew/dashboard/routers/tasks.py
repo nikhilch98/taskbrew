@@ -792,6 +792,9 @@ async def complete_task_endpoint(task_id: str, body: CompleteTaskBody = Complete
         else:
             result = await orch.task_board.complete_task(task_id)
     elif body.status == "failed":
+        task = await orch.task_board.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
         result = await orch.task_board.fail_task(task_id)
     else:
         raise HTTPException(status_code=400, detail=f"Invalid status: {body.status}")
@@ -1172,7 +1175,7 @@ async def get_board_filters():
     return {
         "groups": [{"id": g["id"], "title": g["title"]} for g in groups],
         "roles": role_names if role_names else (list(orch.roles.keys()) if orch.roles else []),
-        "statuses": ["blocked", "pending", "in_progress", "completed", "failed", "rejected"],
+        "statuses": ["backlog", "blocked", "pending", "in_progress", "review", "completed", "failed", "rejected", "cancelled"],
         "priorities": ["critical", "high", "medium", "low"],
     }
 

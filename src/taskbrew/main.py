@@ -929,7 +929,7 @@ async def async_main(args):
             # so it persists across server restarts
             if pm.orchestrator:
                 try:
-                    await asyncio.wait_for(pm.orchestrator.shutdown(), timeout=5.0)
+                    await asyncio.wait_for(pm.orchestrator.shutdown(), timeout=40.0)
                 except asyncio.TimeoutError:
                     logging.getLogger(__name__).warning("Orchestrator shutdown timed out")
                 except Exception:

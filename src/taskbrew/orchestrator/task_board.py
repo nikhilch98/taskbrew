@@ -1653,6 +1653,9 @@ class TaskBoard:
                 )
                 await self._release_agent_instances_for_task(task_id)
                 await self.reconcile_task_package(task_id)
+                if existing["status"] == "completed":
+                    await self._resolve_dependencies(task_id)
+                    await self._check_group_completion(task_id)
                 return completed_rows[0] if completed_rows else existing
             logger.warning(
                 "complete_task_with_output(%s) skipped: task is in status '%s', "
@@ -1684,14 +1687,14 @@ class TaskBoard:
 
         now = _utcnow()
         rows = await self._db.execute_returning(
-            "UPDATE tasks SET status = 'completed', review_status = 'approved', "
-            "rejection_reason = NULL "
+            "UPDATE tasks SET status = 'completed', completed_at = ?, "
+            "review_status = 'approved', rejection_reason = NULL "
             "WHERE id = ? AND status = 'review' AND review_status = 'pending' "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM task_dependencies "
             "  WHERE task_id = ? AND resolved = 0"
             ") RETURNING *",
-            (task_id, task_id),
+            (now, task_id, task_id),
         )
         if not rows:
             task = await self.get_task(task_id)
@@ -2470,11 +2473,16 @@ class TaskBoard:
         """Mark a task as rejected with a reason."""
         rows = await self._db.execute_returning(
             "UPDATE tasks SET status = 'rejected', rejection_reason = ? "
-            "WHERE id = ? RETURNING *",
+            "WHERE id = ? "
+            "AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected') "
+            "RETURNING *",
             (reason, task_id),
         )
         if not rows:
-            raise ValueError(f"Task not found: {task_id}")
+            existing = await self.get_task(task_id)
+            if existing is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return existing
         await self._release_agent_instances_for_task(task_id)
         await self._cascade_failure(task_id)
         await self.reconcile_task_package(task_id)
@@ -2558,6 +2566,7 @@ class TaskBoard:
                         "UPDATE tasks SET status = 'failed' WHERE id = ?",
                         (dep_task["id"],),
                     )
+                    await self.reconcile_task_package(dep_task["id"])
                     queue.append(dep_task["id"])
 
     async def _reject_waiting_revision_parent(
@@ -2659,7 +2668,7 @@ class TaskBoard:
 
         open_package = await self._db.execute_fetchone(
             "SELECT 1 FROM work_packages WHERE group_id = ? "
-            "AND status NOT IN ('completed', 'rejected') LIMIT 1",
+            "AND status NOT IN ('completed', 'rejected', 'failed') LIMIT 1",
             (group_id,),
         )
         if open_package:
@@ -2814,10 +2823,14 @@ class TaskBoard:
         newly_free = await self._db.execute_fetchall(
             "SELECT t.id, t.assigned_to, t.group_id FROM tasks t "
             "WHERE t.status = 'blocked' "
+            "  AND t.id IN ("
+            "    SELECT task_id FROM task_dependencies WHERE blocked_by = ?"
+            "  ) "
             "  AND NOT EXISTS ("
             "    SELECT 1 FROM task_dependencies d "
             "    WHERE d.task_id = t.id AND d.resolved = 0"
             "  )",
+            (completed_task_id,),
         )
         for row in newly_free:
             transitioned = await self._db.execute_returning(
@@ -3099,6 +3112,7 @@ class TaskBoard:
                 )
                 if task:
                     repaired.append(task)
+                    await self.reconcile_task_package(tid)
                     # Cascade further
                     await self._cascade_failure(tid)
 
@@ -3172,11 +3186,15 @@ class TaskBoard:
         now = _utcnow()
         rows = await self._db.execute_returning(
             "UPDATE tasks SET status = 'cancelled', completed_at = ?, "
-            "rejection_reason = ? WHERE id = ? RETURNING *",
+            "rejection_reason = ? WHERE id = ? "
+            "AND status NOT IN ('completed', 'failed', 'cancelled', 'rejected') RETURNING *",
             (now, reason, task_id),
         )
         if not rows:
-            raise ValueError(f"Task not found: {task_id}")
+            existing = await self.get_task(task_id)
+            if existing is None:
+                raise ValueError(f"Task not found: {task_id}")
+            return existing
         await self._release_agent_instances_for_task(task_id)
         await self._cascade_failure(task_id)
         await self.reconcile_task_package(task_id)
@@ -3268,7 +3286,7 @@ class TaskBoard:
 
         rows = await self._db.execute_returning(
             "UPDATE tasks SET status = 'pending', claimed_by = NULL, "
-            "completed_at = NULL WHERE id = ? RETURNING *",
+            "started_at = NULL, completed_at = NULL WHERE id = ? RETURNING *",
             (task_id,),
         )
         if not rows:

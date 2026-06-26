@@ -100,12 +100,12 @@ class AgentRunner:
         if self.event_bus is not None:
             tool_name = hook_input.get("tool_name", "")
             tool_input = hook_input.get("tool_input", {})
-            asyncio.create_task(self.event_bus.emit("tool.pre_use", {
+            await self.event_bus.emit("tool.pre_use", {
                 "agent_name": self.name,
                 "tool_name": tool_name,
                 "tool_input": str(tool_input)[:200],
                 "model": self.config.model,
-            }))
+            })
         return {"continue_": True}
 
     async def _on_post_tool_use(
@@ -114,11 +114,11 @@ class AgentRunner:
         """Hook callback for PostToolUse events. Emits tool.post_use to EventBus."""
         if self.event_bus is not None:
             tool_name = hook_input.get("tool_name", "")
-            asyncio.create_task(self.event_bus.emit("tool.post_use", {
+            await self.event_bus.emit("tool.post_use", {
                 "agent_name": self.name,
                 "tool_name": tool_name,
                 "model": self.config.model,
-            }))
+            })
         return {"continue_": True}
 
     def _estimate_tokens(self, text: str) -> int:
@@ -139,7 +139,7 @@ class AgentRunner:
         # Keep first 20% and last 60% (most recent context is most important)
         chars_limit = max_tokens * 4
         head_size = int(chars_limit * 0.2)
-        tail_size = int(chars_limit * 0.6)
+        tail_size = chars_limit - head_size
         return (
             context[:head_size]
             + "\n\n... [context trimmed] ...\n\n"

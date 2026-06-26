@@ -192,7 +192,7 @@ class AutoScaler:
                             "needed": needed,
                         })
                 self._active_extra[role_name] = (
-                    self._active_extra.get(role_name, 0) + spawned
+                    self._active_extra.get(role_name, 0) + needed
                 )
                 if spawned > 0:
                     self._record_scale(role_name, "up")
@@ -202,7 +202,7 @@ class AutoScaler:
             # (b) auto-spawned extras are idle with no pending work.
             extra = self._active_extra.get(role_name, 0)
             over_max = max(active_count - max_instances, 0)
-            want_down = max(extra, over_max)
+            want_down = over_max if pending_count > 0 else max(extra, over_max)
             allow_idle_only = pending_count == 0
             # When we're over the configured ceiling, scale down even
             # if there are pending tasks: the operator explicitly asked
@@ -233,10 +233,12 @@ class AutoScaler:
                         scale_down,
                     )
                     stopped = 0
+                    stopped_instances: list[dict] = []
                     if self._agent_stopper:
                         for inst in idle_instances[:scale_down]:
                             try:
                                 await self._agent_stopper(inst["instance_id"])
+                                stopped_instances.append(inst)
                                 stopped += 1
                                 logger.info("Auto-scaler stopped %s", inst["instance_id"])
                             except Exception:
@@ -258,7 +260,7 @@ class AutoScaler:
                     # number that were genuinely auto-spawned. Base
                     # instances we terminated for over_max do not count.
                     auto_stopped = sum(
-                        1 for inst in idle_instances[:scale_down]
+                        1 for inst in stopped_instances
                         if "-auto-" in inst["instance_id"]
                     )
                     self._active_extra[role_name] = max(0, extra - auto_stopped)

@@ -120,7 +120,10 @@ class MergeBroker:
             fd = os.open(str(self._lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError as exc:
             if self._remove_stale_repo_lock():
-                fd = os.open(str(self._lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                try:
+                    fd = os.open(str(self._lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                except FileExistsError as exc2:
+                    raise BlockingIOError(str(self._lock_path)) from exc2
             else:
                 raise BlockingIOError(str(self._lock_path)) from exc
         try:
@@ -195,6 +198,7 @@ class MergeBroker:
                 refresh_plan=refresh_plan,
             )
             if refresh["status"] != "ok":
+                await self._restore_prepared_stash(refresh_plan)
                 return {
                     "status": "root_refresh_blocked",
                     "details": refresh["details"],
@@ -267,6 +271,7 @@ class MergeBroker:
                 refresh_plan=refresh_plan,
             )
             if refresh["status"] != "ok":
+                await self._restore_prepared_stash(refresh_plan)
                 return {
                     "status": "root_refresh_blocked",
                     "details": refresh["details"],

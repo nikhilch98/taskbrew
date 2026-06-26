@@ -1324,7 +1324,7 @@ class SystemGateManager:
             return revisions
         assigned_to = original.get("assigned_to") or "pm"
         normalized: list[RevisionRequest] = []
-        for index, revision in enumerate(revisions, start=1):
+        for revision in revisions:
             normalized.append(
                 RevisionRequest(
                     title=revision.title or f"Revise planning output for {original['id']}",

@@ -134,7 +134,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         req = urllib.request.Request(
             f"{api_url}/api/work-packages",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=_json_headers(),
             method="POST",
         )
         try:
@@ -179,7 +179,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         req = urllib.request.Request(
             f"{api_url}/api/work-packages/{work_package_id}",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=_json_headers(),
             method="PATCH",
         )
         try:
@@ -289,7 +289,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         req = urllib.request.Request(
             f"{api_url}/api/tasks",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=_json_headers(),
             method="POST",
         )
         try:
@@ -334,7 +334,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         url = f"{api_url}/api/board"
         if query:
             url += f"?{query}"
-        req = urllib.request.Request(url, method="GET")
+        req = urllib.request.Request(url, headers=_json_headers(), method="GET")
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read())
@@ -501,7 +501,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         req = urllib.request.Request(
             f"{api_url}/api/tasks/{task_id}",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=_json_headers(),
             method="PATCH",
         )
         try:
@@ -547,7 +547,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         req = urllib.request.Request(
             f"{api_url}/api/messages",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=_json_headers(),
             method="POST",
         )
         try:
@@ -602,7 +602,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         req = urllib.request.Request(
             f"{api_url}/mcp/tools/ask_question",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=_json_headers(),
             method="POST",
         )
         try:
@@ -652,7 +652,7 @@ def build_task_tools_server(api_url: str = "http://127.0.0.1:8420") -> FastMCP:
         req = urllib.request.Request(
             f"{api_url}/api/escalations",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=_json_headers(),
             method="POST",
         )
         try:

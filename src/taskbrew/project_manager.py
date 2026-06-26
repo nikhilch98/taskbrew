@@ -643,13 +643,26 @@ class ProjectManager:
                 f"config/team.yaml not found in project directory: {project_dir}"
             )
 
+        # Snapshot the previously active project so the registry entry can be
+        # restored if the new build fails and leaves the system orchestrator-less.
+        previous_data = self._read_registry()
+        previous_active_id = previous_data.get("active_project")
+
         # Deactivate current project if any
         await self.deactivate_current()
 
         # Build orchestrator (import here to avoid circular imports)
         from taskbrew.main import build_orchestrator
 
-        self.orchestrator = await build_orchestrator(project_dir=project_dir)
+        try:
+            self.orchestrator = await build_orchestrator(project_dir=project_dir)
+        except Exception:
+            if previous_active_id is not None:
+                try:
+                    self.set_active(previous_active_id)
+                except KeyError:
+                    pass
+            raise
 
         # Update registry
         self.set_active(project_id)
