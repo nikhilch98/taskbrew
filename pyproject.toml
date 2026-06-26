@@ -36,6 +36,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional context-compression layer (Headroom). Pinned and lightweight:
+# the core SmartCrusher/JSON + CacheAligner path needs no torch and runs
+# from the prebuilt wheel. Quarantined behind a feature flag + lazy import
+# in taskbrew.intelligence.compression, so the system runs unchanged when
+# this extra is not installed.
+compression = [
+    "headroom-ai==0.27.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",

@@ -14,6 +14,7 @@ from taskbrew.agents.provider import (
     sdk_query,
 )
 from taskbrew.config import AgentConfig
+from taskbrew.intelligence.compression import compress_text_async
 
 if TYPE_CHECKING:
     from taskbrew.orchestrator.event_bus import EventBus
@@ -177,7 +178,25 @@ class AgentRunner:
         options = self.build_options(cwd=cwd)
         result_text = ""
 
-        # Apply context trimming before sending to the SDK
+        # Optional semantic compression (Headroom) before the hard trim.
+        # Disabled by default and fully fail-safe: a no-op unless
+        # TASKBREW_COMPRESSION is set and the optional dependency is
+        # installed. Runs at this single provider-agnostic chokepoint so
+        # Claude/Codex/Gemini all benefit. See intelligence.compression.
+        prompt, _comp = await compress_text_async(prompt, model=self.config.model)
+        if _comp is not None and self.event_bus is not None:
+            await self.event_bus.emit("context.compressed", {
+                "agent_name": self.name,
+                "tokens_before": _comp.tokens_before,
+                "tokens_after": _comp.tokens_after,
+                "tokens_saved": _comp.tokens_saved,
+                "ratio": round(_comp.ratio, 3),
+                "transforms": _comp.transforms,
+                "model": self.config.model,
+            })
+
+        # Apply context trimming before sending to the SDK (final hard cap;
+        # a no-op when the prompt already fits).
         prompt = self._trim_context(prompt)
 
         try:
