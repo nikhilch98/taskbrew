@@ -17,6 +17,38 @@ def test_build_mcp_dict_builtin():
     assert "taskbrew.tools.task_tools" in result["task-tools"]["args"]
 
 
+def test_build_mcp_dict_threads_project_id():
+    """agent_project must land in the builtin server env as TASKBREW_PROJECT_ID.
+
+    This is the client half of the concurrent-scoping seam: the subprocess only
+    knows which project it serves via this env var, which task_tools turns into
+    the X-Taskbrew-Project callback header. If this threading breaks, agents send
+    no header and every callback silently falls through to the focused project.
+    """
+    from taskbrew.agents.provider import _build_mcp_dict
+    servers = {
+        "task-tools": MCPServerConfig(builtin=True),
+    }
+    result = _build_mcp_dict(
+        servers,
+        api_url="http://localhost:8420",
+        db_path="data/test.db",
+        agent_project="alpha-proj",
+    )
+    assert result["task-tools"]["env"]["TASKBREW_PROJECT_ID"] == "alpha-proj"
+
+
+def test_build_mcp_dict_omits_project_id_when_unset():
+    """Without agent_project, no TASKBREW_PROJECT_ID is injected (single-project
+    runs must not carry a stale scope)."""
+    from taskbrew.agents.provider import _build_mcp_dict
+    servers = {
+        "task-tools": MCPServerConfig(builtin=True),
+    }
+    result = _build_mcp_dict(servers, api_url="http://localhost:8420", db_path="data/test.db")
+    assert "TASKBREW_PROJECT_ID" not in result["task-tools"]["env"]
+
+
 def test_build_mcp_dict_builtin_threads_tool_policy():
     """Built-in MCP tools should enforce the role's declared allowlist."""
     from taskbrew.agents.provider import _build_mcp_dict

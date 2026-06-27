@@ -144,7 +144,15 @@ class Orchestrator:
 
     def __init__(self, db, task_board, event_bus, artifact_store, instance_manager,
                  roles, team_config, project_dir, worktree_manager, memory_manager=None,
-                 context_registry=None):
+                 context_registry=None, project_id=None):
+        # Stable identity shared by the registry id, the _deps pool key, the
+        # X-Taskbrew-Project header, and the TASKBREW_PROJECT_ID env exported to
+        # each agent's MCP subprocess. Lets several projects run concurrently in
+        # one dashboard without cross-writing each other's databases.
+        self.project_id = project_id
+        # Per-project interaction manager (manual/first-run approval store).
+        # Set in build_orchestrator; resolved per-request by the MCP layer.
+        self.interaction_manager = None
         self.db = db
         self.task_board = task_board
         self.event_bus = event_bus
@@ -285,8 +293,19 @@ class Orchestrator:
             self._logger.exception("Error closing database")
 
 
-async def build_orchestrator(project_dir: Path | None = None, cli_path: str | None = None) -> Orchestrator:
+async def build_orchestrator(
+    project_dir: Path | None = None,
+    cli_path: str | None = None,
+    project_id: str | None = None,
+) -> Orchestrator:
     project_dir = project_dir or Path.cwd()
+    if not project_id:
+        # Standalone/test callers may omit the registry id; derive a stable
+        # slug from the directory name. Real callers (activate_project /
+        # start_project) always pass the registry id so it matches the pool
+        # key and the X-Taskbrew-Project header agents send.
+        from taskbrew.project_manager import _slugify
+        project_id = _slugify(project_dir.name)
     config_dir = project_dir / "config"
 
     # Load configs
@@ -373,7 +392,13 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
         worktree_manager=worktree_manager,
         memory_manager=memory_manager,
         context_registry=context_registry,
+        project_id=project_id,
     )
+
+    # Per-project interaction manager so manual/first-run approval requests are
+    # stored in *this* project's database, not whichever project is focused.
+    from taskbrew.orchestrator.interactions import InteractionManager
+    orch.interaction_manager = InteractionManager(db)
 
     from taskbrew.orchestrator.merge_broker import MergeBroker
     from taskbrew.orchestrator.merge_queue import MergeQueue
@@ -411,6 +436,7 @@ async def build_orchestrator(project_dir: Path | None = None, cli_path: str | No
             project_dir=project_dir,
             api_url=f"http://{connect_host}:{team_config.dashboard_port}",
             instance_name=f"system-agent-{index}",
+            project_id=project_id,
         )
         analyzer = AgentRunnerSystemGateAnalyzer(
             config=system_agent_config,
@@ -701,6 +727,7 @@ async def start_agents(orch: Orchestrator, *, start_paused: bool = True):
                 project_dir=orch.project_dir,
                 poll_interval=orch.team_config.default_poll_interval,
                 api_url=api_url,
+                project_id=getattr(orch, "project_id", None),
                 worktree_manager=orch.worktree_manager if needs_worktree else None,
                 memory_manager=orch.memory_manager,
                 context_registry=orch.context_registry,
@@ -739,6 +766,7 @@ async def start_agents(orch: Orchestrator, *, start_paused: bool = True):
                 project_dir=orch.project_dir,
                 poll_interval=orch.team_config.default_poll_interval,
                 api_url=api_url,
+                project_id=getattr(orch, "project_id", None),
                 worktree_manager=orch.worktree_manager if needs_worktree else None,
                 memory_manager=orch.memory_manager,
                 context_registry=orch.context_registry,
@@ -920,15 +948,24 @@ async def async_main(args):
                 auto_resume_project_id=auto_resume_project_id,
             )
         finally:
-            # Shut down the orchestrator but DON'T clear the active project
-            # so it persists across server restarts
-            if pm.orchestrator:
+            # Shut down EVERY running orchestrator (focus one, run many) but
+            # DON'T clear the active project so it persists across restarts.
+            # Guarded getattr keeps the legacy/test ProjectManager doubles
+            # (which expose only ``.orchestrator``) working unchanged.
+            running = []
+            _getter = getattr(pm, "running_orchestrators", None)
+            if callable(_getter):
+                running = list(_getter().values())
+            elif pm.orchestrator:
+                running = [pm.orchestrator]
+            for _orch in running:
                 try:
-                    await asyncio.wait_for(pm.orchestrator.shutdown(), timeout=40.0)
+                    await asyncio.wait_for(_orch.shutdown(), timeout=40.0)
                 except asyncio.TimeoutError:
                     logging.getLogger(__name__).warning("Orchestrator shutdown timed out")
                 except Exception:
                     logging.getLogger(__name__).exception("Error during orchestrator shutdown")
+            if pm.orchestrator:
                 pm.orchestrator = None
 
     elif args.command == "goal":

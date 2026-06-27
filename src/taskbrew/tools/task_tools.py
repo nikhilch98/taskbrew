@@ -28,6 +28,9 @@ from taskbrew.tools._tool_gating import gate_or_error
 # compromised agent could attribute task creation to another role.
 _ENV_ROLE = "TASKBREW_AGENT_ROLE"
 _ENV_INSTANCE = "TASKBREW_AGENT_INSTANCE"
+# Project scoping: set by the parent orchestrator so callbacks from this agent
+# resolve their own project's orchestrator when several run concurrently.
+_ENV_PROJECT = "TASKBREW_PROJECT_ID"
 
 
 def _dashboard_auth_token() -> str:
@@ -57,6 +60,13 @@ def _json_headers(*, require_auth: bool = False) -> dict[str, str]:
         headers["Authorization"] = f"Bearer {token}"
     elif require_auth:
         headers["Authorization"] = "Bearer task-tools"
+    # Project scoping: the parent exports TASKBREW_PROJECT_ID per agent so that,
+    # when several projects run concurrently in one dashboard, this agent's HTTP
+    # callbacks resolve *its own* project's orchestrator (via the
+    # _project_scope middleware) instead of whichever project is focused.
+    project_id = os.environ.get(_ENV_PROJECT)
+    if project_id:
+        headers["X-Taskbrew-Project"] = project_id
     return headers
 
 

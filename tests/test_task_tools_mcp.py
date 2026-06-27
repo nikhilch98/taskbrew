@@ -2,7 +2,23 @@
 
 import json
 
-from taskbrew.tools.task_tools import build_task_tools_server
+from taskbrew.tools.task_tools import _json_headers, build_task_tools_server
+
+
+def test_json_headers_emit_project_scope_when_env_set(monkeypatch):
+    """The other half of the concurrent-scoping seam: TASKBREW_PROJECT_ID in the
+    subprocess env must surface as the X-Taskbrew-Project header so this agent's
+    callbacks resolve its own project, not whichever one is focused."""
+    monkeypatch.setenv("TASKBREW_PROJECT_ID", "beta-proj")
+    headers = _json_headers()
+    assert headers["X-Taskbrew-Project"] == "beta-proj"
+
+
+def test_json_headers_omit_project_scope_when_env_unset(monkeypatch):
+    """No env var → no scoping header (single-project callbacks stay unscoped)."""
+    monkeypatch.delenv("TASKBREW_PROJECT_ID", raising=False)
+    headers = _json_headers()
+    assert "X-Taskbrew-Project" not in headers
 
 
 def test_complete_task_tool_accepts_artifact_metadata():

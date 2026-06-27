@@ -178,9 +178,13 @@ class TestStaticBypassAuth:
     """Template pages should be accessible even when auth is enabled."""
 
     async def test_index_accessible_without_auth(self, auth_client):
-        """GET / (index template) should not require authentication."""
+        """GET / (default landing) must not require auth; it redirects to the
+        /home calm console, which is also accessible without auth."""
         resp = await auth_client["client"].get("/")
-        assert resp.status_code == 200
+        assert resp.status_code in (302, 307)
+        assert resp.headers["location"] == "/home"
+        resp2 = await auth_client["client"].get("/home")
+        assert resp2.status_code == 200
 
     async def test_metrics_accessible_without_auth(self, auth_client):
         """GET /metrics should not require authentication."""

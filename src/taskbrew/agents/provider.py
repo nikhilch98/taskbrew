@@ -63,6 +63,7 @@ def _build_mcp_dict(
     allowed_tools: list[str] | None = None,
     agent_role: str | None = None,
     agent_instance: str | None = None,
+    agent_project: str | None = None,
 ) -> dict[str, dict]:
     """Convert MCPServerConfig objects into SDK-compatible dicts."""
     env_sources = {"api_url": api_url, "db_path": db_path}
@@ -74,6 +75,8 @@ def _build_mcp_dict(
         policy_env["TASKBREW_AGENT_ROLE"] = agent_role
     if agent_instance:
         policy_env["TASKBREW_AGENT_INSTANCE"] = agent_instance
+    if agent_project:
+        policy_env["TASKBREW_PROJECT_ID"] = agent_project
     result = {}
     for name, cfg in servers.items():
         if cfg.builtin and name in _BUILTIN_MCP_SERVERS:
@@ -222,6 +225,7 @@ def build_sdk_options(
     mcp_servers: dict[str, MCPServerConfig] | None = None,
     agent_role: str | None = None,
     agent_instance: str | None = None,
+    agent_project: str | None = None,
 ) -> Any:
     """Build SDK options for the given provider.
 
@@ -241,6 +245,7 @@ def build_sdk_options(
                 allowed_tools=allowed_tools,
                 agent_role=agent_role,
                 agent_instance=agent_instance,
+                agent_project=agent_project,
             ),
             reasoning_effort=reasoning_effort,
         )
@@ -270,6 +275,7 @@ def build_sdk_options(
             allowed_tools=allowed_tools,
             agent_role=agent_role,
             agent_instance=agent_instance,
+            agent_project=agent_project,
         ),
     )
     if model:

@@ -45,6 +45,7 @@ def build_system_agent_config(
     project_dir: Path | str | None = None,
     api_url: str = "http://127.0.0.1:8420",
     instance_name: str = "system",
+    project_id: str | None = None,
 ) -> AgentConfig:
     """Build the immutable admin agent config for project-wide AI features."""
     cli_provider = getattr(team_config, "cli_provider", "codex") or "codex"
@@ -62,6 +63,7 @@ def build_system_agent_config(
         cwd=cwd,
         permission_mode="default",
         api_url=api_url,
+        project_id=project_id,
         db_path=getattr(team_config, "db_path", "data/tasks.db"),
         cli_provider=profile["provider"],
         mcp_servers=getattr(team_config, "mcp_servers", None),

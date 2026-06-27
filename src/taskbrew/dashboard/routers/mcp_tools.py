@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Header
 from typing import Optional
 
 from taskbrew.dashboard.artifact_ingest import ingest_artifact_paths
+from taskbrew.dashboard.routers._deps import get_current_project
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -64,6 +65,57 @@ def set_mcp_deps(
     _orchestrator_getter = orchestrator_getter
 
 
+# ----------------------------------------------------------------------
+# Per-request resolution. When several projects run concurrently, an agent's
+# MCP callbacks carry an X-Taskbrew-Project header; the _project_scope
+# middleware binds it so _orchestrator_getter() (contextvar-aware) returns the
+# *agent's own* orchestrator. These helpers prefer that orchestrator's
+# components and fall back to the fixed startup globals (which is what tests,
+# and any caller without a header, rely on).
+#
+# Crucial asymmetry: the global fallback is allowed ONLY for headerless
+# (human-dashboard) requests. A request that carried an explicit
+# X-Taskbrew-Project header which did NOT resolve to a live component returns
+# None (-> handler 503, no write) instead of falling back. Otherwise a stale
+# header -- e.g. a fire-and-forget agent callback arriving just after its
+# project was stopped/unregistered -- would silently cross-write the
+# boot/focused project's database (sharpened by task-id collisions across
+# projects). See tests/test_concurrent_callback_isolation.py.
+# ----------------------------------------------------------------------
+
+def _resolve_orch():
+    return _orchestrator_getter() if _orchestrator_getter else None
+
+
+def _header_scoped() -> bool:
+    """True when this request carried an explicit X-Taskbrew-Project header."""
+    return get_current_project() is not None
+
+
+def _resolve_task_board():
+    orch = _resolve_orch()
+    board = getattr(orch, "task_board", None) if orch else None
+    if board is not None:
+        return board
+    return None if _header_scoped() else _task_board
+
+
+def _resolve_event_bus():
+    orch = _resolve_orch()
+    bus = getattr(orch, "event_bus", None) if orch else None
+    if bus is not None:
+        return bus
+    return None if _header_scoped() else _event_bus
+
+
+def _resolve_interaction_mgr():
+    orch = _resolve_orch()
+    mgr = getattr(orch, "interaction_manager", None) if orch else None
+    if mgr is not None:
+        return mgr
+    return None if _header_scoped() else _interaction_mgr
+
+
 def _get_token(authorization: Optional[str] = Header(None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing or invalid Authorization header")
@@ -107,9 +159,9 @@ async def _ingest_artifact_paths(
 
     Returns the list of basenames successfully ingested.
     """
-    orch = _orchestrator_getter() if _orchestrator_getter else None
+    orch = _resolve_orch()
     return await ingest_artifact_paths(
-        task_board=_task_board,
+        task_board=_resolve_task_board(),
         orch=orch,
         task_id=task_id,
         group_id=group_id,
@@ -131,6 +183,11 @@ async def mcp_complete_task(
     agent_role = body.get("agent_role", "")
     approval_mode = body.get("approval_mode", "auto")
 
+    # Resolve the agent's own project (via the X-Taskbrew-Project header) so a
+    # concurrently-running project is never completed against the focused one.
+    task_board = _resolve_task_board()
+    interaction_mgr = _resolve_interaction_mgr()
+
     # Ingest declared artifact_paths into the artifact_store regardless
     # of approval mode, so the dashboard's artifact viewer can find them
     # later even after the worktree resets between tasks. Done before
@@ -141,9 +198,9 @@ async def mcp_complete_task(
 
     if approval_mode == "auto":
         # Actually mark the task as completed in the DB and resolve deps
-        if _task_board:
+        if task_board:
             try:
-                await _task_board.complete_task_with_output(task_id, summary)
+                await task_board.complete_task_with_output(task_id, summary)
                 logger.info("Task %s auto-completed via MCP", task_id)
             except ValueError:
                 logger.warning("Task %s not found or not in_progress for auto-complete", task_id)
@@ -153,14 +210,14 @@ async def mcp_complete_task(
             "ingested_artifacts": ingested,
         }
 
-    if approval_mode == "first_run" and _interaction_mgr:
-        already_approved = await _interaction_mgr.check_first_run(group_id, agent_role)
+    if approval_mode == "first_run" and interaction_mgr:
+        already_approved = await interaction_mgr.check_first_run(group_id, agent_role)
         if already_approved:
             return {"status": "approved", "message": "First-run already approved for this group"}
 
     # Create approval interaction request
-    if _interaction_mgr:
-        req = await _interaction_mgr.create_request(
+    if interaction_mgr:
+        req = await interaction_mgr.create_request(
             task_id=task_id, group_id=group_id, agent_role=agent_role,
             instance_token=token, req_type="approval",
             request_data={"artifact_paths": artifact_paths, "summary": summary},
@@ -185,8 +242,9 @@ async def mcp_request_clarification(
     group_id = body.get("group_id", "")
     agent_role = body.get("agent_role", "")
 
-    if _interaction_mgr:
-        req = await _interaction_mgr.create_request(
+    interaction_mgr = _resolve_interaction_mgr()
+    if interaction_mgr:
+        req = await interaction_mgr.create_request(
             task_id=task_id, group_id=group_id, agent_role=agent_role,
             instance_token=token, req_type="clarification",
             request_data={"question": question, "context": context, "suggested_options": suggested_options},
@@ -251,9 +309,10 @@ async def mcp_ask_question(
 
     used = await qmgr.count_for_task(task_id, agent_role)
     if used >= budget:
-        if _event_bus is not None:
+        event_bus = _resolve_event_bus()
+        if event_bus is not None:
             try:
-                await _event_bus.emit(
+                await event_bus.emit(
                     "task.clarification_budget_exhausted",
                     {
                         "task_id": task_id, "group_id": group_id,
@@ -271,9 +330,10 @@ async def mcp_ask_question(
     # MCP layer doesn't authenticate identity, so we trust the task
     # row's claimed_by as the agent's instance_id.
     instance_id = None
-    if _task_board is not None:
+    task_board = _resolve_task_board()
+    if task_board is not None:
         try:
-            row = await _task_board.get_task(task_id)
+            row = await task_board.get_task(task_id)
             if row:
                 instance_id = row.get("claimed_by")
         except Exception:
@@ -356,7 +416,8 @@ async def mcp_route_task(
     parent_id = body.get("parent_id") or blocked_by_task
     blocked_by = [blocked_by_task] if blocked_by_task else None
 
-    if _task_board:
+    task_board = _resolve_task_board()
+    if task_board:
         if (
             agent_role == "architect"
             and target_agent == "coder"
@@ -369,7 +430,7 @@ async def mcp_route_task(
             )
 
         if target_agent == "verifier" and parent_id:
-            existing_vr = await _task_board._db.execute_fetchone(
+            existing_vr = await task_board._db.execute_fetchone(
                 "SELECT id FROM tasks "
                 "WHERE parent_id = ? AND assigned_to = 'verifier' "
                 "AND status != 'cancelled' LIMIT 1",
@@ -382,7 +443,7 @@ async def mcp_route_task(
                     f"'{parent_id}' ({existing_vr['id']}).",
                 )
 
-        task = await _task_board.create_task(
+        task = await task_board.create_task(
             group_id=group_id or "",
             title=title,
             description=description or None,
@@ -493,10 +554,11 @@ async def mcp_record_check(
                     f"of at most {_MAX_ARTIFACT_PATH_LEN} chars",
                 )
 
-    if not _task_board:
+    task_board = _resolve_task_board()
+    if not task_board:
         raise HTTPException(503, "task_board not configured")
 
-    db = _task_board._db
+    db = task_board._db
     existing = await db.execute_fetchone(
         "SELECT completion_checks, group_id FROM tasks WHERE id = ?",
         (task_id,),
@@ -533,9 +595,10 @@ async def mcp_record_check(
         (json.dumps(current), task_id),
     )
 
-    if _event_bus:
+    event_bus = _resolve_event_bus()
+    if event_bus:
         try:
-            await _event_bus.emit(
+            await event_bus.emit(
                 "task.check_recorded",
                 {"task_id": task_id, "check_name": check_name, "status": status},
             )
@@ -574,8 +637,9 @@ async def mcp_get_connections(
 async def mcp_poll(request_id: str, authorization: Optional[str] = Header(None)):
     """Long-poll endpoint. Returns current status of an interaction request."""
     _get_token(authorization)
-    if _interaction_mgr:
-        req = await _interaction_mgr.check_status(request_id)
+    interaction_mgr = _resolve_interaction_mgr()
+    if interaction_mgr:
+        req = await interaction_mgr.check_status(request_id)
         if not req:
             raise HTTPException(404, f"Request not found: {request_id}")
         return {"status": req["status"], "response_data": req.get("response_data")}

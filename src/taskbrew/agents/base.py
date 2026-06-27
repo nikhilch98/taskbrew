@@ -92,6 +92,7 @@ class AgentRunner:
             mcp_servers=self.config.mcp_servers,
             agent_role=self.config.role,
             agent_instance=self.config.name,
+            agent_project=getattr(self.config, "project_id", None),
         )
 
     async def _on_pre_tool_use(

@@ -20,6 +20,11 @@ class AgentConfig:
     db_path: str = "data/tasks.db"
     cli_provider: str = "claude"
     mcp_servers: dict | None = None
+    # Identifies which project this agent belongs to. Exported to the MCP
+    # subprocess as TASKBREW_PROJECT_ID so the agent's HTTP callbacks carry an
+    # X-Taskbrew-Project header and resolve their own project's orchestrator
+    # when several projects run concurrently.
+    project_id: str | None = None
 
 
 @dataclass

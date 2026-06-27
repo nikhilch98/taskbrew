@@ -136,11 +136,45 @@ async def project_status():
         return {"has_manager": False, "has_projects": False, "active": None}
     projects = _project_manager.list_projects()
     active = _project_manager.get_active()
+    # Header-aware active: a project-scoped page reports its own project as
+    # active so its chrome matches its data (see /api/projects/active).
+    from taskbrew.dashboard.routers._deps import get_current_project
+    _scoped_pid = get_current_project()
+    if _scoped_pid:
+        for _p in projects:
+            if _p["id"] == _scoped_pid:
+                active = _p
+                break
+    # Per-project runtime from the live orchestrator pool: which projects are
+    # running concurrently, which one is focused, and each one's paused roles.
+    # The home tiles use this to render real Start/Pause/Resume state per card.
+    from taskbrew.dashboard.routers._deps import (
+        get_all_orchestrators,
+        get_focused_project,
+    )
+    pool = get_all_orchestrators()
+    focused = get_focused_project()
+    runtime: dict[str, dict] = {}
+    for pid, orch in pool.items():
+        paused_roles: list[str] = []
+        try:
+            paused_roles = list(orch.instance_manager.get_paused_roles())
+        except Exception:
+            paused_roles = []
+        runtime[pid] = {
+            "running": True,
+            "focused": pid == focused,
+            "paused_roles": paused_roles,
+            "paused": len(paused_roles) > 0,
+        }
     return {
         "has_manager": True,
         "has_projects": len(projects) > 0,
         "project_count": len(projects),
         "active": active,
+        "running": list(pool.keys()),
+        "focused": focused,
+        "runtime": runtime,
     }
 
 
@@ -266,10 +300,92 @@ async def activate_project_endpoint(project_id: str):
     return {"status": "ok", "project": _project_manager.get_active()}
 
 
+@router.post("/api/projects/{project_id}/start")
+async def start_project_endpoint(project_id: str):
+    """Start a project concurrently WITHOUT stopping any other running project.
+
+    "Focus one, run many": several isolated projects run at once. The newly
+    started project becomes focused. Idempotent — starting an already-running
+    project just focuses it and resumes its agents (the home "play" button).
+    """
+    if not _project_manager:
+        raise HTTPException(500, "Project manager not initialized")
+    already_running = _project_manager.is_running(project_id)
+    auto_resume = False
+    try:
+        if not already_running:
+            auto_resume = _project_manager.should_auto_resume_on_activate(project_id)
+        orch = await _project_manager.start_project(project_id, focus=True)
+    except KeyError:
+        raise HTTPException(404, f"Project '{project_id}' not found")
+    except FileNotFoundError as e:
+        raise HTTPException(410, str(e))
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+    # Focus this project's orchestrator for the dashboard's detail views and
+    # register it in the _deps pool so its agent callbacks resolve correctly.
+    set_orchestrator(orch)
+
+    if already_running:
+        # Agents already spawned — the user clicked play to un-pause them.
+        try:
+            orch.instance_manager.resume_all()
+            await orch.event_bus.emit("team.resumed", {})
+        except Exception:
+            pass
+        return {"status": "ok", "project": _project_manager.get_active()}
+
+    # First start: subscribe events + spawn agents (paused unless first-run).
+    if _broadcast_event:
+        orch.event_bus.subscribe("*", _broadcast_event)
+    from taskbrew.main import start_agents
+    await start_agents(orch, start_paused=not auto_resume)
+    if auto_resume:
+        _project_manager.mark_auto_resume_consumed(project_id)
+    return {"status": "ok", "project": _project_manager.get_active()}
+
+
+@router.post("/api/projects/{project_id}/stop")
+async def stop_project_endpoint(project_id: str):
+    """Stop a running project: shut down its agents and orchestrator."""
+    if not _project_manager:
+        raise HTTPException(500, "Project manager not initialized")
+    await _project_manager.stop_project(project_id)
+    # Keep the _deps pool mirrored: drop the stopped project, then re-sync the
+    # focused reference to whatever ProjectManager now considers focused.
+    from taskbrew.dashboard.routers._deps import unregister_orchestrator
+    unregister_orchestrator(project_id)
+    set_orchestrator(_project_manager.orchestrator)
+    return {"status": "ok"}
+
+
+@router.post("/api/projects/{project_id}/focus")
+async def focus_project_endpoint(project_id: str):
+    """Focus an already-running project for the dashboard's detail views."""
+    if not _project_manager:
+        raise HTTPException(500, "Project manager not initialized")
+    try:
+        orch = _project_manager.focus_project(project_id)
+    except KeyError:
+        raise HTTPException(409, f"Project '{project_id}' is not running")
+    set_orchestrator(orch)
+    return {"status": "ok", "project": _project_manager.get_active()}
+
+
 @router.get("/api/projects/active")
 async def get_active_project():
     if not _project_manager:
         return None
+    # Header-aware: a project-scoped page (X-Taskbrew-Project) reports THAT
+    # project as active so the detail page's chrome (dropdown, identity) matches
+    # the board data it is showing. Unscoped requests get the focused project.
+    from taskbrew.dashboard.routers._deps import get_current_project
+    pid = get_current_project()
+    if pid:
+        for p in _project_manager.list_projects():
+            if p["id"] == pid:
+                return p
     return _project_manager.get_active()
 
 

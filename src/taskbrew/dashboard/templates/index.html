@@ -5,6 +5,54 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TaskBrew Dashboard</title>
+    <script>
+    /* Project scoping (home redesign): when this page is opened as
+       ?project=<id>, transparently tag every same-origin /api/ request with the
+       X-Taskbrew-Project header so the dashboard resolves THIS project (running,
+       or a read-only idle view of its DB when stopped) instead of the focused
+       one. This scopes the whole page without editing each fetch() call.
+       NOTE: WebSocket live updates are not header-scoped yet (separate pass);
+       data is correct on load and on each poll/refresh. */
+    (function(){
+      var pid = null;
+      try{ pid = new URLSearchParams(window.location.search).get('project'); }catch(e){}
+      // Persist scope per-tab: index.html strips ?project from the URL via
+      // history.replaceState, so a reload would otherwise lose the scope and
+      // revert to the focused project. sessionStorage keeps the page scoped.
+      try{
+        if(pid) sessionStorage.setItem('tb_scope_project', pid);
+        else pid = sessionStorage.getItem('tb_scope_project');
+      }catch(e){}
+      if(!pid) return;
+      window.__TB_PROJECT__ = pid;
+      var _fetch = window.fetch.bind(window);
+      window.fetch = function(input, init){
+        try{
+          var raw = (typeof input === 'string') ? input : (input && input.url) || '';
+          var u = new URL(raw, window.location.origin);
+          if(u.origin === window.location.origin && u.pathname.lastIndexOf('/api/', 0) === 0){
+            init = init || {};
+            var h = new Headers(init.headers || (typeof input !== 'string' && input.headers) || {});
+            if(!h.has('X-Taskbrew-Project')) h.set('X-Taskbrew-Project', pid);
+            init.headers = h;
+          }
+        }catch(e){}
+        return _fetch(input, init);
+      };
+      /* Preserve scope across internal navigation to other detail pages. */
+      document.addEventListener('DOMContentLoaded', function(){
+        try{
+          var as = document.querySelectorAll('a[href]');
+          for(var i=0;i<as.length;i++){
+            var a = as[i], href = a.getAttribute('href') || '';
+            if(/^\/(advanced|metrics|settings|costs|questions|trace)(\b|\/|\?|$)/.test(href) && href.indexOf('project=')===-1){
+              a.setAttribute('href', href + (href.indexOf('?')===-1?'?':'&') + 'project=' + encodeURIComponent(pid));
+            }
+          }
+        }catch(e){}
+      });
+    })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">

@@ -40,7 +40,13 @@ async def mcp_env(tmp_path):
     # Mock orchestrator that exposes just the surface mcp_tools cares
     # about: project_dir, team_config, artifact_store, worktree_manager.
     orch = MagicMock()
+    # mcp_tools now resolves task_board/event_bus/interaction_manager from the
+    # (contextvar-aware) orchestrator getter, mirroring the real Orchestrator
+    # which carries these. Set them explicitly so the bare MagicMock doesn't
+    # auto-vivify them as truthy Mocks and shadow the real components.
     orch.project_dir = str(project_dir)
+    orch.task_board = board
+    orch.interaction_manager = None
     orch.event_bus = event_bus
     orch.team_config = MagicMock()
     orch.team_config.artifacts_base_dir = "artifacts"

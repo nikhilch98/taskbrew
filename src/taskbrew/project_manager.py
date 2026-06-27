@@ -312,7 +312,48 @@ class ProjectManager:
 
     def __init__(self, registry_path: Path | None = None) -> None:
         self.registry_path = registry_path or DEFAULT_REGISTRY_PATH
-        self.orchestrator = None
+        # Pool of concurrently-running orchestrators keyed by project_id, plus
+        # the id of the project the dashboard is currently focused on. The
+        # legacy ``self.orchestrator`` attribute is preserved as a property
+        # returning the focused orchestrator, with a setter for back-compat so
+        # existing single-project callers (and tests) keep working unchanged.
+        self._orchestrators: dict[str, object] = {}
+        self._focused_id: str | None = None
+        # Read-only "idle views": full orchestrators built WITHOUT starting
+        # agents, so a registered-but-not-running project's board/detail pages
+        # can be served from its own database without starting it. Keyed by
+        # project_id, distinct from the running pool above (these never count as
+        # "running"). Built lazily on first scoped request; dropped when the
+        # project actually starts. See get_readonly_cached / ensure_readonly_view.
+        self._readonly_views: dict[str, object] = {}
+        self._readonly_lock = None
+
+    @staticmethod
+    def _pid_of(orch) -> str:
+        """Stable pool key for *orch* (real orchestrators carry project_id;
+        test doubles may not)."""
+        pid = getattr(orch, "project_id", None)
+        return pid if isinstance(pid, str) and pid else "_default"
+
+    @property
+    def orchestrator(self):
+        """The focused orchestrator (or None) — back-compat single-orch view."""
+        if self._focused_id is None:
+            return None
+        return self._orchestrators.get(self._focused_id)
+
+    @orchestrator.setter
+    def orchestrator(self, value):
+        if value is None:
+            # Legacy clear: drop the focused orchestrator and re-focus a
+            # remaining one (or None). Other running projects are untouched.
+            if self._focused_id is not None:
+                self._orchestrators.pop(self._focused_id, None)
+            self._focused_id = next(iter(self._orchestrators), None)
+            return
+        pid = self._pid_of(value)
+        self._orchestrators[pid] = value
+        self._focused_id = pid
 
     # ------------------------------------------------------------------
     # YAML I/O helpers
@@ -655,7 +696,13 @@ class ProjectManager:
         from taskbrew.main import build_orchestrator
 
         try:
-            self.orchestrator = await build_orchestrator(project_dir=project_dir)
+            # Pass the registry id so orch.project_id, the _deps pool key, the
+            # X-Taskbrew-Project header agents send, and TASKBREW_PROJECT_ID all
+            # agree. Without this they'd diverge (registry id = slug(name);
+            # dir-slug default = slug(dir)) and per-project routing would 409.
+            self.orchestrator = await build_orchestrator(
+                project_dir=project_dir, project_id=project_id,
+            )
         except Exception:
             if previous_active_id is not None:
                 try:
@@ -685,3 +732,202 @@ class ProjectManager:
         self.orchestrator = None
         self.clear_active()
         logger.info("Deactivated current project")
+
+    # ------------------------------------------------------------------
+    # Concurrent pool lifecycle ("focus one, run many")
+    # ------------------------------------------------------------------
+
+    def running_ids(self) -> list[str]:
+        """Return the ids of all currently-running (built) projects."""
+        return list(self._orchestrators.keys())
+
+    def is_running(self, project_id: str) -> bool:
+        """Return whether *project_id* has a live orchestrator in the pool."""
+        return project_id in self._orchestrators
+
+    def get_focused_id(self) -> str | None:
+        """Return the id of the currently focused project (or None)."""
+        return self._focused_id
+
+    def running_orchestrators(self) -> dict:
+        """Return a shallow copy of the running pool (project_id -> orch)."""
+        return dict(self._orchestrators)
+
+    # ------------------------------------------------------------------
+    # Read-only idle views (stopped-project board viewing)
+    # ------------------------------------------------------------------
+
+    def get_readonly_cached(self, project_id: str):
+        """Sync lookup used by the request resolver: return an already-available
+        orchestrator for *project_id* — the live running one if it exists, else a
+        cached read-only idle view — or None. Never builds (the _project_scope
+        middleware builds via :meth:`ensure_readonly_view`); this stays sync so
+        the contextvar-based ``get_orch`` resolution can call it."""
+        if project_id in self._orchestrators:
+            return self._orchestrators[project_id]
+        return self._readonly_views.get(project_id)
+
+    async def ensure_readonly_view(self, project_id: str):
+        """Ensure a read-only idle orchestrator exists for a *registered but
+        not-running* project so its board/detail pages resolve from its own
+        database.
+
+        Returns the live orchestrator when the project is running, the
+        cached/just-built idle view when it is stopped, or None when *project_id*
+        is not a registered project — so a stale/unknown header never fabricates
+        a board (the strict cross-project-write guarantee is preserved: the view
+        is always the project named in the header, never a different one).
+
+        Builds a full orchestrator WITHOUT calling ``start_agents``.
+        """
+        if project_id in self._orchestrators:
+            return self._orchestrators[project_id]
+        if project_id in self._readonly_views:
+            return self._readonly_views[project_id]
+        try:
+            project = self._require_project(project_id)
+        except KeyError:
+            return None
+        project_dir = Path(project["directory"])
+        if not project_dir.exists():
+            return None
+        if self._readonly_lock is None:
+            self._readonly_lock = asyncio.Lock()
+        async with self._readonly_lock:
+            # Re-check under the lock: a concurrent request may have built it,
+            # or the project may have started.
+            if project_id in self._orchestrators:
+                return self._orchestrators[project_id]
+            if project_id in self._readonly_views:
+                return self._readonly_views[project_id]
+            from taskbrew.main import build_orchestrator
+            orch = await build_orchestrator(
+                project_dir=project_dir, project_id=project_id,
+            )
+            self._readonly_views[project_id] = orch
+            logger.info("Built read-only idle view for project '%s'", project_id)
+            return orch
+
+    async def _drop_readonly_view(self, project_id: str) -> None:
+        """Close and forget the read-only idle view for *project_id*, if any.
+        Called when the project starts (the live orchestrator supersedes it) so
+        only one connection to the project DB exists at a time."""
+        ro = self._readonly_views.pop(project_id, None)
+        if ro is not None:
+            try:
+                await ro.shutdown()
+            except Exception:
+                logger.exception(
+                    "Error closing read-only view for '%s'", project_id
+                )
+
+    def _require_project(self, project_id: str) -> dict:
+        """Return the registry entry for *project_id* or raise KeyError."""
+        data = self._read_registry()
+        for p in data["projects"]:
+            if p["id"] == project_id:
+                return p
+        raise KeyError(f"No project with id '{project_id}'")
+
+    def _validate_project_dir(self, project_id: str, project_dir: Path) -> None:
+        """Validate a project's directory and config still exist on disk.
+
+        Mirrors the checks in :meth:`activate_project`: a missing directory
+        auto-removes the project from the registry; a missing team.yaml raises.
+        """
+        if not project_dir.is_dir():
+            logger.warning(
+                "Project directory %s no longer exists, removing from registry",
+                project_dir,
+            )
+            data = self._read_registry()
+            data["projects"] = [p for p in data["projects"] if p["id"] != project_id]
+            if data["active_project"] == project_id:
+                data["active_project"] = None
+            self._write_registry(data)
+            raise FileNotFoundError(
+                f"Project directory no longer exists: {project_dir}"
+            )
+        team_yaml = project_dir / "config" / "team.yaml"
+        if not team_yaml.exists():
+            raise FileNotFoundError(
+                f"config/team.yaml not found in project directory: {project_dir}"
+            )
+
+    async def start_project(self, project_id: str, *, focus: bool = True):
+        """Build and register an orchestrator for *project_id* WITHOUT tearing
+        down any other running project.
+
+        Unlike :meth:`activate_project` (which *switches* — deactivating the
+        current project first), this is additive: several projects run
+        concurrently, each isolated by its own database, worktrees, and agents.
+        Idempotent — if the project is already running it is simply (optionally)
+        focused. Agents are NOT started here; the caller starts them via
+        ``start_agents`` so it can subscribe the event bus first.
+        """
+        if project_id in self._orchestrators:
+            if focus:
+                self._focused_id = project_id
+                self.set_active(project_id)
+            return self._orchestrators[project_id]
+
+        # Drop any read-only idle view first so the live orchestrator is the
+        # sole connection to the project DB.
+        await self._drop_readonly_view(project_id)
+
+        project = self._require_project(project_id)
+        project_dir = Path(project["directory"])
+        self._validate_project_dir(project_id, project_dir)
+
+        from taskbrew.main import build_orchestrator
+
+        orch = await build_orchestrator(
+            project_dir=project_dir, project_id=project_id,
+        )
+        self._orchestrators[project_id] = orch
+        if focus or self._focused_id is None:
+            self._focused_id = project_id
+            self.set_active(project_id)
+        logger.info("Started project '%s' (concurrent)", project_id)
+        return orch
+
+    async def stop_project(self, project_id: str) -> None:
+        """Shut down and remove a running project's orchestrator.
+
+        No-op if it isn't running. If it was the focused project, re-focus a
+        remaining running project (or clear focus when the pool empties).
+        """
+        orch = self._orchestrators.pop(project_id, None)
+        if orch is None:
+            return
+        try:
+            await asyncio.wait_for(orch.shutdown(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Orchestrator shutdown timed out after 5s")
+        except Exception:
+            logger.exception("Error during orchestrator shutdown")
+        if self._focused_id == project_id:
+            self._focused_id = next(iter(self._orchestrators), None)
+            if self._focused_id is not None:
+                try:
+                    self.set_active(self._focused_id)
+                except KeyError:
+                    pass
+            else:
+                self.clear_active()
+        logger.info("Stopped project '%s'", project_id)
+
+    def focus_project(self, project_id: str):
+        """Focus an already-running project for the dashboard's detail views."""
+        if project_id not in self._orchestrators:
+            raise KeyError(f"Project '{project_id}' is not running")
+        self._focused_id = project_id
+        self.set_active(project_id)
+        return self._orchestrators[project_id]
+
+    async def stop_all(self) -> None:
+        """Shut down every running orchestrator (process exit). Best-effort."""
+        for project_id in list(self._orchestrators.keys()):
+            await self.stop_project(project_id)
+        for project_id in list(self._readonly_views.keys()):
+            await self._drop_readonly_view(project_id)

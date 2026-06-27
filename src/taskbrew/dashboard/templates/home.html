@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TaskBrew</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;600;700&family=Geist+Mono:wght@400;450;500;600&display=swap" rel="stylesheet">
+<style>
+:root,[data-theme="dark"]{
+  --bg:#08090c; --bg-rail:#060708; --bg-side:#0a0b0e; --bg-content:#0c0e12;
+  --panel:#13161c; --panel-2:#171b22; --panel-hi:#1c212a;
+  --border:#1c212a; --border-2:#2a313c; --border-3:#37414f;
+  --text:#e9ebf0; --text-2:#9aa2b1; --text-3:#646c7b; --text-4:#474e5c;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+  --shadow-lg:0 24px 60px -24px rgba(0,0,0,.75);
+}
+[data-theme="light"]{
+  --bg:#f1f3f6; --bg-rail:#e7eaee; --bg-side:#ffffff; --bg-content:#f8fafc;
+  --panel:#ffffff; --panel-2:#f4f6f9; --panel-hi:#eaeef3;
+  --border:#e3e7ec; --border-2:#d3d9e0; --border-3:#bcc4ce;
+  --text:#161a21; --text-2:#4c5563; --text-3:#717b8a; --text-4:#9aa2b1;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 8px 24px -14px rgba(16,24,40,.12);
+  --shadow-lg:0 24px 60px -24px rgba(16,24,40,.2);
+}
+:root{
+  --accent:#6c79ff; --accent-hi:#8d96ff; --accent-soft:rgba(108,121,255,.13); --accent-line:rgba(108,121,255,.5);
+  --green:#3fae63; --green-soft:rgba(63,174,99,.14);
+  --amber:#cf9a2f; --amber-soft:rgba(207,154,47,.14);
+  --red:#e8525f; --red-soft:rgba(232,82,95,.14);
+  --blue:#4f9bf0; --blue-soft:rgba(79,155,240,.14);
+  --violet:#9b6cf0; --violet-soft:rgba(155,108,240,.14);
+  --mono:"Geist Mono",ui-monospace,monospace; --sans:"Geist",-apple-system,system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;font-size:13.5px;line-height:1.45;letter-spacing:-.01em;transition:background .25s,color .25s}
+.mono{font-family:var(--mono);font-feature-settings:"tnum"1}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+::selection{background:var(--accent-soft)}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:6px;border:2px solid transparent;background-clip:content-box}
+.tone-g{color:var(--green)}.tone-a{color:var(--amber)}.tone-r{color:var(--red)}.tone-b{color:var(--blue)}
+
+.app{display:grid;grid-template-columns:60px 1fr;height:100vh;overflow:hidden}
+.app.console{grid-template-columns:60px 230px 1fr}
+.app:not(.console) .nav-side{display:none}
+
+/* ===== RAIL ===== */
+.rail{background:var(--bg-rail);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:6px}
+.rlogo{width:36px;height:36px;border-radius:10px;background:linear-gradient(145deg,#4348846b,#6c79ff);display:grid;place-items:center;color:#fff;font-weight:700;font-size:17px;box-shadow:0 4px 12px -4px rgba(108,121,255,.6);margin-bottom:6px}
+.ritem{position:relative;width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:17px;color:var(--text-3);cursor:pointer;transition:.14s}
+.ritem:hover{background:var(--panel);color:var(--text)} .ritem.on{background:var(--accent-soft);color:var(--accent-hi)}
+.ritem.on::before{content:"";position:absolute;left:-12px;top:9px;bottom:9px;width:3px;border-radius:3px;background:var(--accent)}
+.rdiv{width:26px;height:1px;background:var(--border);margin:5px 0}
+.pj{position:relative;width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;transition:.14s;color:var(--text-2);background:var(--panel)}
+.pj:hover{color:var(--text)} .pj.on{box-shadow:0 0 0 2px var(--accent)}
+.pj .sd{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;border:2.5px solid var(--bg-rail)}
+.pj .sd.work{background:var(--green)} .pj .sd.work::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:1.5px solid var(--green);opacity:.6;animation:beam 1.8s ease-out infinite}
+.pj .sd.warn{background:var(--red)} .pj .sd.pause{background:var(--amber)} .pj .sd.idle{background:var(--text-4)}
+@keyframes beam{from{transform:scale(.6);opacity:.7}to{transform:scale(2);opacity:0}}
+.pj.add{color:var(--text-4);font-size:18px;background:transparent;border:1px dashed var(--border-2)} .pj.add:hover{color:var(--text-2);border-color:var(--border-3)}
+.rail .sp{flex:1}
+.tip{position:absolute;left:50px;top:50%;transform:translateY(-50%) scale(.96);background:var(--panel-hi);border:1px solid var(--border-2);border-radius:7px;padding:5px 9px;font-family:var(--sans);font-size:12px;font-weight:500;white-space:nowrap;opacity:0;pointer-events:none;transition:.13s;z-index:40;color:var(--text);box-shadow:var(--shadow)}
+.pj:hover .tip,.ritem:hover .tip{opacity:1;transform:translateY(-50%) scale(1)} .tip .ts{font-size:10.5px;color:var(--text-3);margin-left:7px;font-family:var(--mono)}
+
+/* ===== NAV SIDE ===== */
+.nav-side{background:var(--bg-side);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.ns-top{padding:15px 14px 4px}
+.ns-back{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text-3);cursor:pointer;margin-bottom:12px} .ns-back:hover{color:var(--text-2)}
+.ns-name{display:flex;align-items:center;gap:9px} .ns-name .nm{font-weight:600;font-size:14px} .ns-name .pp{font-size:11px;color:var(--text-4);font-family:var(--mono)}
+.nav{flex:1;overflow-y:auto;padding:8px}
+.grp{margin-top:7px} .grp-h{display:flex;align-items:center;gap:7px;padding:6px 10px;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-4);cursor:pointer;border-radius:7px;user-select:none} .grp-h:hover{color:var(--text-3);background:var(--panel)} .grp-h .chev{margin-left:auto;font-size:9px;transition:.18s} .grp.closed .chev{transform:rotate(-90deg)} .grp.closed .grp-body{display:none} .grp-h .ct{font-family:var(--mono);font-weight:450;font-size:10px;background:var(--panel-hi);padding:0 5px;border-radius:10px;color:var(--text-3)}
+.item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;color:var(--text-2);font-size:13px;cursor:pointer;transition:.12s;position:relative;margin:1px 0} .item:hover{background:var(--panel);color:var(--text)} .item.on{background:var(--accent-soft);color:var(--text)} .item.on::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:2.5px;border-radius:3px;background:var(--accent)} .item .ic{width:16px;flex:0 0 16px;color:var(--text-3);display:grid;place-items:center;font-size:13px} .item.on .ic{color:var(--accent-hi)} .item .tail{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text-4)}
+.ns-foot{border-top:1px solid var(--border);padding:11px 14px} .frow{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--text-2)} .frow .right{margin-left:auto}
+.beacon{width:8px;height:8px;border-radius:50%;background:var(--green);position:relative} .beacon::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1.5px solid var(--green);opacity:.5;animation:beam 1.8s ease-out infinite} .beacon.idle{background:var(--text-4)} .beacon.idle::after{display:none}
+.btn-s{height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--border-2);background:var(--panel-2);color:var(--text);font-size:12px;font-weight:500} .btn-s:hover{background:var(--panel-hi)}
+
+/* ===== MAIN / TOPBAR ===== */
+.main{background:var(--bg-content);display:flex;flex-direction:column;min-width:0;min-height:0}
+.topbar{height:56px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;padding:0 18px;flex:0 0 auto}
+.ws{display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:9px;cursor:pointer;transition:.12s} .ws:hover{background:var(--panel)}
+.ws .wi{width:24px;height:24px;border-radius:7px;background:linear-gradient(145deg,#6c79ff,#4348846b);display:grid;place-items:center;color:#fff;font-size:11px;font-weight:700} .ws .wn{font-size:13.5px;font-weight:600} .ws .wc{color:var(--text-4);font-size:11px}
+.crumb{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-3)} .crumb b{color:var(--text);font-weight:600} .crumb .sep{color:var(--text-4)} .crumb .lk{cursor:pointer} .crumb .lk:hover{color:var(--text-2)}
+.kbar{margin:0 auto;display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--border);border-radius:9px;padding:8px 13px;width:340px;color:var(--text-3);font-size:12.5px;cursor:text;transition:.12s} .kbar:hover{border-color:var(--border-2)} .kbar .k{margin-left:auto;font-family:var(--mono);font-size:10.5px;border:1px solid var(--border-2);border-radius:5px;padding:1px 5px;color:var(--text-4)}
+.tb-icon{width:34px;height:34px;border-radius:9px;color:var(--text-3);display:grid;place-items:center;font-size:15px;transition:.12s;position:relative} .tb-icon:hover{background:var(--panel);color:var(--text)} .tb-icon .ndot{position:absolute;top:7px;right:8px;width:6px;height:6px;border-radius:50%;background:var(--red);border:1.5px solid var(--bg-content)}
+.tb-primary{height:34px;padding:0 15px;border-radius:9px;background:var(--accent);color:#fff;font-weight:600;font-size:12.5px;display:inline-flex;align-items:center;gap:7px;box-shadow:0 4px 12px -5px rgba(108,121,255,.6)} .tb-primary:hover{background:var(--accent-hi)}
+.acc{width:32px;height:32px;border-radius:50%;background:var(--panel-hi);border:1px solid var(--border-2);display:grid;place-items:center;font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text-2);cursor:pointer}
+.scroll{flex:1;overflow-y:auto;min-height:0} .pad{padding:26px 30px 56px;max-width:1180px;margin:0 auto} .pad.wide{max-width:1280px}
+.view{display:none;animation:fade .3s ease both} .view.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+
+/* ===== HOME ===== */
+.hi{margin-bottom:22px}
+.hi h1{font-size:25px;font-weight:600;letter-spacing:-.025em} .hi h1 .wave{font-weight:400;color:var(--text-2)}
+.hi .digest{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;font-size:13.5px;color:var(--text-2)}
+.hi .digest .d{display:flex;align-items:center;gap:7px} .hi .digest .d b{color:var(--text);font-weight:600} .hi .digest .dot{width:7px;height:7px;border-radius:50%} .hi .digest .pipe{color:var(--text-4)}
+.sec-t{display:flex;align-items:center;gap:9px;margin:24px 0 13px} .sec-t h2{font-size:14px;font-weight:600} .sec-t .cnt{font-family:var(--mono);font-size:11px;color:var(--text-3);background:var(--panel);border:1px solid var(--border);padding:1px 7px;border-radius:20px} .sec-t .more{margin-left:auto;font-size:12px;color:var(--text-3);cursor:pointer} .sec-t .more:hover{color:var(--accent-hi)}
+
+/* needs you inbox */
+.inbox{background:var(--panel);border:1px solid var(--border);border-radius:13px;overflow:hidden;box-shadow:var(--shadow)}
+.inrow{display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--border);transition:.12s} .inrow:last-child{border-bottom:0} .inrow:hover{background:var(--panel-2)}
+.inrow .ii{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:15px;flex:0 0 34px}
+.inrow .ib{min-width:0;flex:1} .inrow .it{font-size:13.5px;font-weight:500} .inrow .it b{font-weight:600} .inrow .is{font-size:12px;color:var(--text-3);margin-top:2px;display:flex;align-items:center;gap:7px} .inrow .is .pj-tag{font-family:var(--mono);font-size:10.5px;padding:1px 6px;border-radius:5px}
+.inrow .ac{display:flex;gap:8px;flex:0 0 auto}
+.act-btn{height:30px;padding:0 13px;border-radius:8px;font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;gap:6px;transition:.12s;border:1px solid var(--border-2);background:var(--panel-2);color:var(--text)} .act-btn:hover{background:var(--panel-hi);border-color:var(--border-3)}
+.act-btn.pri{background:var(--accent);color:#fff;border-color:transparent} .act-btn.pri:hover{background:var(--accent-hi)}
+.act-btn.ghost{border-color:transparent;background:transparent;color:var(--text-3)} .act-btn.ghost:hover{color:var(--text);background:var(--panel-hi)}
+.empty-soft{padding:26px 18px;text-align:center;color:var(--text-3);font-size:13px}
+
+/* start composer */
+.composer{background:linear-gradient(180deg,var(--panel-2),var(--panel));border:1px solid var(--border);border-radius:14px;padding:18px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+.composer::before{content:"";position:absolute;right:-40px;top:-50px;width:240px;height:160px;background:radial-gradient(circle,rgba(108,121,255,.12),transparent 70%);pointer-events:none}
+.composer .ct{font-size:14px;font-weight:600;margin-bottom:3px} .composer .cs{font-size:12.5px;color:var(--text-3);margin-bottom:14px}
+.composer .cin{display:flex;gap:10px}
+.composer input{flex:1;background:var(--bg-content);border:1px solid var(--border-2);border-radius:10px;padding:12px 14px;color:var(--text);font-family:inherit;font-size:14px;outline:none;transition:.13s} .composer input::placeholder{color:var(--text-3)} .composer input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)} .composer input:disabled{opacity:.5}
+.pjsel{display:flex;align-items:center;gap:8px;padding:0 13px;border:1px solid var(--border-2);border-radius:10px;background:var(--bg-content);font-size:12.5px;color:var(--text-2);white-space:nowrap;cursor:pointer} .pjsel:hover{border-color:var(--border-3)}
+
+/* projects strip */
+.pstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.ptile{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;transition:.15s;box-shadow:var(--shadow)} .ptile:hover{border-color:var(--border-2);transform:translateY(-2px)}
+.ptile .pt-h{display:flex;align-items:center;gap:9px;margin-bottom:11px} .ptile .pt-ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:600} .ptile .pt-nm{font-size:13px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .ptile .pt-sd{margin-left:auto;width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+.ptile .pt-g{font-size:11.5px;color:var(--text-3);margin-bottom:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ptile .pbar{height:4px;border-radius:3px;background:var(--border);overflow:hidden;margin-bottom:10px} .ptile .pbar i{display:block;height:100%;border-radius:3px}
+.ptile .pt-f{display:flex;align-items:center;font-size:11px;color:var(--text-3)} .ptile .pt-f .av{width:19px;height:19px;border-radius:50%;border:2px solid var(--panel);margin-left:-6px;display:grid;place-items:center;font-size:8px;font-weight:600;font-family:var(--mono)} .ptile .pt-f .av:first-child{margin-left:0} .ptile .pt-f .cost{margin-left:auto;font-family:var(--mono);color:var(--text-2)}
+
+/* play / pause project control */
+.pj-ctrl{flex:0 0 auto;width:26px;height:24px;border-radius:7px;border:1px solid var(--border-2);background:var(--panel-2);color:var(--text-2);display:grid;place-items:center;font-size:11px;line-height:1;transition:.12s}
+.pj-ctrl:hover{background:var(--panel-hi);color:var(--text);border-color:var(--border-3)}
+.pj-ctrl.play{color:var(--green)} .pj-ctrl.play:hover{border-color:var(--green);background:var(--green-soft)}
+.pj-ctrl.pause{color:var(--amber)} .pj-ctrl.pause:hover{border-color:var(--amber);background:var(--amber-soft)}
+.ptile .pt-h .pj-ctrl{margin-left:2px} .pc-h .pj-ctrl{margin-left:8px}
+
+/* activity */
+.feed{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:6px 16px;box-shadow:var(--shadow)}
+.frowi{display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--text-2)} .frowi:last-child{border-bottom:0} .frowi .ft{font-family:var(--mono);font-size:11px;color:var(--text-4);min-width:42px} .frowi .fd{width:6px;height:6px;border-radius:50%;flex:0 0 6px} .frowi b{color:var(--text);font-weight:550} .frowi .pjt{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--text-4)}
+
+/* ===== PROJECTS (reuse) ===== */
+.pgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.pcard{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:16px 17px;cursor:pointer;transition:.15s;position:relative;overflow:hidden;box-shadow:var(--shadow)} .pcard:hover{border-color:var(--border-2);transform:translateY(-2px)} .pcard.attn-c{border-color:rgba(232,82,95,.35)} .pcard.attn-c::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red)}
+.pc-h{display:flex;align-items:center;gap:11px;margin-bottom:3px} .pc-ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-family:var(--mono);font-size:12px;font-weight:600} .pc-nm{font-weight:600;font-size:14.5px} .pc-path{font-size:11px;color:var(--text-4);font-family:var(--mono)} .pc-status{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:550;padding:4px 9px;border-radius:7px} .pc-status.work{background:var(--green-soft);color:var(--green)} .pc-status.warn{background:var(--red-soft);color:var(--red)} .pc-status.pause{background:var(--amber-soft);color:var(--amber)} .pc-status .pulse{width:7px;height:7px;border-radius:50%;background:currentColor} .pc-status.work .pulse{animation:bp 1.6s ease-in-out infinite}
+@keyframes bp{0%,100%{opacity:1}50%{opacity:.3}}
+.pc-goal{display:flex;align-items:center;gap:10px;margin:14px 0 12px} .pc-goal .gt{font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1} .pc-goal .gp{font-family:var(--mono);font-size:11px;color:var(--text-3)} .pbar{height:5px;border-radius:4px;background:var(--border);overflow:hidden} .pbar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--accent-hi))}
+.pc-live{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);padding:9px 11px;background:var(--bg-content);border:1px solid var(--border);border-radius:9px;margin:13px 0} .pc-live .ld{width:6px;height:6px;border-radius:50%;background:var(--green);animation:bp 1.6s ease-in-out infinite;flex:0 0 6px} .pc-live .tk{font-family:var(--mono);color:var(--accent-hi);font-size:11px} .pc-live.idle .ld{background:var(--text-4);animation:none} .pc-live.idle{color:var(--text-4)}
+.pc-foot{display:flex;align-items:center;gap:13px;font-size:12px} .pc-foot .st{display:flex;align-items:center;gap:6px;color:var(--text-3)} .pc-foot .st b{font-family:var(--mono);color:var(--text-2);font-weight:550} .pc-foot .st .d{width:6px;height:6px;border-radius:50%} .pc-foot .ags{margin-left:auto;display:flex;align-items:center} .pc-foot .av{width:22px;height:22px;border-radius:50%;border:2px solid var(--panel);margin-left:-7px;display:grid;place-items:center;font-size:9px;font-weight:600;font-family:var(--mono)} .pc-foot .av:first-child{margin-left:0} .pc-foot .agw{font-size:11px;color:var(--text-3);margin-left:8px}
+
+/* ===== CONSOLE (reuse calm) ===== */
+.pulse{border:1px solid var(--border);border-radius:12px;background:var(--panel);margin-bottom:20px;overflow:hidden;box-shadow:var(--shadow)}
+.pulse-line{display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer} .pulse-line:hover{background:var(--panel-2)} .pulse-line .stt{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:550} .pulse-line .working{color:var(--text);font-weight:450} .pulse-line .working b{font-family:var(--mono);font-weight:550} .pulse-line .stats{display:flex;align-items:center;gap:16px;margin-left:auto} .pulse-line .stats .s{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-2)} .pulse-line .stats .s b{font-family:var(--mono);color:var(--text);font-weight:550} .pulse-line .stats .s .dot{width:7px;height:7px;border-radius:50%} .pulse-line .toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3)} .pulse-line .toggle .cv{font-size:9px;transition:.2s} .pulse.open .toggle .cv{transform:rotate(180deg)}
+.pulse-detail{display:none;border-top:1px solid var(--border)} .pulse.open .pulse-detail{display:block} .pd-h{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-4);padding:13px 16px 2px} .live-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border-top:1px solid var(--border)} .agc{background:var(--panel);padding:12px 14px;display:flex;flex-direction:column;gap:8px} .agc .ar1{display:flex;align-items:center;gap:9px} .agc .av{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;font-size:9.5px;font-weight:600;font-family:var(--mono)} .agc .nm{font-size:12px;font-weight:550} .agc .rl{font-size:10px;color:var(--text-4);font-family:var(--mono)} .agc .pd{margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 7px var(--green);animation:bp 1.6s ease-in-out infinite} .agc .pd.off{background:var(--text-4);box-shadow:none;animation:none} .agc .act{font-size:11.5px;color:var(--text-2)} .agc .act .tk{color:var(--accent-hi);font-family:var(--mono);font-size:11px} .agc .ar2{display:flex;font-family:var(--mono);font-size:10px;color:var(--text-4)} .agc .ar2 .gr{margin-left:auto}
+.bar{display:flex;align-items:center;gap:10px;margin-bottom:16px} .bar h2{font-size:16px;font-weight:600} .bar .grow{flex:1} .seg{display:flex;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:2px} .seg button{color:var(--text-3);font-size:12.5px;font-weight:500;padding:5px 11px;border-radius:6px} .seg button.on{background:var(--panel-hi);color:var(--text)} .srch{display:flex;align-items:center;gap:8px;height:30px;padding:0 11px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text-3);font-size:12.5px;width:150px} .add{height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--border-2);background:var(--panel-2);color:var(--text);font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;gap:6px}
+.kb{display:grid;grid-template-columns:repeat(5,1fr);gap:13px;align-items:start} .col-h{display:flex;align-items:center;gap:8px;padding:0 3px 12px;font-size:12px;font-weight:600;color:var(--text-2)} .col-h .dt{width:7px;height:7px;border-radius:2px} .col-h .c{font-family:var(--mono);color:var(--text-4);font-weight:450} .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;cursor:pointer;transition:.14s;position:relative;box-shadow:var(--shadow)} .card:hover{border-color:var(--border-2);transform:translateY(-1px)} .card.live-card{border-color:var(--accent-line)} .card.live-card::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:60% 100%;animation:slide 1.6s linear infinite;border-radius:0 0 10px 10px} @keyframes slide{from{background-position:-60% 0}to{background-position:160% 0}} .card .top{display:flex;align-items:center;gap:7px;margin-bottom:8px} .card .id{font-family:var(--mono);font-size:11px;color:var(--text-3)} .card .pdot{width:6px;height:6px;border-radius:50%;margin-left:auto} .card .ti{font-size:13px;line-height:1.4;margin-bottom:11px} .card .foot{display:flex;align-items:center;gap:8px} .card .as{width:21px;height:21px;border-radius:50%;display:grid;place-items:center;font-size:9.5px;font-weight:600;font-family:var(--mono)} .card .label{font-size:10.5px;color:var(--text-3);font-family:var(--mono);display:inline-flex;align-items:center;gap:5px} .card .label.r{margin-left:auto} .more-row{text-align:center;font-size:11.5px;color:var(--text-3);padding:10px;border:1px dashed var(--border);border-radius:9px} .col-empty{font-size:11.5px;color:var(--text-4);padding:14px 10px;border:1px dashed var(--border);border-radius:9px;text-align:center}
+.foot-note{margin-top:26px;font-size:11.5px;color:var(--text-4);text-align:center} .foot-note b{color:var(--accent-hi);font-weight:500}
+.banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--text-3);font-size:12px;margin-bottom:18px} .banner b{color:var(--text-2);font-weight:600} .banner .dot{width:7px;height:7px;border-radius:50%;background:var(--blue);flex:0 0 7px}
+@media(max-width:1040px){.pgrid,.pstrip{grid-template-columns:1fr 1fr}.kb,.live-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <!-- RAIL -->
+  <div class="rail">
+    <div class="rlogo">☲</div>
+    <div class="ritem on" id="r-home" onclick="go('home')">⌂<span class="tip">Home</span></div>
+    <div class="ritem" id="r-proj" onclick="go('projects')">▦<span class="tip">All projects</span></div>
+    <div class="rdiv"></div>
+    <div id="rail-pjs" style="display:flex;flex-direction:column;align-items:center;gap:6px"></div>
+    <div class="pj add" onclick="window.location.href='/advanced'"><span>+</span><span class="tip">New project <span class="ts">advanced</span></span></div>
+    <div class="sp"></div>
+    <div class="ritem" onclick="window.location.href='/advanced'" title="Advanced view">❖<span class="tip">Advanced view <span class="ts">full UI</span></span></div>
+  </div>
+
+  <!-- NAV SIDE -->
+  <aside class="nav-side">
+    <div class="ns-top"><div class="ns-back" onclick="go('home')">‹ Home</div><div class="ns-name"><div class="pc-ic" style="width:26px;height:26px;background:var(--accent-soft);color:var(--accent-hi)" id="ns-ic">tb</div><div><div class="nm" id="ns-nm">—</div><div class="pp" id="ns-pp"></div></div></div></div>
+    <nav class="nav">
+      <div class="grp" id="g-work"><div class="grp-h" onclick="tgGrp('g-work')">Work <span class="chev">▾</span></div><div class="grp-body"><div class="item on" onclick="openProjActive()"><span class="ic">▤</span> Board <span class="tail" id="nav-board-ct"></span></div><a class="item" href="/advanced"><span class="ic">☰</span> List</a><a class="item" href="/trace"><span class="ic">⌥</span> Dependency graph</a></div></div>
+      <div class="grp closed" id="g-ins"><div class="grp-h" onclick="tgGrp('g-ins')">Insights <span class="ct">5</span><span class="chev">▾</span></div><div class="grp-body"><a class="item" href="/metrics"><span class="ic">◈</span> Cost &amp; performance</a><a class="item" href="/metrics"><span class="ic">⛨</span> Quality &amp; safety</a><a class="item" href="/metrics"><span class="ic">◉</span> Knowledge &amp; memory</a><a class="item" href="/metrics"><span class="ic">▲</span> Agent intelligence</a><a class="item" href="/metrics"><span class="ic">◱</span> Planning &amp; coordination</a></div></div>
+      <div class="grp closed" id="g-team"><div class="grp-h" onclick="tgGrp('g-team')">Team &amp; config <span class="chev">▾</span></div><div class="grp-body"><div class="item" onclick="openProjActive()"><span class="ic">☲</span> Agents <span class="tail" id="nav-agent-ct"></span></div><a class="item" href="/settings"><span class="ic">◇</span> Pipeline</a><a class="item" href="/settings"><span class="ic">⚙</span> Settings</a></div></div>
+    </nav>
+    <div class="ns-foot"><div class="frow"><span class="beacon" id="ns-beacon"></span> <span id="ns-state">—</span> <span class="right"><a class="btn-s" href="/advanced">Open full</a></span></div></div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div class="ws" id="ws" onclick="go('home')"><div class="wi">N</div><div><div class="wn">Workspace</div></div><span class="wc">▾</span></div>
+      <div class="crumb" id="crumb" style="display:none"></div>
+      <div class="kbar" onclick="focusGoal()"><span>⌕</span> Search · jump to a goal… <span class="k">⌘K</span></div>
+      <button class="tb-icon" onclick="toggleTheme()" title="Theme" id="theme-btn">◐</button>
+      <button class="tb-icon" onclick="window.location.href='/questions'" title="Notifications">␇<span class="ndot" id="notif-dot" style="display:none"></span></button>
+      <button class="tb-primary" id="primary" onclick="focusGoal()">＋ New goal</button>
+      <div class="acc" onclick="window.location.href='/advanced'" title="Advanced view">TB</div>
+    </div>
+    <div class="scroll"><div class="pad wide">
+
+      <!-- ===================== HOME ===================== -->
+      <section class="view on" id="home">
+        <div class="hi">
+          <h1 id="home-greet"><span class="wave">Welcome to</span> TaskBrew</h1>
+          <div class="digest" id="home-digest"></div>
+        </div>
+        <div class="banner"><span class="dot"></span><span><b>Run many projects at once.</b> Use the <b>▶ / ⏸</b> control on any project to start it or pause all its agents — each runs isolated. The focused project shows full detail; others keep running in the background.</span></div>
+
+        <div class="sec-t"><h2>Needs you</h2><span class="cnt" id="inbox-ct">0</span><span class="more" onclick="window.location.href='/questions'">Open queue →</span></div>
+        <div class="inbox" id="home-inbox"></div>
+
+        <div class="sec-t"><h2>Start something new</h2></div>
+        <div class="composer">
+          <div class="ct">What should your team build?</div>
+          <div class="cs">Describe a goal in plain English — TaskBrew plans it, splits it into tasks, and the agents build it.</div>
+          <div class="cin">
+            <input id="goalInput" placeholder="e.g. Add a CSV export button to the reports page…" onkeydown="if(event.key==='Enter')submitGoal()">
+            <div class="pjsel" id="composer-proj" onclick="go('projects')">▣ — <span style="color:var(--text-4)">▾</span></div>
+            <button class="tb-primary" id="goalBtn" style="height:auto;padding:0 18px" onclick="submitGoal()">Start →</button>
+          </div>
+        </div>
+
+        <div class="sec-t"><h2>Your projects</h2><span class="cnt" id="proj-ct">0</span><span class="more" onclick="go('projects')">View all →</span></div>
+        <div class="pstrip" id="home-projects"></div>
+
+        <div class="sec-t"><h2>Recent activity</h2><span class="more" onclick="openProjActive()">Open board →</span></div>
+        <div class="feed" id="home-feed"></div>
+      </section>
+
+      <!-- ===================== PROJECTS ===================== -->
+      <section class="view" id="projects">
+        <div class="hi"><h1>Projects</h1><div class="digest" id="proj-digest"></div></div>
+        <div class="pgrid" id="proj-grid" style="margin-top:18px"></div>
+      </section>
+
+      <!-- ===================== CONSOLE ===================== -->
+      <section class="view" id="console">
+        <div class="pulse" id="pulse">
+          <div class="pulse-line" onclick="document.getElementById('pulse').classList.toggle('open')" id="pulse-line"></div>
+          <div class="pulse-detail"><div class="pd-h">Who's working right now</div><div class="live-grid" id="live-grid"></div></div>
+        </div>
+        <div class="bar"><h2>Tasks</h2><div class="seg" style="margin-left:8px"><button class="on">▤ Board</button><button onclick="window.location.href='/advanced'">☰ List</button><button onclick="window.location.href='/trace'">⌥ Graph</button></div><div class="grow"></div><div class="srch"><span>⌕</span> Search…</div><button class="add" onclick="focusGoalConsole()">＋ New task</button></div>
+        <div class="kb" id="console-board"></div>
+      </section>
+
+      <div class="foot-note">TaskBrew · <b>calm front door</b> · wired to your live workspace · click <b>▦</b> for all projects, a project to drill in · toggle <b>◐</b> for light mode · <b>❖</b> opens the full advanced UI</div>
+    </div></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   TaskBrew v6 console — exact-replica shell, wired to real data.
+   Single-active-project model: the active project is live; others
+   are registered/idle. Switching = activate + reload.
+   ============================================================ */
+let STATE={status:null,projects:[],board:null,agents:[],usage:null,questions:[],interactions:[],paused:[]};
+let ws=null,wsRetry=0,refreshScheduled=false,curView='home';
+const PAL=[['var(--blue-soft)','var(--blue)'],['var(--violet-soft)','var(--violet)'],['var(--green-soft)','var(--green)'],['var(--amber-soft)','var(--amber)'],['var(--red-soft)','var(--red)']];
+const DORMANT=new Set(['idle','stopped','paused','error','dead','completed','done','offline']);
+const ROLECOL={pm:['var(--accent-soft)','var(--accent-hi)'],architect:['var(--violet-soft)','var(--violet)'],coder:['var(--green-soft)','var(--green)'],tester:['var(--amber-soft)','var(--amber)'],reviewer:['var(--blue-soft)','var(--blue)'],system:['var(--panel-hi)','var(--text-2)']};
+
+const $=(id)=>document.getElementById(id);
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function agoText(iso){if(!iso)return '';const d=new Date(iso).getTime();if(isNaN(d))return '';let s=Math.max(0,(Date.now()-d)/1000);if(s<60)return Math.floor(s)+'s';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';return Math.floor(s/86400)+'d';}
+function hhmm(iso){if(!iso)return '';const t=new Date(iso);if(isNaN(t.getTime()))return '';return String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');}
+function num(n){return (n==null?0:n).toLocaleString();}
+function money(n){return '$'+(Number(n||0)).toFixed(2);}
+async function getJSON(url,opts){const r=await fetch(url,opts);if(!r.ok)throw new Error(url+' '+r.status);return r.json();}
+function abbr(name){const w=String(name||'?').trim().split(/[\s_\-]+/).filter(Boolean);if(w.length>=2)return (w[0][0]+w[1][0]).toLowerCase();return String(name||'?').replace(/[^a-z0-9]/gi,'').slice(0,2).toLowerCase()||'?';}
+function roleTag(role){const r=String(role||'').toLowerCase();const map={pm:'PM',architect:'AR',coder:'CO',tester:'TE',reviewer:'RV',system:'SY'};return map[r]||String(role||'?').slice(0,2).toUpperCase();}
+function roleColor(role){return ROLECOL[String(role||'').toLowerCase()]||['var(--panel-hi)','var(--text-2)'];}
+function projColor(i,isA){return isA?['var(--accent-soft)','var(--accent-hi)']:PAL[i%PAL.length];}
+function prio(p){const x=String(p||'').toLowerCase();if(x.includes('high')||x.includes('urgent'))return ['var(--red)','▲ high'];if(x.includes('low'))return ['var(--text-3)','◇ low'];return ['var(--amber)','◈ med'];}
+function isActive(p){const a=STATE.status&&STATE.status.active;return !!(a&&p&&p.id===a.id);}
+function activeName(){const a=STATE.status&&STATE.status.active;return a?(a.name||a.id):null;}
+function working(){return (STATE.agents||[]).filter(a=>!DORMANT.has(String(a.status||'').toLowerCase()));}
+function agentsPaused(){return (STATE.paused||[]).length>0;}
+
+/* ---------- per-project run controls (focus one, run many) ---------- */
+// Concurrent-orchestrator model: several isolated projects run at once. Each
+// project's live state comes from /api/projects/status -> runtime[id]
+// ({running, paused}). Pause/Resume target a SPECIFIC project by sending the
+// X-Taskbrew-Project header (the dashboard's _project_scope middleware binds
+// it so the right orchestrator's agents are paused/resumed). "Start" begins a
+// project concurrently WITHOUT stopping any other running project. See
+// docs/redesign/multi-project.md.
+function projRuntime(id){const r=STATE.status&&STATE.status.runtime;return (r&&r[id])||null;}
+function projRunning(id){const rt=projRuntime(id);return !!(rt&&rt.running);}
+function projPaused(id){const rt=projRuntime(id);return !!(rt&&rt.paused);}
+function projHdrs(id){return {'Content-Type':'application/json','X-Taskbrew-Project':id};}
+function projCtrl(p){
+  const run=projRunning(p.id);
+  if(run&&!projPaused(p.id))return `<button class="pj-ctrl pause" title="Pause all agents on this project" aria-label="Pause project" onclick="pauseProject('${esc(p.id)}',event)">⏸</button>`;
+  if(run)return `<button class="pj-ctrl play" title="Resume agents on this project" aria-label="Resume project" onclick="resumeProject('${esc(p.id)}',event)">▶</button>`;
+  return `<button class="pj-ctrl play" title="Start this project" aria-label="Start project" onclick="startProject('${esc(p.id)}',event)">▶</button>`;
+}
+async function pauseProject(id,ev){if(ev)ev.stopPropagation();
+  try{await fetch('/api/agents/pause',{method:'POST',headers:projHdrs(id),body:JSON.stringify({role:'all'})});await refresh();}
+  catch(e){alert('Could not pause agents: '+e.message);}}
+async function resumeProject(id,ev){if(ev)ev.stopPropagation();
+  try{await fetch('/api/agents/resume',{method:'POST',headers:projHdrs(id),body:JSON.stringify({role:'all'})});await refresh();}
+  catch(e){alert('Could not resume agents: '+e.message);}}
+async function startProject(id,ev){if(ev)ev.stopPropagation();
+  if(projRunning(id))return resumeProject(id);
+  const p=(STATE.projects||[]).find(x=>x.id===id);const nm=(p&&p.name)||id;
+  if(!confirm('Start "'+nm+'"? Its agents will begin working on this project. Other running projects keep running.')){return;}
+  try{
+    await fetch('/api/projects/'+encodeURIComponent(id)+'/start',{method:'POST'});
+    // First start brings agents up paused (start_agents start_paused=True); the
+    // user clicked Start, so resume them — scoped to this project — so work begins.
+    try{await fetch('/api/agents/resume',{method:'POST',headers:projHdrs(id),body:JSON.stringify({role:'all'})});}catch(_){}
+    window.location.reload();
+  }catch(e){alert('Could not start project: '+e.message);}}
+
+/* ---------- theme ---------- */
+function toggleTheme(){const h=document.documentElement;const l=h.getAttribute('data-theme')==='light';h.setAttribute('data-theme',l?'dark':'light');$('theme-btn').textContent=l?'◐':'☀';try{localStorage.setItem('tb-theme',l?'dark':'light');}catch(e){}}
+(function(){try{const t=localStorage.getItem('tb-theme');if(t){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();
+
+/* ---------- data ---------- */
+async function loadStatus(){STATE.status=await getJSON('/api/projects/status');}
+async function loadProjects(){try{STATE.projects=await getJSON('/api/projects')||[];}catch(e){STATE.projects=[];}}
+async function loadActiveData(){await Promise.all([
+  getJSON('/api/board').then(d=>STATE.board=d).catch(()=>STATE.board=null),
+  getJSON('/api/agents').then(d=>STATE.agents=Array.isArray(d)?d:[]).catch(()=>STATE.agents=[]),
+  getJSON('/api/usage').then(d=>STATE.usage=d).catch(()=>STATE.usage=null),
+  getJSON('/api/questions/pending').then(d=>STATE.questions=(d&&d.questions)||[]).catch(()=>STATE.questions=[]),
+  getJSON('/api/interactions/pending').then(d=>STATE.interactions=(d&&d.interactions)||[]).catch(()=>STATE.interactions=[]),
+  getJSON('/api/agents/paused').then(d=>STATE.paused=(d&&d.paused_roles)||[]).catch(()=>STATE.paused=[]),
+]);}
+function board(){const b=STATE.board||{};const g=(k)=>Array.isArray(b[k])?b[k]:[];return {backlog:g('backlog'),pending:g('pending'),in_progress:g('in_progress'),review:g('review'),completed:g('completed'),failed:g('failed'),blocked:g('blocked'),rejected:g('rejected')};}
+
+/* ---------- inbox ---------- */
+function inboxItems(){const out=[];const an=activeName()||'project';
+  (STATE.questions||[]).forEach(q=>out.push({ico:'?',bg:'var(--blue-soft)',cl:'var(--blue)',t:q.question||'Agent needs a decision',pj:an,pjc:['var(--accent-soft)','var(--accent-hi)'],sub:`${q.agent_role||'agent'} · ${q.group_id||q.task_id||''}`,href:'/questions',cta:'Answer →'}));
+  (STATE.interactions||[]).forEach(i=>out.push({ico:'✋',bg:'var(--amber-soft)',cl:'var(--amber)',t:(i.request_type||'Approval')+' needed',pj:an,pjc:['var(--amber-soft)','var(--amber)'],sub:`${i.request_key||''} · ${i.task_id||''}`,href:'/advanced',cta:'Review →'}));
+  board().blocked.forEach(t=>out.push({ico:'⛔',bg:'var(--red-soft)',cl:'var(--red)',t:'Blocked: '+(t.title||t.id),pj:an,pjc:['var(--red-soft)','var(--red)'],sub:`${t.assigned_to||t.claimed_by||''} · ${t.id||''}`,href:'/advanced',cta:'Open →'}));
+  return out;}
+
+/* ============================ RENDER ============================ */
+function renderRail(){
+  const wrap=$('rail-pjs');if(!wrap)return;
+  wrap.innerHTML=(STATE.projects||[]).map((p,i)=>{
+    const isA=isActive(p),c=projColor(i,isA);
+    const run=projRunning(p.id),sd=run?(projPaused(p.id)?'pause':'work'):'idle';
+    return `<div class="pj${isA?' on':''}" style="background:${c[0]};color:${c[1]}" onclick="openProj('${esc(p.id)}')">${esc(abbr(p.name||p.id))}<span class="sd ${sd}"></span><span class="tip">${esc(p.name||p.id)} <span class="ts">${run?(projPaused(p.id)?'paused':'live'):'idle'}</span></span></div>`;
+  }).join('');
+}
+
+function renderHome(){
+  const st=STATE.status||{};
+  const an=activeName();
+  // greeting
+  $('home-greet').innerHTML=an?`<span class="wave">Your workspace</span>`:`<span class="wave">Welcome to</span> TaskBrew`;
+  // digest
+  const inbox=an?inboxItems():[];
+  const u=(STATE.usage&&STATE.usage.daily)||{};
+  const w=working().length;
+  const dg=$('home-digest');
+  if(!st.has_manager){dg.innerHTML=`<span class="d">No project manager attached — start TaskBrew with a project.</span>`;}
+  else if(!an){dg.innerHTML=`<span class="d"><span class="dot" style="background:var(--text-4)"></span> No active project</span><span class="pipe">·</span><span class="d"><b>${STATE.projects.length}</b> registered</span>`;}
+  else{dg.innerHTML=`<span class="d"><span class="dot" style="background:${inbox.length?'var(--red)':'var(--green)'}"></span> <b>${inbox.length}</b> thing${inbox.length===1?'':'s'} need${inbox.length===1?'s':''} you</span><span class="pipe">·</span><span class="d"><span class="beacon${w?'':' idle'}"></span> <b>${w}</b> agent${w===1?'':'s'} working on <b>${esc(an)}</b></span><span class="pipe">·</span><span class="d"><b>${num(u.tasks)}</b> task${u.tasks===1?'':'s'} today</span><span class="pipe">·</span><span class="d">◈ <b>${money(u.cost_usd)}</b> spent</span>`;}
+  // inbox
+  $('inbox-ct').textContent=inbox.length;
+  $('notif-dot').style.display=inbox.length?'block':'none';
+  $('home-inbox').innerHTML=inbox.length?inbox.map(it=>`
+    <div class="inrow"><div class="ii" style="background:${it.bg};color:${it.cl}">${esc(it.ico)}</div>
+      <div class="ib"><div class="it">${esc(it.t)}</div><div class="is"><span class="pj-tag" style="background:${it.pjc[0]};color:${it.pjc[1]}">${esc(it.pj)}</span> ${esc(it.sub)}</div></div>
+      <div class="ac"><button class="act-btn pri" onclick="window.location.href='${esc(it.href)}'">${esc(it.cta)}</button></div></div>`).join('')
+    :`<div class="empty-soft">${an?'Nothing needs your attention right now. ✨':'Activate a project to see what needs you.'}</div>`;
+  // composer
+  const gi=$('goalInput'),gb=$('goalBtn');
+  $('composer-proj').innerHTML=`▣ ${esc(an||'no active project')} <span style="color:var(--text-4)">▾</span>`;
+  if(gi){gi.disabled=!an;gi.placeholder=an?'e.g. Add a CSV export button to the reports page…':'Activate a project first to submit a goal…';}
+  if(gb){gb.style.opacity=an?'1':'.5';gb.style.pointerEvents=an?'auto':'none';}
+  // projects strip
+  $('proj-ct').textContent=STATE.projects.length;
+  renderProjectTiles($('home-projects'));
+  // feed
+  renderFeed();
+}
+
+function renderProjectTiles(wrap){
+  if(!wrap)return;
+  if(!STATE.projects.length){wrap.innerHTML=`<div class="empty-soft" style="grid-column:1/-1">No projects registered yet.</div>`;return;}
+  const b=board();
+  wrap.innerHTML=STATE.projects.map((p,i)=>{
+    const isA=isActive(p),c=projColor(i,isA);
+    const run=projRunning(p.id),pz=projPaused(p.id);
+    const sd=run?(pz?'var(--amber)':(isA?(working().length?'var(--green)':'var(--amber)'):'var(--green)')):'var(--text-4)';
+    const goal=isA
+      ?(pz?'Paused — agents stopped':(b.in_progress[0]?b.in_progress[0].title:(activeName()+' — live')))
+      :(run?(pz?'Paused — agents stopped':'Running · agents active'):'Registered · idle');
+    const done=isA?b.completed.length:0,total=isA?(b.backlog.length+b.pending.length+b.in_progress.length+b.review.length+b.completed.length):0;
+    const pct=total?Math.round(done/total*100):(isA?5:0);
+    const cost=isA?money((STATE.usage&&STATE.usage.daily&&STATE.usage.daily.cost_usd)||0):money(0);
+    const avs=isA?working().slice(0,3).map(a=>{const rc=roleColor(a.role);return `<div class="av" style="background:${rc[0]};color:${rc[1]}">${esc(roleTag(a.role))}</div>`;}).join(''):'';
+    return `<div class="ptile" onclick="openProj('${esc(p.id)}')"><div class="pt-h"><div class="pt-ic" style="background:${c[0]};color:${c[1]}">${esc(abbr(p.name||p.id))}</div><span class="pt-nm">${esc(p.name||p.id)}</span><span class="pt-sd" style="background:${sd}"></span>${projCtrl(p)}</div><div class="pt-g">${esc(goal)}</div><div class="pbar"><i style="width:${pct}%;background:${isA?'linear-gradient(90deg,var(--accent),var(--accent-hi))':'var(--text-4)'}"></i></div><div class="pt-f">${avs||'<span style="color:var(--text-4)">idle</span>'}<span class="cost">${cost}</span></div></div>`;
+  }).join('');
+}
+
+function renderFeed(){
+  const wrap=$('home-feed');if(!wrap)return;
+  const an=activeName();
+  if(!an){wrap.innerHTML=`<div class="empty-soft">No active project — no recent activity.</div>`;return;}
+  const b=board();
+  const all=[...b.in_progress,...b.review,...b.completed,...b.blocked,...b.failed,...b.pending];
+  const items=all.map(t=>({t,ts:t.completed_at||t.started_at||t.created_at})).filter(x=>x.ts)
+    .sort((a,z)=>new Date(z.ts)-new Date(a.ts)).slice(0,5);
+  if(!items.length){wrap.innerHTML=`<div class="empty-soft">No task activity yet — submit a goal to get started.</div>`;return;}
+  const sc={completed:'var(--green)',in_progress:'var(--blue)',review:'var(--blue)',blocked:'var(--red)',failed:'var(--red)',pending:'var(--violet)',backlog:'var(--text-3)'};
+  wrap.innerHTML=items.map(({t,ts})=>`<div class="frowi"><span class="ft">${esc(hhmm(ts))}</span><span class="fd" style="background:${sc[t.status]||'var(--text-3)'}"></span><span><b>${esc(t.assigned_to||t.claimed_by||t.status||'task')}</b> · ${esc(t.id||'')} ${esc(t.title||'')}</span><span class="pjt">${esc(an)}</span></div>`).join('');
+}
+
+function renderProjects(){
+  const an=activeName();const b=board();const u=(STATE.usage&&STATE.usage.daily)||{};
+  const w=working().length;
+  $('proj-digest').innerHTML=an
+    ? `<span class="d"><span class="beacon${w?'':' idle'}"></span> <b>1</b> active</span><span class="pipe">·</span><span class="d"><b>${STATE.projects.length-1}</b> registered</span><span class="pipe">·</span><span class="d"><span class="dot" style="background:var(--red)"></span> <b>${b.blocked.length}</b> blocked</span><span class="pipe">·</span><span class="d">◈ <b>${money(u.cost_usd)}</b> today</span>`
+    : `<span class="d"><b>${STATE.projects.length}</b> registered</span><span class="pipe">·</span><span class="d">none active</span>`;
+  const wrap=$('proj-grid');
+  if(!STATE.projects.length){wrap.innerHTML=`<div class="empty-soft" style="grid-column:1/-1">No projects registered.</div>`;return;}
+  wrap.innerHTML=STATE.projects.map((p,i)=>{
+    const isA=isActive(p),c=projColor(i,isA);
+    const run=projRunning(p.id),pz=projPaused(p.id);
+    const blocked=isA?b.blocked.length:0;
+    const attn=isA&&blocked>0;
+    const statusCls=run?(pz?'pause':(isA?(working().length?'work':(blocked?'warn':'pause')):'work')):'pause';
+    const statusTxt=run?(pz?'Paused':(isA?(working().length?'Brewing':(blocked?'Needs attention':'Idle')):'Running')):'Registered';
+    const done=isA?b.completed.length:0,total=isA?(b.backlog.length+b.pending.length+b.in_progress.length+b.review.length+b.completed.length):0;
+    const pct=total?Math.round(done/total*100):(isA?5:0);
+    const goal=isA?(b.in_progress[0]?b.in_progress[0].title:'Live workspace'):(run?'Running · click to focus':'Idle — click to start');
+    const liveTxt=isA?(working().length?`${working().length} agent${working().length===1?'':'s'} working`:'Team paused — resume to continue'):(run?(pz?'Team paused — resume to continue':'Running in background'):'Registered · not running');
+    const active=isA?b.in_progress.length+b.review.length:0;
+    const avs=isA?working().slice(0,4).map(a=>{const rc=roleColor(a.role);return `<div class="av" style="background:${rc[0]};color:${rc[1]}">${esc(roleTag(a.role))}</div>`;}).join(''):'';
+    const cost=isA?money(u.cost_usd):money(0);
+    return `<div class="pcard${attn?' attn-c':''}" onclick="openProj('${esc(p.id)}')">
+      <div class="pc-h"><div class="pc-ic" style="background:${c[0]};color:${c[1]}">${esc(abbr(p.name||p.id))}</div><div><div class="pc-nm">${esc(p.name||p.id)}</div><div class="pc-path">${esc(p.directory||'')}</div></div><div class="pc-status ${statusCls}"><span class="pulse"></span> ${esc(statusTxt)}</div>${projCtrl(p)}</div>
+      <div class="pc-goal"><span class="gt">${esc(goal)}</span><span class="gp">${pct}%</span></div><div class="pbar"><i style="width:${pct}%${isA?'':';background:var(--text-4)'}"></i></div>
+      <div class="pc-live${isA&&working().length?'':' idle'}"><span class="ld"></span> ${esc(liveTxt)}</div>
+      <div class="pc-foot"><span class="st"><span class="d" style="background:var(--blue)"></span> <b>${active}</b> active</span><span class="st"><span class="d" style="background:var(--red)"></span> <b>${blocked}</b> blocked</span><span class="st"><span class="d" style="background:var(--green)"></span> <b>${done}</b> done</span><span class="st">◈ <b>${cost}</b></span><div class="ags">${avs}${isA?`<span class="agw">${working().length}/${(STATE.agents||[]).length}</span>`:'<span class="agw">idle</span>'}</div></div>
+    </div>`;
+  }).join('');
+}
+
+function renderConsole(){
+  const an=activeName();const b=board();const u=(STATE.usage&&STATE.usage.daily)||{};
+  const wk=working();const team=(STATE.agents||[]).length;
+  const active=b.in_progress.length+b.review.length;
+  // pulse line
+  $('pulse-line').innerHTML=`<span class="stt"><span class="beacon${wk.length?'':' idle'}"></span> ${wk.length?'Brewing':'Paused'}</span><span class="working"><b>${wk.length}</b> of ${team} agents working</span><span class="stats"><span class="s"><span class="dot" style="background:var(--blue)"></span> <b>${active}</b> active</span><span class="s"><span class="dot" style="background:var(--red)"></span> <b>${b.blocked.length}</b> blocked</span><span class="s"><span class="dot" style="background:var(--green)"></span> <b>${b.completed.length}</b> done</span><span class="s">◈ <b>${money(u.cost_usd)}</b></span><span class="toggle">Details <span class="cv">▾</span></span></span>`;
+  // live grid (all agents; working ones pulse)
+  const lg=$('live-grid');
+  lg.innerHTML=(STATE.agents||[]).length?STATE.agents.map(a=>{const rc=roleColor(a.role);const wkOn=!DORMANT.has(String(a.status||'').toLowerCase());
+    return `<div class="agc"><div class="ar1"><div class="av" style="background:${rc[0]};color:${rc[1]}">${esc(roleTag(a.role))}</div><div><div class="nm">${esc(a.role||'agent')}</div><div class="rl">${esc(a.instance_id||a.role||'')}</div></div><span class="pd${wkOn?'':' off'}"></span></div><div class="act">${esc(a.status||'')}${a.current_task?' · <span class="tk">'+esc(a.current_task)+'</span>':''}</div><div class="ar2"><span>${esc(a.current_gate||'')}</span><span class="gr">${esc(agoText(a.last_heartbeat))}</span></div></div>`;
+  }).join(''):`<div class="agc" style="grid-column:1/-1"><div class="act">No agents in this team yet.</div></div>`;
+  // board columns
+  const COLS=[['Backlog','backlog','var(--text-3)'],['Pending','pending','var(--violet)'],['In Progress','in_progress','var(--blue)'],['Review','review','var(--blue)'],['Done','completed','var(--green)']];
+  $('console-board').innerHTML=COLS.map(([title,key,dot])=>{
+    let items=b[key];
+    if(key==='backlog')items=[...b.backlog,...b.blocked,...b.failed,...b.rejected];
+    const live=key==='in_progress';
+    const cap=key==='completed'?3:6;
+    let cards=items.slice(0,cap).map(t=>{const rc=roleColor(t.assigned_to||t.claimed_by);const [pc,pl]=prio(t.priority);
+      const label=key==='completed'?'<span class="label r">✓ done</span>':(live?'<span class="label r" style="color:var(--green)">● live</span>':`<span class="label r">${pl}</span>`);
+      return `<div class="card${live?' live-card':''}"${key==='completed'?' style="opacity:.7"':''}><div class="top"><span class="id">${esc(t.id||'')}</span><span class="pdot" style="background:${pc}"></span></div><div class="ti">${esc(t.title||'Untitled task')}</div><div class="foot"><div class="as" style="background:${rc[0]};color:${rc[1]}">${esc(roleTag(t.assigned_to||t.claimed_by))}</div>${label}</div></div>`;}).join('');
+    if(!items.length)cards=`<div class="col-empty">Empty</div>`;
+    const more=items.length>cap?`<div class="more-row">+ ${items.length-cap} more</div>`:'';
+    return `<div><div class="col-h"><span class="dt" style="background:${dot}"></span> ${title} <span class="c">${items.length}</span></div>${cards}${more}</div>`;
+  }).join('');
+  // nav side
+  $('nav-board-ct').textContent=b.in_progress.length+b.review.length+b.pending.length||'';
+  $('nav-agent-ct').textContent=team||'';
+  const beacon=$('ns-beacon'),state=$('ns-state');
+  if(beacon&&state){beacon.className='beacon'+(wk.length?'':' idle');state.textContent=wk.length?'Brewing':(an?'Paused':'—');}
+}
+
+function renderAll(){renderRail();renderHome();renderProjects();if(curView==='console')renderConsole();}
+
+/* ---------- navigation ---------- */
+function showView(id){document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));$(id).classList.add('on');document.querySelector('.scroll').scrollTo({top:0});curView=id;}
+function setRail(which){$('r-home').classList.toggle('on',which==='home');$('r-proj').classList.toggle('on',which==='projects');}
+function go(v){$('app').classList.remove('console');$('ws').style.display='flex';$('crumb').style.display='none';
+  if(v==='projects'){showView('projects');setRail('projects');renderProjects();}else{showView('home');setRail('home');renderHome();}}
+function openProjActive(){const a=STATE.status&&STATE.status.active;if(a)return openProj(a.id);const p=(STATE.projects||[])[0];if(p)openProj(p.id);}
+function openProj(id){
+  if(!id)return;
+  // One click opens the project's board, scoped to it via ?project=<id> (the
+  // board page tags its /api calls with X-Taskbrew-Project). Works whether the
+  // project is running or stopped — a stopped project resolves to a read-only
+  // idle view of its own DB. No focus switch, no Start prompt.
+  window.location.href='/advanced?project='+encodeURIComponent(id);
+}
+function tgGrp(id){$(id).classList.toggle('closed');}
+function focusGoal(){go('home');const g=$('goalInput');if(g&&!g.disabled){g.focus();g.scrollIntoView({behavior:'smooth',block:'center'});}}
+function focusGoalConsole(){focusGoal();}
+
+/* ---------- composer ---------- */
+async function submitGoal(){
+  const inp=$('goalInput'),btn=$('goalBtn');if(!inp||inp.disabled)return;
+  const v=inp.value.trim();if(!v)return;
+  btn.style.pointerEvents='none';btn.textContent='Starting…';
+  try{const r=await fetch('/api/goals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:v,description:v})});
+    if(!r.ok)throw new Error('HTTP '+r.status);inp.value='';await refresh();}
+  catch(e){alert('Could not submit goal: '+e.message);}
+  finally{btn.style.pointerEvents='auto';btn.textContent='Start →';}
+}
+
+/* ---------- websocket ---------- */
+function connectWS(){try{const proto=location.protocol==='https:'?'wss:':'ws:';ws=new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen=()=>{wsRetry=0;};
+  ws.onclose=()=>{if(wsRetry<6){wsRetry++;setTimeout(connectWS,1500*wsRetry);}};
+  ws.onerror=()=>{try{ws.close();}catch(e){}};
+  ws.onmessage=(ev)=>{let m;try{m=JSON.parse(ev.data);}catch(e){return;}if(m&&typeof m.type==='string'&&/^(task|agent|question|interaction|board)/.test(m.type)){scheduleRefresh();}};
+}catch(e){}}
+function scheduleRefresh(){if(refreshScheduled)return;refreshScheduled=true;setTimeout(()=>{refreshScheduled=false;refresh();},900);}
+
+/* ---------- refresh ---------- */
+async function refresh(){await loadStatus();await loadProjects();if(STATE.status&&STATE.status.active){await loadActiveData();}else{STATE.paused=[];}renderAll();}
+async function init(){
+  try{await refresh();}catch(e){$('home-digest').innerHTML=`<span class="d">Could not load workspace: ${esc(e.message)}</span>`;}
+  connectWS();
+  setInterval(()=>{if(document.visibilityState==='visible')refresh();},30000);
+  document.addEventListener('keydown',(e)=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();focusGoal();}});
+}
+init();
+</script>
+</body>
+</html>

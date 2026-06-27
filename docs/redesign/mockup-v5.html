@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TaskBrew · Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;600;700&family=Geist+Mono:wght@400;450;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#090a0d; --bg-rail:#070809; --bg-side:#0b0c10; --bg-content:#0d0f13;
+  --panel:#13161c; --panel-2:#171b22; --panel-hi:#1c212a;
+  --border:#1d222a; --border-2:#2a313c; --border-3:#37414f;
+  --text:#e8eaef; --text-2:#9aa2b1; --text-3:#646c7b; --text-4:#474e5c;
+  --accent:#6c79ff; --accent-hi:#8d96ff; --accent-soft:rgba(108,121,255,.13); --accent-line:rgba(108,121,255,.5);
+  --green:#46b56a; --green-soft:rgba(70,181,106,.13);
+  --amber:#d3a13a; --amber-soft:rgba(211,161,58,.13);
+  --red:#ef5f6b; --red-soft:rgba(239,95,107,.13);
+  --blue:#4f9bf0; --blue-soft:rgba(79,155,240,.13);
+  --violet:#a274f0; --violet-soft:rgba(162,116,240,.13);
+  --mono:"Geist Mono",ui-monospace,monospace; --sans:"Geist",-apple-system,system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;font-size:13.5px;line-height:1.45;letter-spacing:-.01em}
+.mono{font-family:var(--mono);font-feature-settings:"tnum"1}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+::selection{background:var(--accent-soft)}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:6px;border:2px solid transparent;background-clip:content-box}::-webkit-scrollbar-thumb:hover{background:var(--border-3)}
+
+.app{display:grid;grid-template-columns:58px 1fr;height:100vh;overflow:hidden}
+.app.console{grid-template-columns:58px 224px 1fr}
+.app.overview .nav-side{display:none}
+
+/* ===== PROJECT RAIL ===== */
+.rail{background:var(--bg-rail);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:11px 0;gap:7px}
+.rlogo{width:34px;height:34px;border-radius:9px;background:linear-gradient(145deg,#3a3f78,#262a52);display:grid;place-items:center;color:#cdd2ff;font-weight:700;font-size:16px;box-shadow:inset 0 0 0 1px rgba(140,150,255,.25);margin-bottom:5px}
+.rdiv{width:24px;height:1px;background:var(--border);margin:3px 0}
+.pj{position:relative;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;transition:.14s;color:var(--text-2);background:var(--panel)}
+.pj:hover{border-radius:10px;color:var(--text)}
+.pj.on{box-shadow:0 0 0 2px var(--accent)}
+.pj .sd{position:absolute;right:-2px;bottom:-2px;width:11px;height:11px;border-radius:50%;border:2.5px solid var(--bg-rail)}
+.pj .sd.work{background:var(--green)} .pj .sd.work::after{content:"";position:absolute;inset:-2px;border-radius:50%;border:1.5px solid var(--green);opacity:.6;animation:beam 1.8s ease-out infinite}
+.pj .sd.warn{background:var(--red)} .pj .sd.pause{background:var(--amber)} .pj .sd.idle{background:var(--text-4)}
+@keyframes beam{from{transform:scale(.6);opacity:.7}to{transform:scale(2);opacity:0}}
+.pj.home{color:var(--text-3);font-size:16px;background:transparent;border:1px solid var(--border)}
+.pj.home.on{background:var(--accent-soft);color:var(--accent-hi);box-shadow:0 0 0 2px var(--accent)}
+.pj.add{color:var(--text-4);font-size:18px;background:transparent;border:1px dashed var(--border-2)}
+.pj.add:hover{color:var(--text-2);border-color:var(--border-3)}
+.rail .sp{flex:1}
+.ravatar{width:30px;height:30px;border-radius:50%;background:var(--panel-hi);border:1px solid var(--border-2);display:grid;place-items:center;font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text-2);cursor:pointer}
+
+/* tooltip */
+.pj .tip{position:absolute;left:48px;top:50%;transform:translateY(-50%) scale(.96);background:var(--panel-hi);border:1px solid var(--border-2);border-radius:7px;padding:5px 9px;font-family:var(--sans);font-size:12px;font-weight:500;white-space:nowrap;opacity:0;pointer-events:none;transition:.13s;z-index:30;color:var(--text)}
+.pj:hover .tip{opacity:1;transform:translateY(-50%) scale(1)}
+.pj .tip .ts{font-size:10.5px;color:var(--text-3);margin-left:7px;font-family:var(--mono)}
+
+/* ===== NAV SIDE (console only) ===== */
+.nav-side{background:var(--bg-side);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.ns-top{padding:14px 14px 4px}
+.ns-back{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text-3);cursor:pointer;margin-bottom:11px} .ns-back:hover{color:var(--text-2)}
+.ns-name{display:flex;align-items:center;gap:9px} .ns-name .nm{font-weight:600;font-size:14px} .ns-name .pp{font-size:11px;color:var(--text-4);font-family:var(--mono)}
+.nav{flex:1;overflow-y:auto;padding:8px 8px 12px}
+.grp{margin-top:7px}
+.grp-h{display:flex;align-items:center;gap:7px;padding:6px 10px;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-4);cursor:pointer;border-radius:7px;user-select:none} .grp-h:hover{color:var(--text-3);background:var(--panel)}
+.grp-h .chev{margin-left:auto;font-size:9px;transition:.18s} .grp.closed .chev{transform:rotate(-90deg)} .grp.closed .grp-body{display:none}
+.grp-h .ct{font-family:var(--mono);font-weight:450;font-size:10px;background:var(--panel-hi);padding:0 5px;border-radius:10px;color:var(--text-3)}
+.item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;color:var(--text-2);font-size:13px;cursor:pointer;transition:.12s;position:relative;margin:1px 0} .item:hover{background:var(--panel);color:var(--text)} .item.on{background:var(--accent-soft);color:var(--text)} .item.on::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:2.5px;border-radius:3px;background:var(--accent)}
+.item .ic{width:16px;flex:0 0 16px;color:var(--text-3);display:grid;place-items:center;font-size:13px} .item.on .ic{color:var(--accent-hi)} .item .tail{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text-4)}
+.ns-foot{border-top:1px solid var(--border);padding:11px 14px} .foot-row{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--text-2)} .foot-row .right{margin-left:auto}
+.beacon{width:8px;height:8px;border-radius:50%;background:var(--green);position:relative} .beacon::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1.5px solid var(--green);opacity:.5;animation:beam 1.8s ease-out infinite}
+.btn-s{height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--border-2);background:var(--panel-2);color:var(--text);font-size:12px;font-weight:500} .btn-s:hover{background:var(--panel-hi)}
+
+/* ===== MAIN ===== */
+.main{background:var(--bg-content);display:flex;flex-direction:column;min-width:0;min-height:0}
+.topbar{height:54px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 22px;flex:0 0 auto}
+.crumb{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-3)} .crumb b{color:var(--text);font-weight:600} .crumb .sep{color:var(--text-4)} .crumb .lk{cursor:pointer} .crumb .lk:hover{color:var(--text-2)}
+.kbar{margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:7px 11px;width:250px;color:var(--text-3);font-size:12.5px;cursor:text} .kbar:hover{border-color:var(--border-2)} .kbar .k{margin-left:auto;font-family:var(--mono);font-size:10.5px;border:1px solid var(--border-2);border-radius:5px;padding:1px 5px;color:var(--text-4)}
+.tb-primary{height:32px;padding:0 14px;border-radius:8px;background:var(--accent);color:#fff;font-weight:550;font-size:12.5px;display:inline-flex;align-items:center;gap:7px} .tb-primary:hover{background:var(--accent-hi)}
+.scroll{flex:1;overflow-y:auto;min-height:0}
+.pad{padding:22px 26px 48px;max-width:1240px;margin:0 auto}
+.view{display:none;animation:fade .3s ease both} .view.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.tone-g{color:var(--green)} .tone-a{color:var(--amber)} .tone-r{color:var(--red)} .tone-b{color:var(--blue)}
+
+/* ===== OVERVIEW ===== */
+.ov-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:6px}
+.ov-head h1{font-size:21px;font-weight:600;letter-spacing:-.02em}
+.ov-agg{display:flex;align-items:center;gap:16px;font-size:13px;color:var(--text-2);margin-top:5px}
+.ov-agg .a{display:flex;align-items:center;gap:7px} .ov-agg .a b{font-family:var(--mono);color:var(--text);font-weight:550} .ov-agg .dot{width:7px;height:7px;border-radius:50%}
+.attn{display:flex;align-items:center;gap:13px;margin:18px 0 20px;padding:11px 15px;border-radius:11px;background:var(--red-soft);border:1px solid rgba(239,95,107,.22)}
+.attn .ai{color:var(--red);font-size:15px} .attn .at{font-size:12.5px;color:var(--text);font-weight:550} .attn .items{display:flex;gap:9px;margin-left:auto;flex-wrap:wrap}
+.attn .it{font-size:11.5px;color:var(--text-2);background:rgba(0,0,0,.25);border:1px solid var(--border-2);padding:3px 9px;border-radius:7px;cursor:pointer} .attn .it:hover{color:var(--text)} .attn .it b{color:var(--red)}
+.pgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.pcard{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:16px 17px;cursor:pointer;transition:.15s;position:relative;overflow:hidden}
+.pcard:hover{border-color:var(--border-2);background:var(--panel-2);transform:translateY(-2px)}
+.pcard.attn-c{border-color:rgba(239,95,107,.35)} .pcard.attn-c::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red)}
+.pc-h{display:flex;align-items:center;gap:11px;margin-bottom:3px}
+.pc-ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-family:var(--mono);font-size:12px;font-weight:600}
+.pc-nm{font-weight:600;font-size:14.5px;letter-spacing:-.01em} .pc-path{font-size:11px;color:var(--text-4);font-family:var(--mono)}
+.pc-status{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:550;padding:4px 9px;border-radius:7px}
+.pc-status.work{background:var(--green-soft);color:var(--green)} .pc-status.warn{background:var(--red-soft);color:var(--red)} .pc-status.pause{background:var(--amber-soft);color:var(--amber)} .pc-status.idle{background:var(--panel-hi);color:var(--text-3)}
+.pc-status .pulse{width:7px;height:7px;border-radius:50%;background:currentColor} .pc-status.work .pulse{animation:bp 1.6s ease-in-out infinite}
+@keyframes bp{0%,100%{opacity:1}50%{opacity:.3}}
+.pc-goal{display:flex;align-items:center;gap:10px;margin:14px 0 12px}
+.pc-goal .gt{font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.pc-goal .gp{font-family:var(--mono);font-size:11px;color:var(--text-3)}
+.pbar{height:5px;border-radius:4px;background:var(--border);overflow:hidden;margin-bottom:13px} .pbar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--accent-hi))}
+.pc-live{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);padding:9px 11px;background:var(--bg-content);border:1px solid var(--border);border-radius:9px;margin-bottom:13px}
+.pc-live .ld{width:6px;height:6px;border-radius:50%;background:var(--green);animation:bp 1.6s ease-in-out infinite;flex:0 0 6px} .pc-live .tk{font-family:var(--mono);color:var(--accent-hi);font-size:11px} .pc-live.idle .ld{background:var(--text-4);animation:none} .pc-live.idle{color:var(--text-4)}
+.pc-foot{display:flex;align-items:center;gap:13px;font-size:12px}
+.pc-foot .st{display:flex;align-items:center;gap:6px;color:var(--text-3)} .pc-foot .st b{font-family:var(--mono);color:var(--text-2);font-weight:550} .pc-foot .st .d{width:6px;height:6px;border-radius:50%}
+.pc-foot .ag{margin-left:auto;display:flex;flex-direction:row;align-items:center;gap:0;padding:0;background:transparent}
+.pc-foot .av{width:22px;height:22px;border-radius:50%;border:2px solid var(--panel);margin-left:-7px;display:grid;place-items:center;font-size:9px;font-weight:600;font-family:var(--mono)} .pc-foot .av:first-child{margin-left:0}
+.pc-foot .agw{font-size:11px;color:var(--text-3);margin-left:8px}
+.new-card{border:1px dashed var(--border-2);background:transparent;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--text-3);min-height:120px}
+.new-card:hover{border-color:var(--border-3);color:var(--text-2);transform:none;background:var(--panel)} .new-card .pl{font-size:22px}
+
+/* ===== CONSOLE (calm v4) ===== */
+.pulse{border:1px solid var(--border);border-radius:12px;background:var(--panel);margin-bottom:20px;overflow:hidden}
+.pulse-line{display:flex;align-items:center;gap:14px;padding:13px 16px;cursor:pointer} .pulse-line:hover{background:var(--panel-2)}
+.pulse-line .st{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:550} .pulse-line .working{color:var(--text);font-weight:450} .pulse-line .working b{font-family:var(--mono);font-weight:550}
+.pulse-line .stats{display:flex;align-items:center;gap:16px;margin-left:auto} .pulse-line .stats .s{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text-2)} .pulse-line .stats .s b{font-family:var(--mono);color:var(--text);font-weight:550} .pulse-line .stats .s .dot{width:7px;height:7px;border-radius:50%}
+.pulse-line .toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3)} .pulse-line .toggle .cv{font-size:9px;transition:.2s} .pulse.open .toggle .cv{transform:rotate(180deg)}
+.pulse-detail{display:none;border-top:1px solid var(--border)} .pulse.open .pulse-detail{display:block}
+.pd-h{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-4);padding:13px 16px 2px}
+.live-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border-top:1px solid var(--border)}
+.ag{background:var(--panel);padding:12px 14px;display:flex;flex-direction:column;gap:8px} .ag.idle{opacity:.5}
+.ag .ar1{display:flex;align-items:center;gap:9px} .ag .av{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;font-size:9.5px;font-weight:600;font-family:var(--mono)} .ag .nm{font-size:12px;font-weight:550} .ag .rl{font-size:10px;color:var(--text-4);font-family:var(--mono)} .ag .pd{margin-left:auto;width:7px;height:7px;border-radius:50%} .ag .pd.work{background:var(--green);box-shadow:0 0 7px var(--green);animation:bp 1.6s ease-in-out infinite} .ag .act{font-size:11.5px;color:var(--text-2)} .ag .act .tk{color:var(--accent-hi);font-family:var(--mono);font-size:11px} .ag .ar2{display:flex;font-family:var(--mono);font-size:10px;color:var(--text-4)} .ag .ar2 .gr{margin-left:auto}
+.bar{display:flex;align-items:center;gap:10px;margin-bottom:16px} .bar h2{font-size:16px;font-weight:600} .bar .grow{flex:1}
+.seg{display:flex;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:2px} .seg button{color:var(--text-3);font-size:12.5px;font-weight:500;padding:5px 11px;border-radius:6px} .seg button.on{background:var(--panel-hi);color:var(--text)}
+.srch{display:flex;align-items:center;gap:8px;height:30px;padding:0 11px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text-3);font-size:12.5px;width:160px}
+.add{height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--border-2);background:var(--panel-2);color:var(--text);font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;gap:6px} .add:hover{background:var(--panel-hi)}
+.kb{display:grid;grid-template-columns:repeat(5,1fr);gap:13px;align-items:start}
+.col-h{display:flex;align-items:center;gap:8px;padding:0 3px 12px;font-size:12px;font-weight:600;color:var(--text-2)} .col-h .dt{width:7px;height:7px;border-radius:2px} .col-h .c{font-family:var(--mono);color:var(--text-4);font-weight:450}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;cursor:pointer;transition:.14s;position:relative} .card:hover{border-color:var(--border-2);background:var(--panel-2);transform:translateY(-1px)} .card.live-card{border-color:var(--accent-line)} .card.live-card::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:60% 100%;animation:slide 1.6s linear infinite;border-radius:0 0 10px 10px}
+@keyframes slide{from{background-position:-60% 0}to{background-position:160% 0}}
+.card .top{display:flex;align-items:center;gap:7px;margin-bottom:8px} .card .id{font-family:var(--mono);font-size:11px;color:var(--text-3)} .card .pdot{width:6px;height:6px;border-radius:50%;margin-left:auto} .card .ti{font-size:13px;line-height:1.4;margin-bottom:11px} .card .foot{display:flex;align-items:center;gap:8px} .card .as{width:21px;height:21px;border-radius:50%;display:grid;place-items:center;font-size:9.5px;font-weight:600;font-family:var(--mono)} .card .label{font-size:10.5px;color:var(--text-3);font-family:var(--mono);display:inline-flex;align-items:center;gap:5px} .card .label.r{margin-left:auto}
+.more-row{text-align:center;font-size:11.5px;color:var(--text-3);padding:10px;border:1px dashed var(--border);border-radius:9px}
+.foot-note{margin-top:24px;font-size:11.5px;color:var(--text-4);text-align:center} .foot-note b{color:var(--accent-hi);font-weight:500}
+
+@media(max-width:1000px){.pgrid{grid-template-columns:1fr}.kb,.live-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="app overview" id="app">
+  <!-- PROJECT RAIL -->
+  <div class="rail">
+    <div class="rlogo">☲</div>
+    <div class="pj home on" id="r-home" onclick="goOverview()">▦<span class="tip">All projects</span></div>
+    <div class="rdiv"></div>
+    <div class="pj" style="background:var(--accent-soft);color:var(--accent-hi)" onclick="openProj('taskbrew')">tb<span class="sd work"></span><span class="tip">Taskbrew <span class="ts">brewing</span></span></div>
+    <div class="pj" style="background:var(--red-soft);color:var(--red)" onclick="openProj('payments')">pa<span class="sd warn"></span><span class="tip">payments-api <span class="ts">3 blocked</span></span></div>
+    <div class="pj" style="background:var(--blue-soft);color:var(--blue)" onclick="openProj('web')">wa<span class="sd work"></span><span class="tip">web-app <span class="ts">brewing</span></span></div>
+    <div class="pj" style="background:var(--violet-soft);color:var(--violet)" onclick="openProj('ml')">ml<span class="sd pause"></span><span class="tip">ml-pipeline <span class="ts">paused</span></span></div>
+    <div class="pj add">+<span class="tip">New project</span></div>
+    <div class="sp"></div>
+    <div class="ravatar">NB</div>
+  </div>
+
+  <!-- NAV SIDE (console only) -->
+  <aside class="nav-side">
+    <div class="ns-top">
+      <div class="ns-back" onclick="goOverview()">‹ All projects</div>
+      <div class="ns-name"><div class="pc-ic" style="width:26px;height:26px;background:var(--accent-soft);color:var(--accent-hi)" id="ns-ic">tb</div><div><div class="nm" id="ns-nm">Taskbrew</div><div class="pp" id="ns-pp">~/projects/taskbrew</div></div></div>
+    </div>
+    <nav class="nav">
+      <div class="grp" id="g-work"><div class="grp-h" onclick="tgGrp('g-work')">Work <span class="chev">▾</span></div><div class="grp-body">
+        <div class="item on"><span class="ic">▤</span> Board <span class="tail">12</span></div>
+        <div class="item"><span class="ic">☰</span> List</div>
+        <div class="item"><span class="ic">⌥</span> Dependency graph</div>
+      </div></div>
+      <div class="grp closed" id="g-ins"><div class="grp-h" onclick="tgGrp('g-ins')">Insights <span class="ct">5</span><span class="chev">▾</span></div><div class="grp-body">
+        <div class="item"><span class="ic">◈</span> Cost &amp; performance</div><div class="item"><span class="ic">⛨</span> Quality &amp; safety</div><div class="item"><span class="ic">◉</span> Knowledge &amp; memory</div><div class="item"><span class="ic">▲</span> Agent intelligence</div><div class="item"><span class="ic">◱</span> Planning &amp; coordination</div>
+      </div></div>
+      <div class="grp closed" id="g-team"><div class="grp-h" onclick="tgGrp('g-team')">Team &amp; config <span class="chev">▾</span></div><div class="grp-body">
+        <div class="item"><span class="ic">☲</span> Agents <span class="tail">5</span></div><div class="item"><span class="ic">◇</span> Pipeline</div><div class="item"><span class="ic">⚙</span> Settings</div>
+      </div></div>
+    </nav>
+    <div class="ns-foot"><div class="foot-row"><span class="beacon"></span> Brewing <span class="right"><button class="btn-s">∥ Pause</button></span></div></div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div class="crumb" id="crumb"><b>Projects</b></div>
+      <div class="kbar"><span>⌕</span> Search across all projects… <span class="k">⌘K</span></div>
+      <button class="tb-primary" id="primary">＋ New project</button>
+    </div>
+    <div class="scroll"><div class="pad">
+
+      <!-- ============ OVERVIEW ============ -->
+      <section class="view on" id="overview">
+        <div class="ov-head">
+          <div>
+            <h1>Projects</h1>
+            <div class="ov-agg">
+              <span class="a"><span class="beacon"></span> <b>3</b> brewing</span>
+              <span class="a"><span class="dot" style="background:var(--green)"></span> <b>9</b> agents working</span>
+              <span class="a"><span class="dot" style="background:var(--red)"></span> <b>4</b> blocked</span>
+              <span class="a">◈ <b>$1.84</b> today</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="attn">
+          <span class="ai">⚠</span><span class="at">2 projects need attention</span>
+          <div class="items">
+            <span class="it" onclick="openProj('payments')">payments-api · <b>3 blocked</b></span>
+            <span class="it" onclick="openProj('web')">web-app · <b>budget 92%</b></span>
+          </div>
+        </div>
+
+        <div class="pgrid">
+          <!-- taskbrew -->
+          <div class="pcard" onclick="openProj('taskbrew')">
+            <div class="pc-h"><div class="pc-ic" style="background:var(--accent-soft);color:var(--accent-hi)">tb</div><div><div class="pc-nm">Taskbrew</div><div class="pc-path">~/projects/taskbrew · FEAT-001</div></div><div class="pc-status work"><span class="pulse"></span> Brewing</div></div>
+            <div class="pc-goal"><span class="gt">adder CLI — simple python script to add two numbers</span><span class="gp">68%</span></div>
+            <div class="pbar"><i style="width:68%"></i></div>
+            <div class="pc-live"><span class="ld"></span> coder-1 implementing <span class="tk">add_two_numbers()</span></div>
+            <div class="pc-foot">
+              <span class="st"><span class="d" style="background:var(--blue)"></span> <b>2</b> active</span>
+              <span class="st"><span class="d" style="background:var(--red)"></span> <b>1</b> blocked</span>
+              <span class="st"><span class="d" style="background:var(--green)"></span> <b>7</b> done</span>
+              <span class="st">◈ <b>$0.42</b></span>
+              <div class="ag"><div class="av" style="background:var(--green-soft);color:var(--green)">C1</div><div class="av" style="background:var(--green-soft);color:var(--green)">C2</div><div class="av" style="background:var(--violet-soft);color:var(--violet)">A2</div><span class="agw">3/5</span></div>
+            </div>
+          </div>
+
+          <!-- payments-api -->
+          <div class="pcard attn-c" onclick="openProj('payments')">
+            <div class="pc-h"><div class="pc-ic" style="background:var(--red-soft);color:var(--red)">pa</div><div><div class="pc-nm">payments-api</div><div class="pc-path">~/work/payments-api · PAY-204</div></div><div class="pc-status warn"><span class="pulse"></span> Needs attention</div></div>
+            <div class="pc-goal"><span class="gt">Migrate billing to Stripe API v3</span><span class="gp">41%</span></div>
+            <div class="pbar"><i style="width:41%;background:var(--red)"></i></div>
+            <div class="pc-live"><span class="ld"></span> reviewer-1 reviewing · <span class="tk" style="color:var(--red)">3 tasks blocked on review gate</span></div>
+            <div class="pc-foot">
+              <span class="st"><span class="d" style="background:var(--blue)"></span> <b>1</b> active</span>
+              <span class="st"><span class="d" style="background:var(--red)"></span> <b>3</b> blocked</span>
+              <span class="st"><span class="d" style="background:var(--green)"></span> <b>9</b> done</span>
+              <span class="st">◈ <b>$0.88</b></span>
+              <div class="ag"><div class="av" style="background:var(--green-soft);color:var(--green)">C1</div><div class="av" style="background:var(--blue-soft);color:var(--blue)">R1</div><span class="agw">2/6</span></div>
+            </div>
+          </div>
+
+          <!-- web-app -->
+          <div class="pcard" onclick="openProj('web')">
+            <div class="pc-h"><div class="pc-ic" style="background:var(--blue-soft);color:var(--blue)">wa</div><div><div class="pc-nm">web-app</div><div class="pc-path">~/work/web-app · UI-88</div></div><div class="pc-status work"><span class="pulse"></span> Brewing</div></div>
+            <div class="pc-goal"><span class="gt">Dark mode + settings redesign</span><span class="gp">85%</span></div>
+            <div class="pbar"><i style="width:85%"></i></div>
+            <div class="pc-live"><span class="ld"></span> 4 agents working · <span class="tk">tester-2 running visual diffs</span></div>
+            <div class="pc-foot">
+              <span class="st"><span class="d" style="background:var(--blue)"></span> <b>5</b> active</span>
+              <span class="st"><span class="d" style="background:var(--amber)"></span> <b>budget 92%</b></span>
+              <span class="st"><span class="d" style="background:var(--green)"></span> <b>12</b> done</span>
+              <span class="st">◈ <b>$0.54</b></span>
+              <div class="ag"><div class="av" style="background:var(--green-soft);color:var(--green)">C1</div><div class="av" style="background:var(--green-soft);color:var(--green)">C2</div><div class="av" style="background:var(--amber-soft);color:var(--amber)">T2</div><div class="av" style="background:var(--blue-soft);color:var(--blue)">R1</div><span class="agw">4/4</span></div>
+            </div>
+          </div>
+
+          <!-- ml-pipeline (paused) -->
+          <div class="pcard" onclick="openProj('ml')">
+            <div class="pc-h"><div class="pc-ic" style="background:var(--violet-soft);color:var(--violet)">ml</div><div><div class="pc-nm">ml-pipeline</div><div class="pc-path">~/work/ml-pipeline · ML-12</div></div><div class="pc-status pause"><span class="pulse"></span> Paused</div></div>
+            <div class="pc-goal"><span class="gt">Retrain ranking model on Q2 data</span><span class="gp">20%</span></div>
+            <div class="pbar"><i style="width:20%;background:var(--text-3)"></i></div>
+            <div class="pc-live idle"><span class="ld"></span> Paused by you · 2h ago — resume to continue</div>
+            <div class="pc-foot">
+              <span class="st"><span class="d" style="background:var(--text-4)"></span> <b>0</b> active</span>
+              <span class="st"><span class="d" style="background:var(--green)"></span> <b>3</b> done</span>
+              <span class="st">◈ <b>$0.00</b> today</span>
+              <div class="ag"><span class="agw">0/4 · idle</span></div>
+            </div>
+          </div>
+
+          <div class="pcard new-card"><span class="pl">+</span> New project</div>
+        </div>
+      </section>
+
+      <!-- ============ CONSOLE (one project) ============ -->
+      <section class="view" id="console">
+        <div class="pulse" id="pulse">
+          <div class="pulse-line" onclick="document.getElementById('pulse').classList.toggle('open')">
+            <span class="st"><span class="beacon"></span> Brewing</span>
+            <span class="working"><b>3</b> of 5 agents working</span>
+            <span class="stats">
+              <span class="s"><span class="dot" style="background:var(--blue)"></span> <b>2</b> active</span>
+              <span class="s"><span class="dot" style="background:var(--red)"></span> <b>1</b> blocked</span>
+              <span class="s"><span class="dot" style="background:var(--green)"></span> <b>7</b> done</span>
+              <span class="s">◈ <b>$0.42</b></span>
+              <span class="toggle">Details <span class="cv">▾</span></span>
+            </span>
+          </div>
+          <div class="pulse-detail">
+            <div class="pd-h">Who's working right now</div>
+            <div class="live-grid">
+              <div class="ag"><div class="ar1"><div class="av" style="background:var(--green-soft);color:var(--green)">C1</div><div><div class="nm">coder-1</div><div class="rl">coder</div></div><span class="pd work"></span></div><div class="act">Implementing <span class="tk">add_two_numbers()</span></div><div class="ar2"><span>CODE-011</span><span class="gr">2m14s · 4.6K</span></div></div>
+              <div class="ag"><div class="ar1"><div class="av" style="background:var(--green-soft);color:var(--green)">C2</div><div><div class="nm">coder-2</div><div class="rl">coder</div></div><span class="pd work"></span></div><div class="act">Wiring <span class="tk">argparse</span> CLI</div><div class="ar2"><span>CODE-012</span><span class="gr">0m48s · 1.2K</span></div></div>
+              <div class="ag"><div class="ar1"><div class="av" style="background:var(--violet-soft);color:var(--violet)">A2</div><div><div class="nm">architect-2</div><div class="rl">architect</div></div><span class="pd work"></span></div><div class="act">Decomposing <span class="tk">ARCH-006</span></div><div class="ar2"><span>ARCH-006</span><span class="gr">reviewing…</span></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="bar"><h2>Tasks</h2><div class="seg" style="margin-left:8px"><button class="on">▤ Board</button><button>☰ List</button><button>⌥ Graph</button></div><div class="grow"></div><div class="srch"><span>⌕</span> Search…</div><button class="add">＋ New task</button></div>
+        <div class="kb">
+          <div><div class="col-h"><span class="dt" style="background:var(--text-3)"></span> Backlog <span class="c">2</span></div>
+            <div class="card"><div class="top"><span class="id">CODE-014</span><span class="pdot" style="background:var(--amber)"></span></div><div class="ti">Add input validation to the adder script</div><div class="foot"><div class="as" style="background:var(--green-soft);color:var(--green)">C1</div><span class="label r">◈ med</span></div></div>
+            <div class="card"><div class="top"><span class="id">TEST-009</span><span class="pdot" style="background:var(--text-3)"></span></div><div class="ti">Write unit tests for edge cases</div><div class="foot"><div class="as" style="background:var(--amber-soft);color:var(--amber)">T1</div><span class="label r">◇ low</span></div></div>
+          </div>
+          <div><div class="col-h"><span class="dt" style="background:var(--violet)"></span> Pending <span class="c">1</span></div>
+            <div class="card"><div class="top"><span class="id">ARCH-006</span><span class="pdot" style="background:var(--red)"></span></div><div class="ti">Design module structure for the CLI</div><div class="foot"><div class="as" style="background:var(--violet-soft);color:var(--violet)">A2</div><span class="label r">▲ high</span></div></div>
+          </div>
+          <div><div class="col-h"><span class="dt" style="background:var(--blue)"></span> In Progress <span class="c">2</span></div>
+            <div class="card live-card"><div class="top"><span class="id">CODE-011</span><span class="pdot" style="background:var(--red)"></span></div><div class="ti">Implement add_two_numbers() function</div><div class="foot"><div class="as" style="background:var(--green-soft);color:var(--green)">C1</div><span class="label r" style="color:var(--green)">● live</span></div></div>
+            <div class="card live-card"><div class="top"><span class="id">CODE-012</span><span class="pdot" style="background:var(--amber)"></span></div><div class="ti">Wire up argparse CLI entrypoint</div><div class="foot"><div class="as" style="background:var(--green-soft);color:var(--green)">C2</div><span class="label r" style="color:var(--green)">● live</span></div></div>
+          </div>
+          <div><div class="col-h"><span class="dt" style="background:var(--blue)"></span> Review <span class="c">1</span></div>
+            <div class="card"><div class="top"><span class="id">CODE-010</span><span class="pdot" style="background:var(--amber)"></span></div><div class="ti">Project scaffold &amp; README</div><div class="foot"><div class="as" style="background:var(--amber-soft);color:var(--amber)">R1</div><span class="label r">◈ med</span></div></div>
+          </div>
+          <div><div class="col-h"><span class="dt" style="background:var(--green)"></span> Done <span class="c">7</span></div>
+            <div class="card" style="opacity:.7"><div class="top"><span class="id">PM-001</span><span class="pdot" style="background:var(--red)"></span></div><div class="ti">Create PRD for adder script</div><div class="foot"><div class="as" style="background:var(--violet-soft);color:var(--violet)">P1</div><span class="label r">✓ done</span></div></div>
+            <div class="more-row">+ 6 completed today</div>
+          </div>
+        </div>
+      </section>
+
+      <div class="foot-note">Prototype v5 · <b>multi-project</b> · project rail (far left) + Projects overview → click a project to drill into its console · click <b>▦</b> or “All projects” to come back</div>
+    </div></div>
+  </div>
+</div>
+
+<script>
+const projects={
+  taskbrew:{nm:'Taskbrew',pp:'~/projects/taskbrew',ic:'tb',c:'var(--accent-soft)',t:'var(--accent-hi)'},
+  payments:{nm:'payments-api',pp:'~/work/payments-api',ic:'pa',c:'var(--red-soft)',t:'var(--red)'},
+  web:{nm:'web-app',pp:'~/work/web-app',ic:'wa',c:'var(--blue-soft)',t:'var(--blue)'},
+  ml:{nm:'ml-pipeline',pp:'~/work/ml-pipeline',ic:'ml',c:'var(--violet-soft)',t:'var(--violet)'}
+};
+function openProj(id){const p=projects[id];
+  document.getElementById('app').className='app console';
+  document.getElementById('overview').classList.remove('on');
+  document.getElementById('console').classList.add('on');
+  document.getElementById('ns-nm').textContent=p.nm;document.getElementById('ns-pp').textContent=p.pp;
+  const ic=document.getElementById('ns-ic');ic.textContent=p.ic;ic.style.background=p.c;ic.style.color=p.t;
+  document.getElementById('crumb').innerHTML=`<span class="lk" onclick="goOverview()">Projects</span><span class="sep">/</span><b>${p.nm}</b><span class="sep">/</span><span style="color:var(--text-3)">Board</span>`;
+  document.getElementById('primary').innerHTML='＋ New goal';
+  document.getElementById('r-home').classList.remove('on');
+  document.querySelector('.scroll').scrollTo({top:0});
+}
+function goOverview(){
+  document.getElementById('app').className='app overview';
+  document.getElementById('console').classList.remove('on');
+  document.getElementById('overview').classList.add('on');
+  document.getElementById('crumb').innerHTML='<b>Projects</b>';
+  document.getElementById('primary').innerHTML='＋ New project';
+  document.getElementById('r-home').classList.add('on');
+}
+function tgGrp(id){document.getElementById(id).classList.toggle('closed')}
+document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{b.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on')});
+</script>
+</body>
+</html>

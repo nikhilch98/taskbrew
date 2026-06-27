@@ -316,8 +316,13 @@ class TestTemplatePages:
     """Verify HTML template pages are accessible."""
 
     async def test_index_page_returns_200(self, client):
+        # The v6 calm console is the default landing: / redirects to /home,
+        # and the dense original board moved to /advanced.
         resp = await client.get("/")
-        assert resp.status_code == 200
+        assert resp.status_code in (302, 307)
+        assert resp.headers["location"] == "/home"
+        resp2 = await client.get("/home")
+        assert resp2.status_code == 200
 
     async def test_metrics_page_returns_200(self, client):
         resp = await client.get("/metrics")

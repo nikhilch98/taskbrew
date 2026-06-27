@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.requests import Request
 
 from taskbrew.auth import AuthManager
@@ -184,7 +184,7 @@ def create_app(
         # WebSocket auth hardening is tracked in audit 10 F#4/F#7 and is
         # deferred from this fix.
         skip_paths = {
-            "/", "/metrics", "/settings", "/costs", "/trace", "/questions",
+            "/", "/home", "/advanced", "/metrics", "/settings", "/costs", "/trace", "/questions",
             "/api/health", "/docs", "/redoc", "/openapi.json",
         }
         if (
@@ -363,10 +363,15 @@ def create_app(
     # ------------------------------------------------------------------
     # Wire up shared deps for routers
     # ------------------------------------------------------------------
-    from taskbrew.dashboard.routers._deps import set_orchestrator
+    from taskbrew.dashboard.routers._deps import set_orchestrator, set_readonly_getter
     from taskbrew.dashboard.routers import system as system_router
     from taskbrew.dashboard.routers import ws as ws_router
     from taskbrew.dashboard.routers import comparison as comparison_router
+
+    # Read-only idle views: let scoped requests for a registered-but-not-running
+    # project resolve to a view of its own DB (built lazily by _project_scope).
+    if project_manager is not None and hasattr(project_manager, "get_readonly_cached"):
+        set_readonly_getter(project_manager.get_readonly_cached)
 
     orch_obj = _build_orch()
     if orch_obj is not None:
@@ -408,26 +413,47 @@ def create_app(
     from taskbrew.dashboard.routers import usage as usage_router
     usage_router.set_usage_auth_deps(verify_admin)
 
-    # Wire up interaction and MCP tool dependencies
-    if orch_obj:
-        from taskbrew.orchestrator.interactions import InteractionManager
-        from taskbrew.dashboard.routers.mcp_tools import set_mcp_deps
-        from taskbrew.dashboard.routers.interactions import set_interaction_deps
-        from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
-        interaction_mgr = InteractionManager(orch_obj.task_board._db)
-        set_interaction_deps(interaction_mgr, verify_admin=verify_admin)
-        # Capture orchestrator via a getter (not the value) so a future
-        # activate_project swap is visible to the MCP layer without
-        # re-wiring deps.
-        from taskbrew.dashboard.routers._deps import get_orch_optional
-        set_mcp_deps(
-            interaction_mgr,
-            get_pipeline,
-            orch_obj.task_board,
-            auth_manager=_auth_manager,
-            event_bus=orch_obj.event_bus,
-            orchestrator_getter=get_orch_optional,
-        )
+    # Wire up interaction and MCP tool dependencies.
+    #
+    # The orchestrator is captured via a getter (get_orch_optional) which is
+    # contextvar-aware: agent MCP callbacks carry an X-Taskbrew-Project header
+    # so they resolve their *own* project's orchestrator, while human-facing
+    # endpoints (no header) follow the focused project. This wiring is done
+    # unconditionally so the getter is in place even when the dashboard boots
+    # with no active project (the first project started via the API is then
+    # scoped correctly without re-wiring).
+    from taskbrew.dashboard.routers.mcp_tools import set_mcp_deps
+    from taskbrew.dashboard.routers.interactions import set_interaction_deps
+    from taskbrew.dashboard.routers.pipeline_editor import get_pipeline
+    from taskbrew.dashboard.routers._deps import get_orch_optional
+
+    # Per-project interaction manager lives on each orchestrator
+    # (build_orchestrator). Legacy/test orchestrators (the _FakeOrch compat
+    # path) don't carry one, so build it from the board's DB and attach it so
+    # the dynamic resolver finds it. Stays None for a no-active-project boot.
+    interaction_mgr = None
+    if orch_obj is not None:
+        interaction_mgr = getattr(orch_obj, "interaction_manager", None)
+        if interaction_mgr is None and getattr(orch_obj, "task_board", None) is not None:
+            from taskbrew.orchestrator.interactions import InteractionManager
+            interaction_mgr = InteractionManager(orch_obj.task_board._db)
+            try:
+                orch_obj.interaction_manager = interaction_mgr
+            except Exception:
+                pass
+    set_interaction_deps(
+        interaction_mgr,
+        verify_admin=verify_admin,
+        orchestrator_getter=get_orch_optional,
+    )
+    set_mcp_deps(
+        interaction_mgr,
+        get_pipeline,
+        orch_obj.task_board if orch_obj is not None else None,
+        auth_manager=_auth_manager,
+        event_bus=orch_obj.event_bus if orch_obj is not None else None,
+        orchestrator_getter=get_orch_optional,
+    )
 
     # ------------------------------------------------------------------
     # Include routers
@@ -486,10 +512,48 @@ def create_app(
     }
 
     @app.middleware("http")
+    async def _project_scope(request: Request, call_next):
+        """Bind the request-scoped project from the X-Taskbrew-Project header.
+
+        Agent MCP callbacks carry this header so their writes resolve their own
+        project's orchestrator (see routers._deps). When the header is absent
+        (the normal dashboard case) the contextvar stays None and resolution
+        falls back to the focused project. Verified to propagate through
+        BaseHTTPMiddleware into the route handler on the pinned Starlette.
+        """
+        from taskbrew.dashboard.routers._deps import (
+            set_current_project,
+            reset_current_project,
+        )
+        pid = request.headers.get("X-Taskbrew-Project")
+        # For a registered-but-not-running project, build a read-only idle view
+        # on demand (async) so the sync resolver below can serve its board.
+        # No-op when the project is running or the id is unknown.
+        if pid and project_manager is not None and hasattr(
+            project_manager, "ensure_readonly_view"
+        ):
+            try:
+                await project_manager.ensure_readonly_view(pid)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "ensure_readonly_view failed for project %s", pid
+                )
+        token = set_current_project(pid)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_project(token)
+
+    @app.middleware("http")
     async def _security_headers(request: Request, call_next):
         response = await call_next(request)
         for k, v in _SECURITY_HEADERS.items():
             response.headers.setdefault(k, v)
+        # HTML pages must not be browser-cached, so template/UI changes take
+        # effect on reload (the dashboard templates are large and otherwise get
+        # pinned in the cache, serving a stale UI against a newer backend).
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
         return response
 
     # audit 12a / cross-cutting: v1 and v2 Intelligence routers are
@@ -607,6 +671,28 @@ def create_app(
 
     @app.get("/")
     async def index(request: Request):
+        # The v6 calm console is the default landing page; the dense
+        # original board is opt-in at /advanced.
+        return RedirectResponse(url="/home")
+
+    @app.get("/home")
+    async def home_page(request: Request):
+        """Calm console (v6 redesign) — the simplified front door.
+
+        Progressive-disclosure entry point: live data for the active
+        project (board / agents / usage / needs-you), a goal composer,
+        and an honest single-active-project launcher. The dense
+        ``index.html`` board stays reachable at ``/`` as the advanced view.
+        """
+        return templates.TemplateResponse(request, "home.html")
+
+    @app.get("/advanced")
+    async def advanced_page(request: Request):
+        """The full dense dashboard (original index.html), now opt-in.
+
+        Reachable from the v6 console rail (◈), the account avatar, and
+        the in-console deep-links. Kept verbatim so no feature is lost.
+        """
         return templates.TemplateResponse(request, "index.html")
 
     @app.get("/metrics")

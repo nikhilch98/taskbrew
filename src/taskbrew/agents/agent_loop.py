@@ -129,6 +129,7 @@ class AgentLoop:
         project_dir: str = ".",
         poll_interval: float = 5.0,
         api_url: str = "http://127.0.0.1:8420",
+        project_id: str | None = None,
         worktree_manager: WorktreeManager | None = None,
         memory_manager=None,
         context_registry=None,
@@ -151,6 +152,7 @@ class AgentLoop:
         self.project_dir = project_dir
         self.poll_interval = poll_interval
         self.api_url = api_url
+        self.project_id = project_id
         self.worktree_manager = worktree_manager
         self.memory_manager = memory_manager
         # audit 06b F#12: PreflightChecker previously ran only from the
@@ -521,6 +523,7 @@ class AgentLoop:
             max_turns=self.role_config.max_turns,
             cwd=cwd,
             api_url=self.api_url,
+            project_id=self.project_id,
             db_path=str(self.board._db.db_path),
             cli_provider=self.cli_provider,
             mcp_servers=self.mcp_servers,
