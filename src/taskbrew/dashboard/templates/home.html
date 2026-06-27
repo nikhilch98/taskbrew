@@ -170,6 +170,159 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .set-in{background:var(--bg-content);border:1px solid var(--border-2);border-radius:8px;padding:8px 11px;color:var(--text);font-family:inherit;font-size:13px;outline:none} .set-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .tg{position:relative;width:38px;height:22px;border-radius:20px;background:var(--border-2);transition:.15s;cursor:pointer;flex:0 0 38px} .tg::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s} .tg.on{background:var(--accent)} .tg.on::after{transform:translateX(16px)}
 @media(max-width:1040px){.kpi-grid{grid-template-columns:1fr 1fr}.ins-grid{grid-template-columns:1fr}}
+/* --- cp --- */
+/* ── cp: agent health grid ───────────────────────────────────────── */
+.cp-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.cp-agent-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 13px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.cp-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.cp-agent-id {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.cp-role-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--panel-hi);
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.cp-agent-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.cp-agent-status {
+  text-transform: capitalize;
+}
+.cp-agent-task {
+  font-size: 10.5px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
+}
+.cp-agent-hb {
+  font-size: 10.5px;
+  color: var(--text-4);
+  margin-left: auto;
+}
+.cp-agent-stat {
+  font-size: 11px;
+  margin-top: 6px;
+  font-family: var(--mono);
+}
+/* ── cp: status dots ─────────────────────────────────────────────── */
+.cp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-4);
+}
+.cp-dot-work  { background: var(--green); }
+.cp-dot-pause { background: var(--amber); }
+.cp-dot-err   { background: var(--red);   }
+.cp-dot-idle  { background: var(--text-4); }
+/* --- kg --- */
+.kg-sec-h{display:flex;align-items:center;gap:10px;margin:26px 0 12px;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-4)}
+.kg-sec-h::before,.kg-sec-h::after{content:'';flex:1;height:1px;background:var(--border)}
+.kg-sec-h span{white-space:nowrap}
+/* --- ai --- */
+.ai-sec-heading {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .10em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 22px 0 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-sec-heading:first-child { margin-top: 4px; }
+/* --- pl --- */
+.pl-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-4);
+  padding: 20px 2px 9px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.pl-sec-accent {
+  display: block;
+  width: 3px;
+  height: 13px;
+  background: var(--accent);
+  border-radius: 2px;
+  flex: 0 0 3px;
+}
+/* --- pe --- */
+.pe-inline-edit {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border, rgba(255,255,255,.08));
+  background: var(--panel-hi, rgba(255,255,255,.035));
+  margin-bottom: 2px;
+}
+table.dtable .pe-inline-edit {
+  padding: 8px 12px 10px;
+  border-radius: 0;
+}
+/* --- rl --- */
+/* rl* — agent settings modals */
+.rl-wide-card{width:620px;max-width:calc(100vw - 32px);max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
+.rl-wide-body{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:13px;padding:14px 18px 4px}
+
+/* preset grid */
+.rl-preset-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.rl-preset-card{border:1px solid var(--border);border-radius:10px;padding:14px 10px;cursor:pointer;transition:.13s;background:var(--panel-2);text-align:center}
+.rl-preset-card:hover{border-color:var(--accent-line);background:var(--panel-hi)}
+.rl-preset-card.rl-sel{border-color:var(--accent);background:var(--accent-soft)}
+
+/* system prompt fullscreen */
+.rl-prompt-overlay{position:fixed;inset:0;background:rgba(4,5,8,.78);backdrop-filter:blur(5px);z-index:200;display:none;flex-direction:column;padding:36px}
+.rl-prompt-overlay.on{display:flex}
+.rl-prompt-card{background:var(--panel);border:1px solid var(--border-2);border-radius:14px;box-shadow:var(--shadow-lg);flex:1;display:flex;flex-direction:column;min-height:0;max-width:860px;width:100%;margin:0 auto;overflow:hidden}
+.rl-prompt-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border);flex:0 0 auto}
+.rl-prompt-body{flex:1;display:flex;flex-direction:column;padding:14px 18px;min-height:0;gap:0}
+.rl-prompt-ta{flex:1;background:var(--bg-content);border:1px solid var(--border-2);border-radius:9px;color:var(--text);font-family:var(--mono);font-size:13px;line-height:1.65;padding:14px;outline:none;resize:none}
+.rl-prompt-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.rl-prompt-foot{display:flex;justify-content:flex-end;gap:9px;padding:12px 18px;border-top:1px solid var(--border);flex:0 0 auto}
 /* ===== NEW PROJECT MODAL ===== */
 .np-overlay{position:fixed;inset:0;background:rgba(4,5,8,.6);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:100;animation:fade .2s ease both}
 .np-overlay.on{display:flex}
@@ -313,6 +466,107 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   </div>
 </div>
 
+<!-- pe modals -->
+<!-- pe: Add edge modal -->
+<div id="pe-add-edge-overlay" class="np-overlay" style="display:none" onclick="if(event.target===this)peCloseAddEdge()">
+  <div class="np-card" style="max-width:440px;width:100%">
+    <div class="np-head">
+      <div class="np-ic" style="font-size:14px">↔</div>
+      <div>
+        <div class="np-t">Add pipeline edge</div>
+        <div class="np-s">Connect two roles and define which task types flow between them.</div>
+      </div>
+      <button class="np-x" onclick="peCloseAddEdge()" aria-label="Close">✕</button>
+    </div>
+    <div class="np-body">
+      <label class="np-f">
+        <span class="np-l">From agent</span>
+        <select id="pe-ae-from" class="np-in"></select>
+      </label>
+      <label class="np-f">
+        <span class="np-l">To agent</span>
+        <select id="pe-ae-to" class="np-in"></select>
+      </label>
+      <label class="np-f">
+        <span class="np-l">Task types <span class="np-hint">comma-separated, optional</span></span>
+        <input id="pe-ae-tt" class="np-in" placeholder="code, review, …" autocomplete="off">
+      </label>
+      <label class="np-f">
+        <span class="np-l">On failure</span>
+        <select id="pe-ae-of" class="np-in">
+          <option value="block">block — halt downstream until resolved</option>
+          <option value="continue_partial">continue_partial — proceed with what finished</option>
+          <option value="cancel_pipeline">cancel_pipeline — abort the whole run</option>
+        </select>
+      </label>
+    </div>
+    <div class="np-foot">
+      <button class="act-btn ghost" onclick="peCloseAddEdge()">Cancel</button>
+      <button class="tb-primary" onclick="peAddEdge()">Add edge →</button>
+    </div>
+  </div>
+</div>
+<!-- rl modals -->
+<!-- ===== rl: Role Editor Modal ===== -->
+<div class="np-overlay" id="rl-edit-overlay" onclick="if(event.target===this)rlCloseEdit()">
+  <div class="np-card rl-wide-card" role="dialog" aria-modal="true" aria-labelledby="rl-edit-title">
+    <div class="np-head">
+      <div class="np-ic">✎</div>
+      <div>
+        <div class="np-t" id="rl-edit-title">Edit role</div>
+        <div class="np-s">Update configuration for this agent role. Save persists all fields.</div>
+      </div>
+      <button class="np-x" onclick="rlCloseEdit()" aria-label="Close">✕</button>
+    </div>
+    <div class="rl-wide-body" id="rl-edit-body">
+      <!-- populated by rlRenderEditModal() -->
+    </div>
+    <div class="np-foot">
+      <button class="act-btn ghost" onclick="rlCloseEdit()">Cancel</button>
+      <button class="tb-primary" id="rl-edit-save" onclick="rlSaveRole()">Save role</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== rl: Add Agent Wizard Modal ===== -->
+<div class="np-overlay" id="rl-add-overlay" onclick="if(event.target===this)rlCloseAdd()">
+  <div class="np-card rl-wide-card" role="dialog" aria-modal="true" aria-labelledby="rl-add-title">
+    <div class="np-head" style="flex-direction:column;align-items:stretch;gap:0;padding-bottom:0">
+      <div style="display:flex;align-items:center;gap:10px;padding-bottom:12px">
+        <div class="np-ic">＋</div>
+        <div class="np-t" id="rl-add-title">Add agent</div>
+        <button class="np-x" style="margin-left:auto" onclick="rlCloseAdd()" aria-label="Close">✕</button>
+      </div>
+      <div class="ins-tabs" style="margin:0 -18px;padding:0 18px;border-bottom:1px solid var(--border)">
+        <button data-tab="presets" class="on" onclick="rlSwitchAddTab('presets')">Presets</button>
+        <button data-tab="custom" onclick="rlSwitchAddTab('custom')">Custom</button>
+      </div>
+    </div>
+    <div class="rl-wide-body" id="rl-add-body" style="padding:16px 18px">
+      <!-- populated by rlRenderAdd() -->
+    </div>
+    <div class="np-foot" style="gap:8px">
+      <button class="act-btn ghost" id="rl-add-back" onclick="rlAddBack()" style="visibility:hidden">Back</button>
+      <span style="flex:1"></span>
+      <button class="act-btn ghost" onclick="rlCloseAdd()">Cancel</button>
+      <button class="tb-primary" id="rl-add-next" onclick="rlAddNext()">Select</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== rl: System Prompt Fullscreen Modal ===== -->
+<div class="rl-prompt-overlay" id="rl-prompt-overlay">
+  <div class="rl-prompt-card" role="dialog" aria-modal="true" aria-labelledby="rl-prompt-title">
+    <div class="rl-prompt-head">
+      <div style="font-size:14px;font-weight:600;flex:1" id="rl-prompt-title">System prompt</div>
+      <button class="btn-s" onclick="rlClosePrompt()">✕ Close &amp; sync</button>
+      <button class="tb-primary" onclick="rlSavePrompt()" style="margin-left:6px">Save</button>
+    </div>
+    <div class="rl-prompt-body">
+      <textarea id="rl-prompt-ta" class="rl-prompt-ta" placeholder="Enter system prompt…"></textarea>
+    </div>
+  </div>
+</div>
 <script>
 /* ============================================================
    TaskBrew v6 console — exact-replica shell, wired to real data.
@@ -653,6 +907,196 @@ function leaderboardTable(rows){if(!rows||!rows.length)return insEmpty('No agent
 function failuresTable(rows){if(!rows||!rows.length)return insEmpty('No failures','No failed tasks in this project.');return `<table class="dtable"><thead><tr><th>ID</th><th>Role</th><th>Title</th><th class="num">When</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id||'')}</td><td>${esc(r.assigned_to||r.claimed_by||'')}</td><td>${esc(String(r.title||'').slice(0,70))}</td><td class="num">${esc(agoText(r.timestamp||r.created_at))}</td></tr>`).join('')}</tbody></table>`;}
 async function dataPanel(opts){let d;try{d=await pFetch(opts.url,opts.pid);}catch(e){return `<div class="set-card"><h3>${esc(opts.title)}</h3>${insEmpty('Unavailable',e.message)}</div>`;}const rows=asArr(d,opts.arrKeys);if(!rows.length)return `<div class="set-card"><h3>${esc(opts.title)}</h3>${insEmpty(opts.empty||'Nothing yet','No data for this project.')}</div>`;const head=opts.cols.map(co=>`<th class="${co.cls==='num'?'num':''}">${esc(co.label)}</th>`).join('');const body=rows.slice(0,opts.limit||25).map(r=>`<tr>${opts.cols.map(co=>{const v=co.fmt?co.fmt(r[co.key],r):(r[co.key]==null?'':r[co.key]);return `<td class="${co.cls||''}">${co.fmt?v:esc(v)}</td>`;}).join('')}</tr>`).join('');return `<div class="set-card"><h3>${esc(opts.title)} <span class="pill">${rows.length}</span></h3><table class="dtable"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;}
 /* section renderers — filled in below */
+/* ── cp helpers (module-scope, cp-prefixed) ─────────────────────── */
+
+function cpDotCls(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'working' || s === 'running' || s === 'active') return 'cp-dot cp-dot-work';
+  if (s === 'paused')                                         return 'cp-dot cp-dot-pause';
+  if (s === 'error'  || s === 'failed')                       return 'cp-dot cp-dot-err';
+  return 'cp-dot cp-dot-idle';
+}
+
+function cpStatusPill(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'completed')                          return `<span class="pill g">${esc(status)}</span>`;
+  if (s === 'failed' || s === 'rejected' ||
+      s === 'cancelled')                          return `<span class="pill r">${esc(status)}</span>`;
+  if (s === 'in_progress' || s === 'review')      return `<span class="pill a">${esc(status)}</span>`;
+  return `<span class="pill">${esc(status)}</span>`;
+}
+
+function cpAgentHealthHtml(agArr, rolesData) {
+  if (!agArr.length) return `<div class="chart-card full">${insEmpty('No agents', 'No agents registered for this project.')}</div>`;
+  const taskByRole = {};
+  (rolesData.task_stats || []).forEach(s => { taskByRole[s.role] = s; });
+  const cards = agArr.map(a => {
+    const role = String(a.role || '');
+    const ts   = taskByRole[role] || {};
+    const statusLabel = String(a.status || 'idle');
+    const dotCls = cpDotCls(statusLabel);
+    const taskLine = a.current_task
+      ? `<div class="cp-agent-task mono">${esc(String(a.current_task).slice(0, 22))}</div>`
+      : '';
+    const hbLine = a.last_heartbeat
+      ? `<span class="cp-agent-hb">↺ ${esc(agoText(a.last_heartbeat))}</span>`
+      : '';
+    const statsLine = (ts.completed != null)
+      ? `<div class="cp-agent-stat"><span class="tone-g">✓ ${num(ts.completed)}</span>&nbsp;<span class="tone-r">✗ ${num(ts.failed || 0)}</span></div>`
+      : '';
+    return `<div class="cp-agent-card">
+  <div class="cp-agent-head">
+    <span class="${dotCls}"></span>
+    <span class="cp-agent-id">${esc(a.instance_id || '')}</span>
+    <span class="cp-role-badge">${esc(roleTag(role))}</span>
+  </div>
+  ${taskLine}
+  <div class="cp-agent-meta">
+    <span class="cp-agent-status">${esc(statusLabel)}</span>
+    ${hbLine}
+  </div>
+  ${statsLine}
+</div>`;
+  }).join('');
+  return `<div class="cp-agent-grid">${cards}</div>`;
+}
+
+function cpTimelineHtml(boardData) {
+  const all = [];
+  for (const key of Object.keys(boardData || {})) {
+    const arr = boardData[key];
+    if (Array.isArray(arr)) arr.forEach(t => all.push(t));
+  }
+  if (!all.length) return `<div class="chart-card full">${insEmpty('No tasks', 'No tasks found for this project.')}</div>`;
+  all.sort((a, b) => {
+    const ta = new Date(a.completed_at || a.started_at || a.created_at || 0).getTime();
+    const tb = new Date(b.completed_at || b.started_at || b.created_at || 0).getTime();
+    return tb - ta;
+  });
+  const rows = all.slice(0, 20).map(t => {
+    const ts   = t.completed_at || t.started_at || t.created_at;
+    const role = t.claimed_by || t.assigned_to || '';
+    return `<tr>
+  <td class="mono">${esc(t.id || '')}</td>
+  <td>${esc(String(t.title || '').slice(0, 55))}</td>
+  <td>${cpStatusPill(t.status)}</td>
+  <td class="mono">${esc(role)}</td>
+  <td class="num">${esc(agoText(ts))}</td>
+</tr>`;
+  }).join('');
+  return `<div class="chart-card full">
+  <table class="dtable">
+    <thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Role</th><th class="num">When</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>`;
+}
+
+/* ── main extension function ────────────────────────────────────── */
+
+async function cpExtras(c, pid) {
+  // Parallel fetch — all failures are swallowed individually
+  const [byAgent, byFeature, agentList, rolesData, boardData, behavRaw] = await Promise.all([
+    pFetch('/api/v2/observability/costs/by-agent',  pid).catch(() => []),
+    pFetch('/api/v2/observability/costs/by-feature', pid).catch(() => []),
+    pFetch('/api/agents',                            pid).catch(() => []),
+    pFetch('/api/metrics/roles',                     pid).catch(() => ({})),
+    pFetch('/api/board',                             pid).catch(() => ({})),
+    pFetch('/api/v2/observability/behavior-metrics?agent_role=coder', pid).catch(() => null),
+  ]);
+
+  const agArr = Array.isArray(agentList) ? agentList : asArr(agentList, ['agents']);
+  const baArr = Array.isArray(byAgent)   ? byAgent   : asArr(byAgent,   ['agents', 'by_agent', 'data', 'items']);
+  const bfArr = Array.isArray(byFeature) ? byFeature : asArr(byFeature, ['features', 'by_feature', 'data', 'items']);
+  // behavior metrics: 404 → behavRaw is null; success → array or wrapper object
+  const behavArr = behavRaw && !behavRaw.detail
+    ? asArr(behavRaw, ['metrics', 'data', 'items'])
+    : [];
+
+  /* ── 1: Cost attribution ────────────────────────────────────── */
+  const agChunk = baArr.length
+    ? `<div class="ch-wrap"><canvas id="cp-byagent"></canvas></div>`
+    : insEmpty('No data yet', 'No agent cost attribution recorded for this project.');
+  const ftChunk = bfArr.length
+    ? `<div class="ch-wrap"><canvas id="cp-byfeature"></canvas></div>`
+    : insEmpty('No data yet', 'No feature cost attribution recorded for this project.');
+
+  let html = `
+<div class="sec-t" style="margin-top:22px"><h2>Cost attribution</h2></div>
+<div class="ins-grid">
+  <div class="chart-card"><h3>Cost by agent</h3>${agChunk}</div>
+  <div class="chart-card"><h3>Cost by feature</h3>${ftChunk}</div>
+</div>`;
+
+  /* ── 2: Agent health ────────────────────────────────────────── */
+  html += `
+<div class="sec-t" style="margin-top:6px">
+  <h2>Agent health</h2><span class="cnt">${agArr.length}</span>
+</div>
+${cpAgentHealthHtml(agArr, rolesData)}`;
+
+  /* ── 3: Agent behavior metrics ──────────────────────────────── */
+  if (behavArr.length) {
+    const bRows = behavArr.slice(0, 25).map(r => `<tr>
+  <td>${esc(r.metric_name || r.name || '')}</td>
+  <td class="num mono">${esc(String(r.value != null ? r.value : '—'))}</td>
+  <td class="num">${esc(r.unit || '')}</td>
+</tr>`).join('');
+    html += `
+<div class="sec-t" style="margin-top:14px"><h2>Agent behavior metrics</h2></div>
+<div class="chart-card full">
+  <h3>Coder</h3>
+  <table class="dtable">
+    <thead><tr><th>Metric</th><th class="num">Value</th><th class="num">Unit</th></tr></thead>
+    <tbody>${bRows}</tbody>
+  </table>
+</div>`;
+  } else {
+    html += `
+<div class="sec-t" style="margin-top:14px"><h2>Agent behavior metrics</h2></div>
+<div class="chart-card full">${insEmpty('Not available', 'Behavior metrics endpoint is not yet implemented on this server.')}</div>`;
+  }
+
+  /* ── 4: Task timeline ───────────────────────────────────────── */
+  const totalTasks = Object.values(boardData || {}).filter(Array.isArray).reduce((s, a) => s + a.length, 0);
+  html += `
+<div class="sec-t" style="margin-top:14px">
+  <h2>Task timeline</h2>${totalTasks ? `<span class="cnt">${totalTasks}</span>` : ''}
+</div>
+${cpTimelineHtml(boardData)}`;
+
+  /* ── Insert HTML, then draw charts ─────────────────────────── */
+  c.insertAdjacentHTML('beforeend', html);
+
+  if (baArr.length) {
+    mkChart('cp-byagent', {
+      type: 'doughnut',
+      data: {
+        labels: baArr.map(x => String(x.agent_id || x.agent || x.name || '?')),
+        datasets: [{
+          data: baArr.map(x => +(x.total_cost || x.cost || 0)),
+          backgroundColor: CHART_COLORS,
+          borderWidth: 0,
+        }],
+      },
+      options: doughnutOpts(),
+    });
+  }
+  if (bfArr.length) {
+    mkChart('cp-byfeature', {
+      type: 'doughnut',
+      data: {
+        labels: bfArr.map(x => String(x.feature || x.feature_name || x.name || '?')),
+        datasets: [{
+          data: bfArr.map(x => +(x.total_cost || x.cost || 0)),
+          backgroundColor: CHART_COLORS,
+          borderWidth: 0,
+        }],
+      },
+      options: doughnutOpts(),
+    });
+  }
+}
 async function renderInsCost(c,pid){
   const gran=(insRange==='today')?'hour':'day';
   let ts={},roles={},agents=[],fails=[];
@@ -687,6 +1131,8 @@ async function renderInsCost(c,pid){
   mkChart('ch-tok',{type:'bar',data:{labels,datasets:[{label:'Input',data:inSeries,backgroundColor:CHART_COLORS[2]},{label:'Output',data:outSeries,backgroundColor:CHART_COLORS[1]}]},options:stackedOpts()});
   mkChart('ch-role',{type:'bar',data:{labels:costStats.map(r=>r.role),datasets:[{label:'Cost',data:costStats.map(r=>+r.total_cost||0),backgroundColor:CHART_COLORS[3]}]},options:hbarOpts()});
   mkChart('ch-status',{type:'doughnut',data:{labels:Object.keys(st2),datasets:[{data:Object.values(st2).map(Number),backgroundColor:CHART_COLORS}]},options:doughnutOpts()});
+
+  await cpExtras(c,pid);
 }
 async function renderInsQuality(c,pid){
   let vuln={},secrets={},sast={},trends={},roles={};
@@ -714,41 +1160,711 @@ async function renderInsQuality(c,pid){
   const qlabels=tpts.map(p=>fmtBucket(p.timestamp||p.bucket||p.date));const qdata=tpts.map(qval);
   mkChart('ch-qual',{type:'line',data:{labels:qlabels,datasets:[{label:'Quality',data:qdata,borderColor:CHART_COLORS[3],backgroundColor:CHART_COLORS[3]+'22',fill:true,tension:.3,pointRadius:0}]},options:lineOpts()});
 }
-async function renderInsKnowledge(c,pid){
-  let kg={};try{kg=await pFetch('/api/knowledge-graph/stats',pid);}catch(e){kg={};}
-  const countOf=v=>{if(typeof v==='number')return v;if(v&&typeof v==='object'){const vals=Object.values(v);if(vals.length&&vals.every(x=>typeof x==='number'))return vals.reduce((a,b)=>a+b,0);return Object.keys(v).length;}return 0;};
-  const nodes=kg.node_count!=null?kg.node_count:countOf(kg.nodes);
-  const edges=kg.edge_count!=null?kg.edge_count:countOf(kg.edges);
-  const types=kg.nodes_by_type||kg.types||((kg.nodes&&typeof kg.nodes==='object')?kg.nodes:{});const tcount=(types&&typeof types==='object')?Object.keys(types).length:0;
-  const head=`<div class="kpi-grid">${kpi('◉ Graph nodes',num(nodes))}${kpi('↔ Edges',num(edges))}${kpi('⬡ Node types',num(tcount))}</div>`;
-  const panels=await Promise.all([
-    dataPanel({title:'Memory',url:'/api/memories',pid,arrKeys:['memories','items','data'],cols:[{label:'Type',key:'memory_type',fmt:(v,r)=>esc(v||r.type||'')},{label:'Title',key:'title',fmt:v=>esc(v||'')},{label:'Role',key:'agent_role',fmt:(v,r)=>esc(v||r.role||'')},{label:'When',key:'created_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No memories'}),
-    dataPanel({title:'Tech debt',url:'/api/v2/code-intel/debt?limit=20',pid,arrKeys:['debt','items','data'],cols:[{label:'File',key:'file',cls:'mono',fmt:v=>esc(v||'')},{label:'Category',key:'category',fmt:v=>esc(v||'')},{label:'Score',key:'score',cls:'num',fmt:v=>esc(v==null?'':v)},{label:'Suggestion',key:'suggestion',fmt:(v,r)=>esc(String(v||r.fix||'').slice(0,70))}],empty:'No debt findings'}),
-    dataPanel({title:'Code patterns',url:'/api/v2/code-intel/patterns',pid,arrKeys:['patterns','items','data'],cols:[{label:'Pattern',key:'pattern',fmt:v=>esc(v||'')},{label:'Category',key:'category',fmt:(v,r)=>esc(v||r.type||'')},{label:'File',key:'file',cls:'mono',fmt:(v,r)=>esc(v||r.location||'')}],empty:'No patterns detected'}),
-    dataPanel({title:'Test gaps',url:'/api/v2/code-intel/test-gaps',pid,arrKeys:['test_gaps','gaps','items','data'],cols:[{label:'Function',key:'function_name',cls:'mono',fmt:v=>esc(v||'')},{label:'File',key:'file',cls:'mono',fmt:v=>esc(v||'')},{label:'Risk',key:'risk',fmt:(v,r)=>esc(v||r.priority||'')}],empty:'No test gaps'}),
+async function renderInsKnowledge(c, pid) {
+  /* ── helpers ─────────────────────────────────────────────────── */
+  const kgCountOf = v => {
+    if (typeof v === 'number') return v;
+    if (Array.isArray(v)) return v.length;
+    if (v && typeof v === 'object') {
+      const vals = Object.values(v);
+      if (!vals.length) return 0;
+      if (vals.every(x => Array.isArray(x))) return vals.reduce((a, b) => a + b.length, 0);
+      if (vals.every(x => typeof x === 'number')) return vals.reduce((a, b) => a + b, 0);
+      return vals.length;
+    }
+    return 0;
+  };
+  const kgSecHead = title =>
+    `<div class="kg-sec-h"><span>${esc(title)}</span></div>`;
+  const kgPill = (val, map) => {
+    const t = esc(String(val || '').toLowerCase());
+    const cls = map[t] || '';
+    return `<span class="pill${cls ? ' ' + cls : ''}">${esc(String(val || ''))}</span>`;
+  };
+
+  /* ── 1. Fetch KPI data (fast; unblock paint) ─────────────────── */
+  let kg = {};
+  try { kg = await pFetch('/api/knowledge-graph/stats', pid); } catch (_) {}
+
+  const kgNodes    = kg.node_count != null ? kg.node_count : kgCountOf(kg.nodes);
+  const kgEdges    = kg.edge_count != null ? kg.edge_count : kgCountOf(kg.edges);
+  const kgTypesObj = kg.nodes_by_type || kg.types ||
+    (kg.nodes && typeof kg.nodes === 'object' && !Array.isArray(kg.nodes) ? kg.nodes : {});
+  const kgTypeCount = Object.keys(kgTypesObj).length;
+  const kgTypeSub   = kgTypeCount
+    ? Object.keys(kgTypesObj).slice(0, 3).join(', ') + (kgTypeCount > 3 ? '…' : '')
+    : 'none';
+
+  const kpiHtml = `<div class="kpi-grid">
+    ${kpi('◉ Graph nodes', num(kgNodes), kgNodes ? kgTypeCount + ' type' + (kgTypeCount === 1 ? '' : 's') : 'empty graph')}
+    ${kpi('↔ Edges', num(kgEdges), kgEdges ? 'graph connections' : 'none yet')}
+    ${kpi('⬡ Node types', num(kgTypeCount), kgTypeSub)}
+  </div>`;
+
+  /* paint KPI row immediately while panels load */
+  c.innerHTML = kpiHtml + `<div class="ins-loading">Loading panels…</div>`;
+
+  /* ── 2. Fetch all panels concurrently ───────────────────────── */
+  const [
+    memPanel,
+    depsPanel,
+    patsPanel,
+    debtPanel,
+    gapsPanel,
+    impactPanel,
+    refactPanel,
+    pdbtPanel,
+  ] = await Promise.all([
+
+    /* ── Memory ── */
+    dataPanel({
+      title: 'Memory',
+      url: '/api/memories',
+      pid,
+      arrKeys: ['memories', 'items', 'data'],
+      limit: 30,
+      empty: 'No memories yet',
+      cols: [
+        { label: 'Type',  key: 'memory_type', fmt: (v, r) => kgPill(v || r.type || '', { failure: 'r', lesson: '', success: 'g', warning: 'a', insight: '', error: 'r' }) },
+        { label: 'Title', key: 'title',       fmt: v => esc(String(v || '').slice(0, 60)) },
+        { label: 'Role',  key: 'agent_role',  fmt: (v, r) => esc(v || r.role || '') },
+        { label: 'Task',  key: 'source_task_id', cls: 'mono', fmt: v => esc(v || '') },
+        { label: 'Score', key: 'relevance_score', cls: 'num', fmt: v => v == null ? '' : Number(v).toFixed(1) },
+        { label: 'When',  key: 'created_at',  cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+    }),
+
+    /* ── Knowledge graph dependencies ── */
+    dataPanel({
+      title: 'Knowledge Graph Dependencies',
+      url: '/api/knowledge-graph/dependencies?name=',
+      pid,
+      arrKeys: ['dependencies', 'deps', 'items', 'data'],
+      limit: 25,
+      empty: 'No dependency data — query a named node to explore',
+      cols: [
+        { label: 'Name',     key: 'name',    cls: 'mono', fmt: (v, r) => esc(typeof r === 'string' ? r : (v || r.id || '')) },
+        { label: 'Type',     key: 'type',    fmt: (v, r) => esc(typeof r === 'string' ? '' : (v || r.node_type || '')) },
+        { label: 'Relation', key: 'relation', fmt: (v, r) => esc(typeof r === 'string' ? '' : (v || r.edge_type || '')) },
+        { label: 'Target',   key: 'target',  cls: 'mono', fmt: (v, r) => esc(typeof r === 'string' ? '' : (v || r.depends_on || '')) },
+      ],
+    }),
+
+    /* ── Code patterns ── */
+    dataPanel({
+      title: 'Code Patterns',
+      url: '/api/v2/code-intel/patterns',
+      pid,
+      arrKeys: ['patterns', 'items', 'data'],
+      limit: 25,
+      empty: 'No architecture patterns detected',
+      cols: [
+        { label: 'Pattern',     key: 'pattern',     fmt: v => esc(String(v || '').slice(0, 40)) },
+        { label: 'Category',    key: 'category',    fmt: (v, r) => esc(v || r.type || '') },
+        { label: 'Description', key: 'description', fmt: v => esc(String(v || '').slice(0, 70)) },
+        { label: 'File',        key: 'file',        cls: 'mono', fmt: (v, r) => esc(String(v || r.location || '').slice(0, 40)) },
+        { label: 'Confidence',  key: 'confidence',  cls: 'num', fmt: v => v == null ? '' : esc(String(v)) },
+      ],
+    }),
+
+    /* ── Tech debt ── */
+    dataPanel({
+      title: 'Tech Debt',
+      url: '/api/v2/code-intel/debt?limit=20',
+      pid,
+      arrKeys: ['debt', 'items', 'data'],
+      limit: 20,
+      empty: 'No debt findings',
+      cols: [
+        { label: 'File',       key: 'file',       cls: 'mono', fmt: v => esc(String(v || '').slice(0, 44)) },
+        { label: 'Category',   key: 'category',   fmt: v => esc(v || '') },
+        { label: 'Score',      key: 'score',      cls: 'num', fmt: (v, r) => {
+            const s = v != null ? v : (r.debt_score != null ? r.debt_score : null);
+            return s == null ? '' : esc(String(s));
+          }
+        },
+        { label: 'Suggestion', key: 'suggestion', fmt: (v, r) => esc(String(v || r.fix || r.description || '').slice(0, 70)) },
+      ],
+    }),
+
+    /* ── Test gaps (full-width) ── */
+    dataPanel({
+      title: 'Test Gaps',
+      url: '/api/v2/code-intel/test-gaps',
+      pid,
+      arrKeys: ['test_gaps', 'gaps', 'functions', 'items', 'data'],
+      limit: 25,
+      empty: 'No test gaps detected',
+      cols: [
+        { label: 'Function', key: 'function_name', cls: 'mono', fmt: v => esc(v || '') },
+        { label: 'File',     key: 'file',           cls: 'mono', fmt: v => esc(String(v || '').slice(0, 44)) },
+        { label: 'Risk',     key: 'risk',           fmt: (v, r) => kgPill(v || r.priority || '', { high: 'r', critical: 'r', medium: 'a', low: 'g' }) },
+        { label: 'Coverage', key: 'coverage',       cls: 'num', fmt: v => v == null ? '' : (Number(v).toFixed(0) + '%') },
+        { label: 'Lines',    key: 'lines',          cls: 'num', fmt: v => v == null ? '' : num(+v || 0) },
+      ],
+    }),
+
+    /* ── Impact history ── */
+    dataPanel({
+      title: 'Impact History',
+      url: '/api/v3/code-reasoning/impact/history',
+      pid,
+      arrKeys: ['history', 'impact_history', 'items', 'data'],
+      limit: 20,
+      empty: 'No impact history recorded',
+      cols: [
+        { label: 'File',   key: 'file',        cls: 'mono', fmt: (v, r) => esc(String(v || r.path || '').slice(0, 44)) },
+        { label: 'Change', key: 'change',       fmt: (v, r) => esc(String(v || r.description || r.summary || '').slice(0, 60)) },
+        { label: 'Impact', key: 'impact',       fmt: (v, r) => kgPill(v || r.impact_level || '', { high: 'r', critical: 'r', medium: 'a', low: 'g' }) },
+        { label: 'Agent',  key: 'agent',        fmt: (v, r) => esc(v || r.agent_role || '') },
+        { label: 'When',   key: 'created_at',   cls: 'mono', fmt: (v, r) => esc(agoText(v || r.timestamp || '')) },
+      ],
+    }),
+
+    /* ── Refactoring candidates ── */
+    dataPanel({
+      title: 'Refactoring Candidates',
+      url: '/api/v3/code-reasoning/refactoring',
+      pid,
+      arrKeys: ['refactoring', 'candidates', 'items', 'data'],
+      limit: 20,
+      empty: 'No refactoring candidates',
+      cols: [
+        { label: 'File',     key: 'file',     cls: 'mono', fmt: (v, r) => esc(String(v || r.path || '').slice(0, 44)) },
+        { label: 'Reason',   key: 'reason',   fmt: (v, r) => esc(String(v || r.description || r.rationale || '').slice(0, 65)) },
+        { label: 'Priority', key: 'priority', fmt: (v, r) => kgPill(v || r.urgency || '', { high: 'r', critical: 'r', medium: 'a', low: 'g' }) },
+        { label: 'Effort',   key: 'effort',   fmt: v => esc(v || '') },
+      ],
+    }),
+
+    /* ── Prioritized debt (full-width) ── */
+    dataPanel({
+      title: 'Prioritized Debt',
+      url: '/api/v3/code-reasoning/debt/prioritized',
+      pid,
+      arrKeys: ['debt', 'items', 'data'],
+      limit: 25,
+      empty: 'No prioritized debt',
+      cols: [
+        { label: 'File',     key: 'file',           cls: 'mono', fmt: (v, r) => esc(String(v || r.path || '').slice(0, 44)) },
+        { label: 'Issue',    key: 'issue',          fmt: (v, r) => esc(String(v || r.description || r.title || '').slice(0, 70)) },
+        { label: 'Score',    key: 'priority_score', cls: 'num', fmt: (v, r) => v == null ? esc(String(r.score != null ? r.score : '')) : esc(String(v)) },
+        { label: 'Category', key: 'category',       fmt: v => esc(v || '') },
+        { label: 'Type',     key: 'debt_type',      fmt: (v, r) => esc(v || r.type || '') },
+      ],
+    }),
   ]);
-  c.innerHTML=head+panels.join('');
+
+  /* ── 3. Final render ────────────────────────────────────────── */
+  c.innerHTML =
+    kpiHtml +
+    kgSecHead('Memory & Knowledge Graph') +
+    `<div class="ins-grid">${memPanel}${depsPanel}</div>` +
+    kgSecHead('Code Intelligence') +
+    `<div class="ins-grid">${patsPanel}${debtPanel}</div>` +
+    gapsPanel +
+    kgSecHead('Code Reasoning') +
+    `<div class="ins-grid">${impactPanel}${refactPanel}</div>` +
+    pdbtPanel;
 }
-async function renderInsAgents(c,pid){
-  const panels=await Promise.all([
-    dataPanel({title:'Skills',url:'/api/skills',pid,arrKeys:['skills','items','data'],cols:[{label:'Role',key:'agent_role',fmt:(v,r)=>esc(v||r.role||'')},{label:'Skill',key:'skill_type',fmt:(v,r)=>esc(v||r.type||'')},{label:'Proficiency',key:'proficiency',cls:'num',fmt:v=>esc(v==null?'':v)},{label:'Tasks',key:'tasks_completed',cls:'num',fmt:v=>num(+v||0)},{label:'Success',key:'success_rate',cls:'num',fmt:v=>v==null?'':(Math.round(v<=1?v*100:v)+'%')}],empty:'No skills tracked yet'}),
-    dataPanel({title:'Error clusters',url:'/api/v2/learning/error-clusters',pid,arrKeys:['error_clusters','clusters','items','data'],cols:[{label:'Message',key:'message',fmt:v=>esc(String(v||'').slice(0,70))},{label:'Count',key:'count',cls:'num',fmt:v=>num(+v||0)},{label:'Agent',key:'agent',fmt:v=>esc(v||'')},{label:'Suggested fix',key:'suggested_fix',fmt:v=>esc(String(v||'').slice(0,60))}],empty:'No recurring errors'}),
-    dataPanel({title:'Autonomous discoveries',url:'/api/v2/autonomous/discoveries',pid,arrKeys:['discoveries','items','data'],cols:[{label:'Type',key:'type',fmt:v=>esc(v||'')},{label:'Title',key:'title',fmt:v=>esc(v||'')},{label:'Agent',key:'agent',fmt:v=>esc(v||'')},{label:'When',key:'created_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No discoveries yet'}),
-    dataPanel({title:'Task decompositions',url:'/api/v2/autonomous/decompositions',pid,arrKeys:['decompositions','items','data'],cols:[{label:'Task',key:'task_id',cls:'mono',fmt:v=>esc(v||'')},{label:'Title',key:'title',fmt:v=>esc(v||'')},{label:'Subtasks',key:'subtask_count',cls:'num',fmt:(v,r)=>num(v!=null?v:(Array.isArray(r.subtasks)?r.subtasks.length:0))},{label:'Status',key:'status',fmt:v=>esc(v||'')}],empty:'No decompositions'}),
+async function renderInsAgents(c, pid) {
+  const [
+    pSkills,
+    pExperiments, pBenchmarks, pConventions, pErrorClusters, pCrossProject,
+    pPromptHistory, pPortfolio, pFailureModes, pReflections,
+    pDiscoveries, pDecompositions, pBids, pRetryStrategies,
+    pParallel, pEffortHistory, pPredAcc,
+    pTrustNetwork, pCollaborations, pMentalModel, pArguments,
+    pVelocity, pRiskHeatMap, pBottlenecks, pRetrospectives,
+  ] = await Promise.all([
+    /* ── Skills ─────────────────────────────────────────── */
+    dataPanel({
+      title: 'Skills', url: '/api/skills', pid,
+      arrKeys: ['skills', 'items', 'data'],
+      cols: [
+        { label: 'Role',        key: 'agent_role',      fmt: (v, r) => esc(v || r.role || '') },
+        { label: 'Skill',       key: 'skill_type',      fmt: (v, r) => esc(v || r.type || '') },
+        { label: 'Proficiency', key: 'proficiency',     cls: 'num', fmt: v => v == null ? '' : esc(String(v)) },
+        { label: 'Tasks',       key: 'tasks_completed', cls: 'num', fmt: v => num(+v || 0) },
+        { label: 'Success',     key: 'success_rate',    cls: 'num', fmt: v => v == null ? '' : (Math.round(v <= 1 ? v * 100 : v) + '%') },
+      ],
+      empty: 'No skills tracked yet',
+    }),
+    /* ── Learning ────────────────────────────────────────── */
+    dataPanel({
+      title: 'Experiments', url: '/api/v2/learning/experiments', pid,
+      arrKeys: ['experiments', 'items', 'data'],
+      cols: [
+        { label: 'Name',       key: 'name',       fmt: (v, r) => esc(v || r.title || r.experiment_id || '') },
+        { label: 'Hypothesis', key: 'hypothesis', fmt: (v, r) => esc(String(v || r.description || '').slice(0, 80)) },
+        { label: 'Status',     key: 'status',     fmt: (v, r) => esc(v || r.state || '') },
+        { label: 'Agent',      key: 'agent',      fmt: (v, r) => esc(v || r.agent_role || '') },
+      ],
+      empty: 'No experiments running',
+    }),
+    dataPanel({
+      title: 'Benchmarks', url: '/api/v2/learning/benchmarks', pid,
+      arrKeys: ['benchmarks', 'items', 'data'],
+      cols: [
+        { label: 'Agent',  key: 'agent',  fmt: (v, r) => esc(v || r.agent_role || '') },
+        { label: 'Metric', key: 'metric', fmt: (v, r) => esc(v || r.benchmark_name || r.category || '') },
+        { label: 'Score',  key: 'score',  cls: 'num', fmt: (v, r) => { const s = +(v || r.benchmark_score || 0); return s ? String(s.toFixed(1)) : ''; } },
+      ],
+      empty: 'No benchmarks yet',
+    }),
+    dataPanel({
+      title: 'Conventions', url: '/api/v2/learning/conventions', pid,
+      arrKeys: ['conventions', 'items', 'data'],
+      cols: [
+        { label: 'Convention',   key: 'convention', fmt: (v, r) => esc(v || r.name || r.rule || '') },
+        { label: 'Category',     key: 'category',   fmt: (v, r) => esc(v || r.type || '') },
+        { label: 'Description',  key: 'description',fmt: (v, r) => esc(String(v || r.example || '').slice(0, 80)) },
+      ],
+      empty: 'No conventions detected',
+    }),
+    dataPanel({
+      title: 'Error clusters', url: '/api/v2/learning/error-clusters', pid,
+      arrKeys: ['error_clusters', 'clusters', 'items', 'data'],
+      cols: [
+        { label: 'Message',       key: 'message',       fmt: v => esc(String(v || '').slice(0, 70)) },
+        { label: 'Count',         key: 'count',         cls: 'num', fmt: v => num(+v || 0) },
+        { label: 'Agent',         key: 'agent',         fmt: (v, r) => esc(v || r.agent_role || '') },
+        { label: 'Suggested fix', key: 'suggested_fix', fmt: v => esc(String(v || '').slice(0, 60)) },
+      ],
+      empty: 'No recurring errors',
+    }),
+    dataPanel({
+      title: 'Cross-project knowledge', url: '/api/v2/learning/cross-project?knowledge_type=pattern', pid,
+      arrKeys: ['knowledge', 'items', 'data'],
+      cols: [
+        { label: 'Type',       key: 'knowledge_type', fmt: (v, r) => esc(v || r.type || '') },
+        { label: 'Content',    key: 'content',        fmt: v => esc(String(v || '').slice(0, 80)) },
+        { label: 'Source',     key: 'source_project', fmt: (v, r) => esc(v || r.project || '') },
+        { label: 'Confidence', key: 'confidence',     cls: 'num', fmt: v => v == null ? '' : (Math.round(v <= 1 ? v * 100 : v) + '%') },
+      ],
+      empty: 'No cross-project knowledge',
+    }),
+    /* ── Self-improvement ────────────────────────────────── */
+    dataPanel({
+      title: 'Prompt history', url: '/api/v3/self-improvement/prompt-history?agent_role=coder', pid,
+      arrKeys: ['prompts', 'history', 'items', 'data'],
+      cols: [
+        { label: 'Role',    key: 'agent_role', fmt: (v, r) => esc(v || r.role || '') },
+        { label: 'Prompt',  key: 'prompt',     fmt: (v, r) => esc(String(v || r.template || '').slice(0, 80)) },
+        { label: 'Version', key: 'version',    fmt: (v, r) => esc(v || r.revision || '') },
+        { label: 'When',    key: 'created_at', cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No prompt history',
+    }),
+    dataPanel({
+      title: 'Strategy portfolio', url: '/api/v3/self-improvement/portfolio?agent_role=coder', pid,
+      arrKeys: ['strategies', 'portfolio', 'items', 'data'],
+      cols: [
+        { label: 'Strategy',      key: 'name',          fmt: (v, r) => esc(v || r.strategy || '') },
+        { label: 'Role',          key: 'agent_role',    fmt: (v, r) => esc(v || r.role || '') },
+        { label: 'Status',        key: 'status',        fmt: (v, r) => esc(v || r.state || '') },
+        { label: 'Effectiveness', key: 'effectiveness', cls: 'num', fmt: (v, r) => esc(String(v || r.score || '')) },
+      ],
+      empty: 'No strategies in portfolio',
+    }),
+    dataPanel({
+      title: 'Failure modes', url: '/api/v3/self-improvement/failure-modes', pid,
+      arrKeys: ['failure_modes', 'failures', 'items', 'data'],
+      cols: [
+        { label: 'Mode',        key: 'mode',        fmt: (v, r) => esc(v || r.type || r.name || '') },
+        { label: 'Agent',       key: 'agent',       fmt: (v, r) => esc(v || r.agent_role || '') },
+        { label: 'Frequency',   key: 'frequency',   cls: 'num', fmt: (v, r) => v == null ? '' : esc(String(v || r.count || '')) },
+        { label: 'Description', key: 'description', fmt: v => esc(String(v || '').slice(0, 70)) },
+      ],
+      empty: 'No failure modes catalogued',
+    }),
+    dataPanel({
+      title: 'Reflections', url: '/api/v3/self-improvement/reflections?agent_id=', pid,
+      arrKeys: ['reflections', 'items', 'data'],
+      cols: [
+        { label: 'Agent',      key: 'agent_role', fmt: (v, r) => esc(v || r.agent || '') },
+        { label: 'Reflection', key: 'reflection', fmt: (v, r) => esc(String(v || r.insight || r.content || '').slice(0, 90)) },
+        { label: 'Category',   key: 'category',   fmt: (v, r) => esc(v || r.type || '') },
+        { label: 'When',       key: 'created_at', cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No reflections yet',
+    }),
+    /* ── Autonomous ──────────────────────────────────────── */
+    dataPanel({
+      title: 'Discoveries', url: '/api/v2/autonomous/discoveries', pid,
+      arrKeys: ['discoveries', 'items', 'data'],
+      cols: [
+        { label: 'Type',        key: 'type',        fmt: (v, r) => esc(v || r.discovery_type || '') },
+        { label: 'Title',       key: 'title',       fmt: (v, r) => esc(v || r.name || '') },
+        { label: 'Description', key: 'description', fmt: (v, r) => esc(String(v || r.summary || '').slice(0, 80)) },
+        { label: 'Agent',       key: 'agent',       fmt: (v, r) => esc(v || r.agent_role || r.made_by || '') },
+        { label: 'When',        key: 'created_at',  cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No autonomous discoveries yet',
+    }),
+    dataPanel({
+      title: 'Decompositions', url: '/api/v2/autonomous/decompositions', pid,
+      arrKeys: ['decompositions', 'items', 'data'],
+      cols: [
+        { label: 'Task',     key: 'task_id',      cls: 'mono', fmt: v => esc(v || '') },
+        { label: 'Title',    key: 'title',        fmt: v => esc(v || '') },
+        { label: 'Subtasks', key: 'subtask_count',cls: 'num',  fmt: (v, r) => num(v != null ? v : (Array.isArray(r.subtasks) ? r.subtasks.length : 0)) },
+        { label: 'Status',   key: 'status',       fmt: v => esc(v || '') },
+      ],
+      empty: 'No decompositions recorded',
+    }),
+    dataPanel({
+      title: 'Agent bids', url: '/api/v2/autonomous/bids?task_id=', pid,
+      arrKeys: ['bids', 'items', 'data'],
+      cols: [
+        { label: 'Agent',      key: 'agent',      fmt: (v, r) => esc(v || r.bidder || '') },
+        { label: 'Task',       key: 'task_id',    cls: 'mono', fmt: v => esc(v || '') },
+        { label: 'Confidence', key: 'confidence', cls: 'num',  fmt: v => v == null ? '' : (Math.round(v <= 1 ? v * 100 : v) + '%') },
+        { label: 'Status',     key: 'status',     fmt: (v, r) => esc(v || r.state || '') },
+      ],
+      empty: 'No active bids',
+    }),
+    dataPanel({
+      title: 'Retry strategies', url: '/api/v2/autonomous/retry-strategies', pid,
+      arrKeys: ['strategies', 'retry_strategies', 'items', 'data'],
+      cols: [
+        { label: 'Strategy', key: 'strategy', fmt: (v, r) => esc(v || r.type || '') },
+        { label: 'Attempts', key: 'attempt',  cls: 'num', fmt: (v, r) => esc(String(v != null ? v : (r.retry_count || 0)) + '/' + (r.max_retries || r.max_attempts || '?')) },
+        { label: 'Status',   key: 'status',   fmt: (v, r) => esc(v || r.state || '') },
+        { label: 'Reason',   key: 'reason',   fmt: (v, r) => esc(String(v || r.last_error || '').slice(0, 70)) },
+      ],
+      empty: 'No retry strategies',
+    }),
+    /* ── Task intelligence ───────────────────────────────── */
+    dataPanel({
+      title: 'Parallelization', url: '/api/v3/task-intel/parallel', pid,
+      arrKeys: ['parallel', 'tasks', 'items', 'data'],
+      cols: [
+        { label: 'Task',   key: 'task_id',        cls: 'mono', fmt: (v, r) => esc(v || r.id || '') },
+        { label: 'Agent',  key: 'agent',          fmt: (v, r) => esc(v || r.agent_role || '') },
+        { label: 'Group',  key: 'parallel_group', fmt: (v, r) => esc(v || r.group || '') },
+        { label: 'Status', key: 'status',         fmt: v => esc(v || '') },
+      ],
+      empty: 'No parallelization data',
+    }),
+    dataPanel({
+      title: 'Effort tracking', url: '/api/v3/task-intel/effort-tracking/history', pid,
+      arrKeys: ['history', 'effort', 'items', 'data'],
+      cols: [
+        { label: 'Task',      key: 'task_id',          cls: 'mono', fmt: (v, r) => esc(v || r.id || '') },
+        { label: 'Agent',     key: 'agent',            fmt: (v, r) => esc(v || r.agent_role || '') },
+        { label: 'Estimated', key: 'estimated_effort', cls: 'num',  fmt: (v, r) => fmtDur(v || r.estimate_ms || 0) },
+        { label: 'Actual',    key: 'actual_effort',    cls: 'num',  fmt: (v, r) => fmtDur(v || r.duration_ms || 0) },
+        { label: 'When',      key: 'created_at',       cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No effort history',
+    }),
+    dataPanel({
+      title: 'Prediction accuracy', url: '/api/v3/task-intel/predictions/accuracy', pid,
+      arrKeys: ['predictions', 'items', 'data'],
+      cols: [
+        { label: 'Task',      key: 'task_id',  cls: 'mono', fmt: (v, r) => esc(v || r.id || '') },
+        { label: 'Predicted', key: 'predicted',cls: 'num',  fmt: v => esc(String(v || '')) },
+        { label: 'Actual',    key: 'actual',   cls: 'num',  fmt: v => esc(String(v || '')) },
+        { label: 'Accuracy',  key: 'accuracy', cls: 'num',  fmt: v => v == null ? '' : (Math.round(v <= 1 ? v * 100 : v) + '%') },
+      ],
+      empty: 'No prediction data yet',
+    }),
+    /* ── Social intelligence ─────────────────────────────── */
+    dataPanel({
+      title: 'Trust network', url: '/api/v3/social/trust/network', pid,
+      arrKeys: ['edges', 'trust', 'network', 'items', 'data'],
+      cols: [
+        { label: 'From',         key: 'agent1',       fmt: (v, r) => esc(v || r.from || '') },
+        { label: 'To',           key: 'agent2',       fmt: (v, r) => esc(v || r.to || '') },
+        { label: 'Trust',        key: 'trust_score',  cls: 'num', fmt: (v, r) => { const s = +(v || r.score || 0); return s ? (Math.round(s <= 1 ? s * 100 : s) + (s <= 1 ? '%' : '')) : ''; } },
+        { label: 'Interactions', key: 'interactions', cls: 'num', fmt: v => v == null ? '' : num(+v || 0) },
+      ],
+      empty: 'No trust network data',
+    }),
+    dataPanel({
+      title: 'Best collaborations', url: '/api/v3/social/collaborations/best', pid,
+      arrKeys: ['collaborations', 'pairs', 'items', 'data'],
+      cols: [
+        { label: 'Agent 1', key: 'agent1',  fmt: (v, r) => esc(v || r.agent || '') },
+        { label: 'Agent 2', key: 'agent2',  fmt: (v, r) => esc(v || r.partner || '') },
+        { label: 'Score',   key: 'score',   cls: 'num', fmt: (v, r) => { const s = +(v || r.collaboration_score || 0); return s ? String(s) : ''; } },
+        { label: 'Tasks',   key: 'tasks_count', cls: 'num', fmt: v => v == null ? '' : num(+v || 0) },
+      ],
+      empty: 'No collaboration data',
+    }),
+    dataPanel({
+      title: 'Mental model', url: '/api/v3/social/mental-model', pid,
+      arrKeys: ['models', 'entries', 'items', 'data'],
+      cols: [
+        { label: 'Agent',      key: 'agent',      fmt: (v, r) => esc(v || r.agent_role || '') },
+        { label: 'About',      key: 'about',      fmt: (v, r) => esc(v || r.target || r.subject || '') },
+        { label: 'Model',      key: 'model',      fmt: (v, r) => esc(String(v || r.content || r.description || '').slice(0, 80)) },
+        { label: 'Confidence', key: 'confidence', cls: 'num', fmt: v => v == null ? '' : (Math.round(v <= 1 ? v * 100 : v) + '%') },
+      ],
+      empty: 'No mental model data',
+    }),
+    dataPanel({
+      title: 'Arguments & debates', url: '/api/v3/social/arguments', pid,
+      arrKeys: ['arguments', 'debates', 'items', 'data'],
+      cols: [
+        { label: 'Agent',   key: 'agent',   fmt: (v, r) => esc(v || r.agent_role || '') },
+        { label: 'Topic',   key: 'topic',   fmt: (v, r) => esc(v || r.subject || '') },
+        { label: 'Status',  key: 'status',  fmt: (v, r) => esc(v || r.state || '') },
+        { label: 'Outcome', key: 'outcome', fmt: v => esc(String(v || '').slice(0, 60)) },
+      ],
+      empty: 'No active debates',
+    }),
+    /* ── Process intelligence ────────────────────────────── */
+    dataPanel({
+      title: 'Velocity history', url: '/api/v3/process/velocity/history', pid,
+      arrKeys: ['velocity', 'history', 'items', 'data'],
+      cols: [
+        { label: 'Period',      key: 'date',             fmt: (v, r) => esc(v || r.period || r.bucket || '') },
+        { label: 'Completed',   key: 'tasks_completed',  cls: 'num', fmt: v => num(+v || 0) },
+        { label: 'Avg duration',key: 'avg_duration_ms',  cls: 'num', fmt: v => fmtDur(v) },
+        { label: 'Throughput',  key: 'throughput',       cls: 'num', fmt: v => v == null ? '' : esc(String(v)) },
+      ],
+      empty: 'No velocity data',
+    }),
+    dataPanel({
+      title: 'Risk heat-map', url: '/api/v3/process/risk-scores/heat-map', pid,
+      arrKeys: ['risks', 'heat_map', 'items', 'data'],
+      cols: [
+        { label: 'Area',        key: 'area',        fmt: (v, r) => esc(v || r.zone || r.category || '') },
+        { label: 'Risk score',  key: 'risk_score',  cls: 'num', fmt: (v, r) => esc(String(v || r.score || '')) },
+        { label: 'Severity',    key: 'severity',    fmt: v => esc(v || '') },
+        { label: 'Description', key: 'description', fmt: v => esc(String(v || '').slice(0, 60)) },
+      ],
+      empty: 'No risk data',
+    }),
+    dataPanel({
+      title: 'Process bottlenecks', url: '/api/v3/process/bottlenecks', pid,
+      arrKeys: ['bottlenecks', 'items', 'data'],
+      cols: [
+        { label: 'Type',        key: 'bottleneck_type', fmt: (v, r) => esc(v || r.type || '') },
+        { label: 'Severity',    key: 'severity',        fmt: v => esc(v || '') },
+        { label: 'Description', key: 'description',     fmt: (v, r) => esc(String(v || r.message || '').slice(0, 80)) },
+        { label: 'Agent',       key: 'agent',           fmt: (v, r) => esc(v || r.task_id || '') },
+      ],
+      empty: 'No process bottlenecks',
+    }),
+    dataPanel({
+      title: 'Retrospectives', url: '/api/v3/process/retrospectives/list', pid,
+      arrKeys: ['retrospectives', 'retros', 'items', 'data'],
+      cols: [
+        { label: 'Sprint',     key: 'sprint',     fmt: (v, r) => esc(v || r.period || '') },
+        { label: 'Went well',  key: 'went_well',  fmt: (v, r) => esc(String(v || r.positives || '').slice(0, 70)) },
+        { label: 'Improve',    key: 'improve',    fmt: (v, r) => esc(String(v || r.negatives || '').slice(0, 70)) },
+        { label: 'When',       key: 'created_at', cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No sprint retrospectives',
+    }),
   ]);
-  c.innerHTML=panels.join('');
+
+  const aiSec = title => `<h2 class="ai-sec-heading">${esc(title)}</h2>`;
+
+  c.innerHTML =
+    aiSec('Skills') +
+    pSkills +
+    aiSec('Learning') +
+    pExperiments + pBenchmarks + pConventions + pErrorClusters + pCrossProject +
+    aiSec('Self-improvement') +
+    pPromptHistory + pPortfolio + pFailureModes + pReflections +
+    aiSec('Autonomous') +
+    pDiscoveries + pDecompositions + pBids + pRetryStrategies +
+    aiSec('Task intelligence') +
+    pParallel + pEffortHistory + pPredAcc +
+    aiSec('Social intelligence') +
+    pTrustNetwork + pCollaborations + pMentalModel + pArguments +
+    aiSec('Process intelligence') +
+    pVelocity + pRiskHeatMap + pBottlenecks + pRetrospectives;
 }
-async function renderInsPlanning(c,pid){
-  const panels=await Promise.all([
-    dataPanel({title:'Standups',url:'/api/v2/coordination/standups',pid,arrKeys:['standups','items','data'],cols:[{label:'Agent',key:'agent',fmt:(v,r)=>esc(v||r.agent_role||'')},{label:'Working on',key:'in_progress',fmt:(v,r)=>esc(String(v||r.working_on||'').slice(0,50))},{label:'Blocked',key:'blocked',fmt:(v,r)=>esc(String(v||r.blockers||'').slice(0,40))},{label:'When',key:'created_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No standups reported'}),
-    dataPanel({title:'Scope flags',url:'/api/v2/planning/scope-flags',pid,arrKeys:['scope_flags','flags','items','data'],cols:[{label:'Severity',key:'severity',fmt:v=>esc(v||'')},{label:'Task',key:'task_id',cls:'mono',fmt:v=>esc(v||'')},{label:'Type',key:'flag_type',fmt:v=>esc(v||'')},{label:'Description',key:'description',fmt:v=>esc(String(v||'').slice(0,60))}],empty:'No scope flags'}),
-    dataPanel({title:'File locks',url:'/api/v2/coordination/locks',pid,arrKeys:['locks','items','data'],cols:[{label:'File',key:'file',cls:'mono',fmt:v=>esc(v||'')},{label:'Locked by',key:'locked_by',fmt:v=>esc(v||'')},{label:'Type',key:'lock_type',fmt:v=>esc(v||'')},{label:'Acquired',key:'acquired_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No active locks'}),
-    dataPanel({title:'Heartbeats',url:'/api/v2/coordination/heartbeats',pid,arrKeys:['heartbeats','items','data'],cols:[{label:'Agent',key:'agent',fmt:v=>esc(v||'')},{label:'Task',key:'task_id',cls:'mono',fmt:v=>esc(v||'')},{label:'Status',key:'status',fmt:v=>esc(v||'')},{label:'Progress',key:'progress',cls:'num',fmt:v=>v==null?'':(v+'%')},{label:'Updated',key:'updated_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No heartbeats'}),
-    dataPanel({title:'Bottlenecks',url:'/api/v2/observability/bottlenecks',pid,arrKeys:['bottlenecks','items','data'],cols:[{label:'Type',key:'bottleneck_type',fmt:(v,r)=>esc(v||r.type||'')},{label:'Severity',key:'severity',fmt:v=>esc(v||'')},{label:'Location',key:'location',fmt:(v,r)=>esc(v||r.bottleneck_location||'')}],empty:'No bottlenecks detected'}),
+async function renderInsPlanning(c, pid) {
+  // Fetch KPI summary data alongside all panels in one parallel round
+  const [
+    sfd, amd, dcd, prd,
+    pmP, sfP,
+    suP, lockP, propP, hbP, pairP,
+    btP, anP, dcP,
+  ] = await Promise.all([
+    // Raw fetches for KPI row
+    pFetch('/api/v2/planning/scope-flags', pid).catch(() => []),
+    pFetch('/api/v2/observability/anomalies', pid).catch(() => []),
+    pFetch('/api/v2/observability/decisions', pid).catch(() => []),
+    pFetch('/api/v2/coordination/pairs', pid).catch(() => []),
+    // Planning panels
+    dataPanel({
+      title: 'Post-mortems', url: '/api/v2/planning/post-mortems', pid,
+      arrKeys: ['post_mortems', 'items', 'data'],
+      cols: [
+        { label: 'Task',    key: 'task_id',           cls: 'mono', fmt: v => esc(v || '—') },
+        { label: 'Group',   key: 'group_id',          cls: 'mono', fmt: v => esc(v || '—') },
+        { label: 'Total',   key: 'total_tasks',       cls: 'num',  fmt: v => num(+v || 0) },
+        { label: 'Success', key: 'success_rate',      cls: 'num',  fmt: v => v == null ? '—' : (Math.round(+v * 100) + '%') },
+        { label: 'Avg hrs', key: 'avg_duration_hours',cls: 'num',  fmt: v => v == null ? '—' : (+v).toFixed(1) },
+        { label: 'When',    key: 'created_at',        cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No post-mortems yet', limit: 15,
+    }),
+    dataPanel({
+      title: 'Scope flags', url: '/api/v2/planning/scope-flags', pid,
+      arrKeys: ['scope_flags', 'flags', 'items', 'data'],
+      cols: [
+        { label: 'Task',     key: 'task_id',        cls: 'mono', fmt: v => esc(v || '—') },
+        { label: 'Growth',   key: 'growth_pct',     cls: 'num',  fmt: v => v == null ? '—' : ((+v > 0 ? '+' : '') + Number(v).toFixed(1) + '%') },
+        { label: 'Orig len', key: 'original_length',cls: 'num',  fmt: v => num(+v || 0) },
+        { label: 'Curr len', key: 'current_length', cls: 'num',  fmt: v => num(+v || 0) },
+        { label: 'Flagged',  key: 'flagged_at',     cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No scope flags', limit: 20,
+    }),
+    // Coordination panels
+    dataPanel({
+      title: 'Standups', url: '/api/v2/coordination/standups', pid,
+      arrKeys: ['standups', 'items', 'data'],
+      cols: [
+        { label: 'Agent', key: 'agent_id',    fmt: v => esc(v || '—') },
+        { label: 'Type',  key: 'report_type', fmt: v => esc(v || 'daily') },
+        { label: 'Plan',  key: 'plan',        fmt: v => esc(String(v || '').slice(0, 60)) },
+        { label: 'When',  key: 'created_at',  cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No standups reported', limit: 10,
+    }),
+    dataPanel({
+      title: 'File locks', url: '/api/v2/coordination/locks', pid,
+      arrKeys: ['locks', 'items', 'data'],
+      cols: [
+        { label: 'File',      key: 'file_path', cls: 'mono', fmt: v => esc(v || '') },
+        { label: 'Locked by', key: 'locked_by', fmt: v => esc(v || '') },
+        { label: 'Task',      key: 'task_id',   cls: 'mono', fmt: v => esc(v || '—') },
+        { label: 'Acquired',  key: 'locked_at', cls: 'mono', fmt: v => esc(agoText(v)) },
+        { label: 'Expires',   key: 'expires_at',cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No active locks', limit: 15,
+    }),
+    dataPanel({
+      title: 'Proposals', url: '/api/v2/coordination/proposals', pid,
+      arrKeys: ['proposals', 'items', 'data'],
+      cols: [
+        { label: 'ID',          key: 'proposal_id', cls: 'mono', fmt: v => esc(v || '') },
+        { label: 'Description', key: 'description', fmt: v => esc(String(v || '').slice(0, 65)) },
+        { label: 'Status',      key: 'status',      fmt: v => esc(v || '') },
+        { label: 'When',        key: 'created_at',  cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No proposals', limit: 10,
+    }),
+    dataPanel({
+      title: 'Heartbeats', url: '/api/v2/coordination/heartbeats', pid,
+      arrKeys: ['heartbeats', 'items', 'data'],
+      cols: [
+        { label: 'Agent',    key: 'agent_id',       fmt: v => esc(v || '') },
+        { label: 'Task',     key: 'task_id',        cls: 'mono', fmt: v => esc(v || '') },
+        { label: 'Progress', key: 'progress_pct',   cls: 'num',  fmt: v => v == null ? '—' : (+v).toFixed(0) + '%' },
+        { label: 'Status',   key: 'status_message', fmt: v => esc(String(v || '').slice(0, 50)) },
+        { label: 'When',     key: 'created_at',     cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No heartbeats', limit: 10,
+    }),
+    dataPanel({
+      title: 'Mentor-mentee pairs', url: '/api/v2/coordination/pairs', pid,
+      arrKeys: ['pairs', 'items', 'data'],
+      cols: [
+        { label: 'Mentor', key: 'mentor_role', fmt: v => esc(v || '') },
+        { label: 'Mentee', key: 'mentee_role', fmt: v => esc(v || '') },
+        { label: 'Skill',  key: 'skill_area',  fmt: v => esc(v || '') },
+        { label: 'Status', key: 'status',      fmt: v => esc(v || 'active') },
+        { label: 'Paired', key: 'created_at',  cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No pairs configured', limit: 20,
+    }),
+    // Monitoring panels
+    dataPanel({
+      title: 'Bottlenecks', url: '/api/v2/observability/bottlenecks', pid,
+      arrKeys: ['bottlenecks', 'items', 'data'],
+      cols: [
+        { label: 'Stage',       key: 'stage',          fmt: v => esc(v || '') },
+        { label: 'Avg wait',    key: 'avg_wait_ms',    cls: 'num', fmt: v => fmtDur(+v || 0) },
+        { label: 'Avg process', key: 'avg_process_ms', cls: 'num', fmt: v => fmtDur(+v || 0) },
+        { label: 'Queue depth', key: 'queue_depth',    cls: 'num', fmt: v => num(+v || 0) },
+        { label: 'Detected',    key: 'detected_at',    cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No bottlenecks detected', limit: 10,
+    }),
+    dataPanel({
+      title: 'Anomalies', url: '/api/v2/observability/anomalies', pid,
+      arrKeys: ['anomalies', 'items', 'data'],
+      cols: [
+        { label: 'Agent',    key: 'agent_id',     fmt: v => esc(v || '') },
+        { label: 'Metric',   key: 'anomaly_type', fmt: v => esc(v || '') },
+        { label: 'Severity', key: 'severity',     fmt: v => { const cl = v === 'high' ? 'r' : v === 'medium' ? 'a' : ''; return `<span class="pill ${cl}">${esc(v || '')}</span>`; } },
+        { label: 'Value',    key: 'metric_value', cls: 'num', fmt: v => v == null ? '—' : Number(v).toFixed(2) },
+        { label: 'Detected', key: 'detected_at',  cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No anomalies', limit: 20,
+    }),
+    dataPanel({
+      title: 'Decision log', url: '/api/v2/observability/decisions', pid,
+      arrKeys: ['decisions', 'items', 'data'],
+      cols: [
+        { label: 'Agent',    key: 'agent_id',      fmt: v => esc(v || '') },
+        { label: 'Task',     key: 'task_id',       cls: 'mono', fmt: v => esc(v || '—') },
+        { label: 'Type',     key: 'decision_type', fmt: v => esc(v || '') },
+        { label: 'Decision', key: 'decision',      fmt: v => esc(String(v || '').slice(0, 65)) },
+        { label: 'When',     key: 'created_at',    cls: 'mono', fmt: v => esc(agoText(v)) },
+      ],
+      empty: 'No decisions logged', limit: 25,
+    }),
   ]);
-  c.innerHTML=panels.join('');
+
+  // Build KPI row from raw fetches
+  const nSf  = asArr(sfd, ['scope_flags', 'flags', 'items']).length;
+  const nAm  = asArr(amd, ['anomalies', 'items']).length;
+  const nDc  = asArr(dcd, ['decisions', 'items']).length;
+  const nPr  = asArr(prd, ['pairs', 'items']).length;
+
+  const kpis = `<div class="kpi-grid">
+    ${kpi('⚑ Scope flags',  nSf, nSf  ? nSf  + ' scope creep flag' + (nSf  > 1 ? 's' : '') : 'no drift')}
+    ${kpi('⚠ Anomalies',    nAm, nAm  ? nAm  + ' detected'                                    : 'all clear')}
+    ${kpi('✓ Decisions',    nDc, nDc  ? nDc  + ' audit entries'                               : 'no entries yet')}
+    ${kpi('⇄ Mentor pairs', nPr, nPr  ? nPr  + ' active pairing' + (nPr  > 1 ? 's' : '')     : 'none configured')}
+  </div>`;
+
+  const plHead = title =>
+    `<div class="pl-sec-head"><span class="pl-sec-accent"></span>${esc(title)}</div>`;
+
+  c.innerHTML =
+    kpis +
+    plHead('Planning') +
+    `<div class="ins-grid">${pmP}${sfP}</div>` +
+    plHead('Coordination') +
+    `<div class="ins-grid">${suP}${lockP}</div>` +
+    `<div class="ins-grid">${propP}${hbP}</div>` +
+    pairP +
+    plHead('Monitoring') +
+    `<div class="ins-grid">${btP}${anP}</div>` +
+    dcP;
 }
+/* ===================================================================
+   rl* — renderSetAgents replacement: Add / Edit / Delete / Prompt
+   =================================================================== */
+let rlRolesCache={}, rlEditRole=null, rlEditModels=[],
+    rlAddTab='presets', rlAddStep=0, rlAddPresets=[],
+    rlAddSelPreset=null, rlAddCatFilter='all',
+    rlAddCustom={role:'',display_name:'',prefix:'',color:'#6c79ff',emoji:'',model:'',system_prompt:'',tools:[],approval_mode:'auto',max_revision_cycles:0,uses_worktree:false},
+    rlPromptRole=null, rlCurrentPid=null;
+
+const RL_CTX_OPTS=['parent_artifact','root_artifact','sibling_summary','rejection_history'];
+const RL_COMMON_TOOLS=['Read','Write','Edit','Bash','Glob','Grep','WebSearch','mcp__task-tools__create_task'];
+
+function rlSlug(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');}
+function rlAutoPrefix(s){const w=String(s||'').trim().split(/\s+/);return w.length>=2?(w[0][0]+w[1][0]).toUpperCase():String(s||'').slice(0,2).toUpperCase();}
+function rlLines(v){if(Array.isArray(v))return v.join('\n');return String(v||'');}
+function rlSplitLines(s){return String(s||'').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);}
+
+/* -------- main section renderer -------- */
 async function renderSetAgents(c,pid){
+  rlCurrentPid=pid;
   let roles=[],agents=[],paused={},inter={};
   [roles,agents,paused,inter]=await Promise.all([
     pFetch('/api/settings/roles',pid).catch(()=>[]),
@@ -760,54 +1876,835 @@ async function renderSetAgents(c,pid){
   const aArr=Array.isArray(agents)?agents:asArr(agents,['agents']);
   const pausedRoles=(paused&&paused.paused_roles)||asArr(paused,['paused_roles']);
   const interArr=(inter&&inter.interactions)||asArr(inter,['interactions','items']);
-  let html=`<div class="set-card"><h3>Approvals needed <span class="pill ${interArr.length?'a':'g'}">${interArr.length}</span></h3><div class="sub">Agent actions waiting on your decision.</div>`;
+
+  rlRolesCache={};
+  rArr.forEach(r=>{rlRolesCache[r.role||r.name||'']=r;});
+
+  let html=`<div class="ins-bar"><div class="grow"></div><button class="tb-primary" onclick="rlOpenAdd()">＋ Add agent</button></div>`;
+
+  /* Approvals card */
+  html+=`<div class="set-card"><h3>Approvals needed <span class="pill ${interArr.length?'a':'g'}">${interArr.length}</span></h3><div class="sub">Agent actions waiting on your decision.</div>`;
   if(!interArr.length)html+=insEmpty('All clear','No pending approvals.');
-  else html+=interArr.map(i=>{const id=i.request_key||i.id||i.request_id||'';return `<div class="set-row"><div><div class="srl">${esc(i.request_type||'Approval')}</div><div class="srs">${esc(i.task_id||'')} · ${esc(String(i.detail||i.description||i.request_key||'').slice(0,80))}</div></div><div class="right"><button class="act-btn" onclick="interAct('${esc(id)}','reject')">Reject</button><button class="act-btn pri" onclick="interAct('${esc(id)}','approve')">Approve</button></div></div>`;}).join('');
+  else html+=interArr.map(i=>{
+    const id=i.request_key||i.id||i.request_id||'';
+    return `<div class="set-row"><div><div class="srl">${esc(i.request_type||'Approval')}</div><div class="srs">${esc(i.task_id||'')} · ${esc(String(i.detail||i.description||i.request_key||'').slice(0,80))}</div></div><div class="right"><button class="act-btn" onclick="interAct('${esc(id)}','reject')">Reject</button><button class="act-btn pri" onclick="interAct('${esc(id)}','approve')">Approve</button></div></div>`;
+  }).join('');
   html+='</div>';
+
+  /* Roles card */
   html+=`<div class="set-card"><h3>Roles <span class="pill">${rArr.length}</span></h3><div class="sub">Configured agent roles for this project.</div>`;
   if(!rArr.length)html+=insEmpty('No roles','This project has no configured roles.');
-  else html+=rArr.map(r=>{const name=r.name||r.role||r.display_name||'';const live=aArr.filter(a=>String(a.role||'').toLowerCase()===String(name).toLowerCase());const isPaused=pausedRoles.indexOf(name)>=0||pausedRoles.indexOf('all')>=0;return `<div class="set-row"><div><div class="srl">${esc(r.display_name||name)}</div><div class="srs">${esc(r.model||'default model')} · max ${esc(r.max_instances!=null?r.max_instances:'—')} · ${live.length} live</div></div><div class="right">${isPaused?`<button class="act-btn" onclick="roleCtl('${esc(name)}','resume')">Resume</button>`:`<button class="act-btn" onclick="roleCtl('${esc(name)}','pause')">Pause</button>`}</div></div>`;}).join('');
+  else html+=rArr.map(r=>{
+    const name=r.role||r.name||'';
+    const live=aArr.filter(a=>String(a.role||'').toLowerCase()===name.toLowerCase());
+    const isPaused=pausedRoles.indexOf(name)>=0||pausedRoles.indexOf('all')>=0;
+    const rc=roleColor(name);
+    const safeId=esc(name);
+    return `<div class="set-row">
+      <div style="width:28px;height:28px;border-radius:8px;background:${rc[0]};color:${rc[1]};display:grid;place-items:center;font-family:var(--mono);font-size:12px;font-weight:600;flex:0 0 28px">${esc(r.emoji||roleTag(name))}</div>
+      <div><div class="srl">${esc(r.display_name||name)}</div><div class="srs">${esc(r.model||'default model')} · max ${esc(r.max_instances!=null?String(r.max_instances):'—')} · ${live.length} live</div></div>
+      <div class="right">
+        ${isPaused?`<button class="act-btn" onclick="roleCtl('${safeId}','resume')">Resume</button>`:`<button class="act-btn" onclick="roleCtl('${safeId}','pause')">Pause</button>`}
+        <button class="act-btn" onclick="rlOpenEdit('${safeId}')">Edit</button>
+        <button class="act-btn ghost" onclick="rlDeleteRole('${safeId}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
   html+='</div>';
   c.innerHTML=html;
+}
+
+/* ================================================================
+   Role Edit Modal
+   ================================================================ */
+async function rlOpenEdit(roleName){
+  const role=rlRolesCache[roleName];
+  if(!role){alert('Role not found in cache — try reloading settings.');return;}
+  rlEditRole={...role};
+  /* Load models once */
+  if(!rlEditModels.length){
+    try{const md=await pFetch('/api/settings/models',rlCurrentPid);rlEditModels=Array.isArray(md)?md:((md&&md.models)||[]);}
+    catch(e){rlEditModels=[];}
+  }
+  const titleEl=document.getElementById('rl-edit-title');
+  if(titleEl)titleEl.textContent='Edit — '+(role.display_name||roleName);
+  rlRenderEditModal();
+  document.getElementById('rl-edit-overlay').classList.add('on');
+}
+
+function rlCloseEdit(){document.getElementById('rl-edit-overlay').classList.remove('on');}
+
+function rlRenderEditModal(){
+  const r=rlEditRole||{};
+  const fallback=[{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6'},{id:'claude-opus-4-6',name:'Claude Opus 4.6'},{id:'claude-haiku-4-5-20251001',name:'Claude Haiku 4.5'},{id:'gpt-5.5',name:'GPT-5.5'},{id:'gpt-5.4',name:'GPT-5.4'}];
+  const models=rlEditModels.length?rlEditModels:fallback;
+  const curModel=r.model||'';
+  let modelOpts=models.map(m=>{const mid=m.id||m;return `<option value="${esc(mid)}"${curModel===mid?' selected':''}>${esc(m.name||m.label||mid)}</option>`;}).join('');
+  if(curModel&&!models.some(m=>(m.id||m)===curModel)){
+    modelOpts=`<option value="${esc(curModel)}" selected>${esc(curModel)} (current)</option>`+modelOpts;
+  }
+  const ctxInc=Array.isArray(r.context_includes)?r.context_includes:[];
+  const ctxHtml=RL_CTX_OPTS.map(o=>`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer"><input type="checkbox" id="rl-ctx-${esc(o)}"${ctxInc.indexOf(o)>=0?' checked':''}> ${esc(o.replace(/_/g,' '))}</label>`).join('');
+  const rn=esc(r.role||'');
+  const body=document.getElementById('rl-edit-body');
+  if(!body)return;
+  body.innerHTML=`
+    <div class="np-f"><span class="np-l">Display name</span><input id="rl-e-dname" class="np-in" value="${esc(r.display_name||'')}"></div>
+    <div class="np-row">
+      <div class="np-f" style="flex:2"><span class="np-l">Emoji</span><input id="rl-e-emoji" class="np-in" value="${esc(r.emoji||'')}" placeholder="🤖" style="font-size:16px"></div>
+      <div class="np-f" style="flex:2"><span class="np-l">Prefix</span><input id="rl-e-prefix" class="np-in" value="${esc(r.prefix||'')}" maxlength="4" placeholder="PM"></div>
+      <div class="np-f" style="flex:1"><span class="np-l">Color</span><input type="color" id="rl-e-color" class="np-in" value="${esc(r.color||'#6c79ff')}" style="padding:3px;height:38px;cursor:pointer"></div>
+    </div>
+    <div class="np-f"><span class="np-l">Model</span><select id="rl-e-model" class="np-in">${modelOpts}</select></div>
+    <div class="np-f"><span class="np-l">Reasoning effort <span class="np-hint">high / medium / low / auto</span></span><input id="rl-e-reasoning" class="np-in" value="${esc(r.reasoning_effort||'')}" placeholder="high"></div>
+    <div class="np-row">
+      <div class="np-f"><span class="np-l">Max instances</span><input type="number" id="rl-e-maxinst" class="np-in" value="${r.max_instances!=null?r.max_instances:1}" min="1"></div>
+      <div class="np-f"><span class="np-l">Max turns</span><input type="number" id="rl-e-maxturns" class="np-in" value="${r.max_turns!=null?r.max_turns:''}" min="0" placeholder="unlimited"></div>
+      <div class="np-f"><span class="np-l">Max exec time (s)</span><input type="number" id="rl-e-maxtime" class="np-in" value="${r.max_execution_time!=null?r.max_execution_time:''}" min="0" placeholder="unlimited"></div>
+    </div>
+    <div class="np-f"><span class="np-l">Tools <span class="np-hint">one per line or comma-separated</span></span><textarea id="rl-e-tools" class="np-in" rows="3" style="resize:vertical">${esc(rlLines(r.tools))}</textarea></div>
+    <div class="np-row">
+      <div class="np-f"><span class="np-l">Produces</span><textarea id="rl-e-produces" class="np-in" rows="2" style="resize:vertical">${esc(rlLines(r.produces))}</textarea></div>
+      <div class="np-f"><span class="np-l">Accepts</span><textarea id="rl-e-accepts" class="np-in" rows="2" style="resize:vertical">${esc(rlLines(r.accepts))}</textarea></div>
+    </div>
+    <div class="np-f"><span class="np-l">Context includes</span><div style="display:flex;flex-wrap:wrap;gap:10px;padding:6px 0">${ctxHtml}</div></div>
+    <div class="np-f">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <span class="np-l" style="margin-bottom:0">System prompt</span>
+        <button class="btn-s" onclick="rlOpenPrompt('${rn}')">↗ Expand</button>
+      </div>
+      <textarea id="rl-e-prompt" class="np-in" rows="5" style="font-family:var(--mono);font-size:12px;resize:vertical">${esc(r.system_prompt||'')}</textarea>
+    </div>`;
+}
+
+function rlCollectEdit(){
+  const val=id=>{const el=document.getElementById(id);return el?el.value:'';};
+  const num=id=>{const v=val(id);return v===''?undefined:parseInt(v)||0;};
+  return {
+    ...rlEditRole,
+    display_name:val('rl-e-dname'),
+    emoji:val('rl-e-emoji'),
+    prefix:val('rl-e-prefix'),
+    color:val('rl-e-color'),
+    model:val('rl-e-model'),
+    reasoning_effort:val('rl-e-reasoning')||undefined,
+    max_instances:parseInt(val('rl-e-maxinst'))||1,
+    max_turns:num('rl-e-maxturns'),
+    max_execution_time:num('rl-e-maxtime'),
+    tools:rlSplitLines(val('rl-e-tools')),
+    produces:rlSplitLines(val('rl-e-produces')),
+    accepts:rlSplitLines(val('rl-e-accepts')),
+    context_includes:RL_CTX_OPTS.filter(o=>{const el=document.getElementById('rl-ctx-'+o);return el&&el.checked;}),
+    system_prompt:val('rl-e-prompt'),
+  };
+}
+
+async function rlSaveRole(){
+  const btn=document.getElementById('rl-edit-save');
+  if(btn){btn.textContent='Saving…';btn.disabled=true;}
+  try{
+    const body=rlCollectEdit();
+    /* Sync prompt from fullscreen if it is currently open for this role */
+    const ptaEl=document.getElementById('rl-prompt-ta');
+    const poEl=document.getElementById('rl-prompt-overlay');
+    if(ptaEl&&poEl&&poEl.classList.contains('on')&&rlPromptRole===(rlEditRole&&rlEditRole.role)){
+      body.system_prompt=ptaEl.value;
+    }
+    /* Strip undefined keys so JSON.stringify omits them cleanly */
+    Object.keys(body).forEach(k=>{if(body[k]===undefined)delete body[k];});
+    const r=await fetch('/api/settings/roles/'+encodeURIComponent(rlEditRole.role),{
+      method:'PUT',
+      headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},
+      body:JSON.stringify(body)
+    });
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    rlCloseEdit();
+    renderSettings();
+  }catch(e){alert('Could not save role: '+e.message);}
+  finally{if(btn){btn.textContent='Save role';btn.disabled=false;}}
+}
+
+async function rlDeleteRole(roleName){
+  if(!confirm('Delete role "'+roleName+'"? This cannot be undone.'))return;
+  try{
+    const r=await fetch('/api/settings/roles/'+encodeURIComponent(roleName),{
+      method:'DELETE',
+      headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject}
+    });
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    renderSettings();
+  }catch(e){alert('Could not delete role: '+e.message);}
+}
+
+/* ================================================================
+   System Prompt Fullscreen Modal
+   ================================================================ */
+function rlOpenPrompt(roleName){
+  rlPromptRole=roleName;
+  /* Prefer live value from the edit textarea if open */
+  const editEl=document.getElementById('rl-e-prompt');
+  const editOpen=document.getElementById('rl-edit-overlay');
+  const current=(editEl&&editOpen&&editOpen.classList.contains('on'))
+    ?editEl.value
+    :((rlRolesCache[roleName]||{}).system_prompt||'');
+  const ta=document.getElementById('rl-prompt-ta');
+  if(ta)ta.value=current;
+  const ttl=document.getElementById('rl-prompt-title');
+  if(ttl)ttl.textContent='System prompt — '+((rlRolesCache[roleName]||{}).display_name||roleName);
+  document.getElementById('rl-prompt-overlay').classList.add('on');
+}
+
+function rlClosePrompt(){
+  /* Sync edited text back into the edit modal textarea */
+  const ta=document.getElementById('rl-prompt-ta');
+  const editEl=document.getElementById('rl-e-prompt');
+  const editOpen=document.getElementById('rl-edit-overlay');
+  if(ta&&editEl&&editOpen&&editOpen.classList.contains('on')){editEl.value=ta.value;}
+  document.getElementById('rl-prompt-overlay').classList.remove('on');
+}
+
+async function rlSavePrompt(){
+  /* When called from inside the edit modal flow, just sync back and close —
+     the actual persist happens when the user clicks "Save role" in the edit modal. */
+  const editOpen=document.getElementById('rl-edit-overlay');
+  if(editOpen&&editOpen.classList.contains('on')){rlClosePrompt();return;}
+  /* Standalone path (prompt opened from outside edit modal — defensive) */
+  if(!rlPromptRole)return;
+  const ta=document.getElementById('rl-prompt-ta');
+  if(!ta)return;
+  const role=rlRolesCache[rlPromptRole];
+  if(!role){alert('Role not found');return;}
+  try{
+    const r=await fetch('/api/settings/roles/'+encodeURIComponent(rlPromptRole),{
+      method:'PUT',
+      headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},
+      body:JSON.stringify({...role,system_prompt:ta.value})
+    });
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    rlClosePrompt();
+    renderSettings();
+  }catch(e){alert('Could not save prompt: '+e.message);}
+}
+
+/* ================================================================
+   Add Agent Wizard Modal
+   ================================================================ */
+function rlOpenAdd(){
+  rlAddTab='presets'; rlAddStep=0; rlAddSelPreset=null; rlAddCatFilter='all';
+  rlAddCustom={role:'',display_name:'',prefix:'',color:'#6c79ff',emoji:'',model:'',system_prompt:'',tools:[],approval_mode:'auto',max_revision_cycles:0,uses_worktree:false};
+  document.getElementById('rl-add-overlay').classList.add('on');
+  /* Load presets and models in parallel */
+  Promise.all([
+    rlLoadPresets(),
+    rlEditModels.length?Promise.resolve():pFetch('/api/settings/models',rlCurrentPid).then(md=>{rlEditModels=Array.isArray(md)?md:((md&&md.models)||[]);}).catch(()=>{}),
+  ]).then(()=>rlRenderAdd());
+}
+
+function rlCloseAdd(){document.getElementById('rl-add-overlay').classList.remove('on');}
+
+async function rlLoadPresets(){
+  if(rlAddPresets.length)return;
+  try{const d=await pFetch('/api/presets',rlCurrentPid);rlAddPresets=(d&&d.presets)||[];}
+  catch(e){rlAddPresets=[];}
+}
+
+function rlSwitchAddTab(tab){
+  rlAddTab=tab; rlAddStep=0;
+  /* Tab button styling is handled inside rlRenderAdd */
+  rlRenderAdd();
+}
+
+function rlRenderAdd(){
+  const body=document.getElementById('rl-add-body');
+  const back=document.getElementById('rl-add-back');
+  const next=document.getElementById('rl-add-next');
+  const title=document.getElementById('rl-add-title');
+  if(!body)return;
+  /* Sync tab button active state on every render (fixes desyncs on reopen) */
+  document.querySelectorAll('#rl-add-overlay .ins-tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===rlAddTab));
+
+  if(rlAddTab==='presets'){
+    back.style.visibility=rlAddStep===0?'hidden':'visible';
+    if(rlAddStep===0){
+      title.textContent='Choose a preset';
+      next.textContent='Select';
+      next.disabled=!rlAddSelPreset;
+      body.innerHTML=rlRenderPresetGrid();
+    }else if(rlAddStep===1){
+      title.textContent=(rlAddSelPreset&&rlAddSelPreset.display_name)||'Preset detail';
+      next.textContent='Next';
+      next.disabled=false;
+      body.innerHTML=rlRenderPresetDetail();
+    }else{
+      title.textContent='Choose model';
+      next.textContent='Create';
+      next.disabled=false;
+      body.innerHTML=rlRenderPresetModelPick();
+    }
+  }else{
+    back.style.visibility=rlAddStep===0?'hidden':'visible';
+    if(rlAddStep===0){
+      title.textContent='New custom agent';
+      next.textContent='Next';
+      next.disabled=false;
+      body.innerHTML=rlRenderCustomStep1();
+    }else{
+      title.textContent='Configure agent';
+      next.textContent='Create';
+      next.disabled=false;
+      body.innerHTML=rlRenderCustomStep2();
+    }
+  }
+}
+
+async function rlAddNext(){
+  if(rlAddTab==='presets'){
+    if(rlAddStep===0){
+      if(!rlAddSelPreset){alert('Select a preset first');return;}
+      rlAddStep=1;
+      try{const d=await pFetch('/api/presets/'+encodeURIComponent(rlAddSelPreset.preset_id),rlCurrentPid);rlAddSelPreset=d;}catch(e){}
+      rlRenderAdd();
+    }else if(rlAddStep===1){
+      rlAddStep=2; rlRenderAdd();
+    }else{
+      /* Commit preset create */
+      const modelEl=document.getElementById('rl-add-model-pick');
+      const model=modelEl?modelEl.value:((rlAddSelPreset&&rlAddSelPreset.default_model)||'');
+      const roleId=rlAddSelPreset&&(rlAddSelPreset.role||rlAddSelPreset.preset_id);
+      const payload={role:roleId,preset_id:rlAddSelPreset.preset_id,model};
+      try{
+        const r=await fetch('/api/settings/roles',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},
+          body:JSON.stringify(payload)
+        });
+        if(!r.ok)throw new Error('HTTP '+r.status);
+        rlCloseAdd(); renderSettings();
+      }catch(e){alert('Could not create agent: '+e.message);}
+    }
+  }else{
+    /* Custom tab */
+    if(rlAddStep===0){
+      rlCollectCustomStep1();
+      if(!rlAddCustom.display_name.trim()){alert('Display name is required');return;}
+      if(!rlAddCustom.role)rlAddCustom.role=rlSlug(rlAddCustom.display_name);
+      rlAddStep=1; rlRenderAdd();
+    }else{
+      rlCollectCustomStep2();
+      if(!rlAddCustom.role){alert('Role ID is required');return;}
+      const payload={
+        role:rlAddCustom.role, display_name:rlAddCustom.display_name,
+        prefix:rlAddCustom.prefix, color:rlAddCustom.color, emoji:rlAddCustom.emoji,
+        model:rlAddCustom.model, system_prompt:rlAddCustom.system_prompt,
+        tools:rlAddCustom.tools, approval_mode:rlAddCustom.approval_mode,
+        max_revision_cycles:rlAddCustom.max_revision_cycles,
+        uses_worktree:rlAddCustom.uses_worktree,
+        max_instances:1, produces:[], accepts:[],
+        context_includes:['parent_artifact','root_artifact'],
+      };
+      try{
+        const r=await fetch('/api/settings/roles',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},
+          body:JSON.stringify(payload)
+        });
+        if(!r.ok)throw new Error('HTTP '+r.status);
+        rlCloseAdd(); renderSettings();
+      }catch(e){alert('Could not create agent: '+e.message);}
+    }
+  }
+}
+
+function rlAddBack(){if(rlAddStep>0){rlAddStep--;rlRenderAdd();}}
+
+function rlSelectPreset(id){
+  rlAddSelPreset=rlAddPresets.find(p=>p.preset_id===id)||null;
+  rlRenderAdd();
+}
+
+function rlFilterPresetCat(cat){rlAddCatFilter=cat;rlRenderAdd();}
+
+function rlRenderPresetGrid(){
+  const cats=['all',...new Set(rlAddPresets.map(p=>p.category).filter(Boolean))];
+  const catTabs=cats.map(c=>`<button class="act-btn${rlAddCatFilter===c?' pri':' ghost'}" style="padding:4px 10px;height:26px;font-size:11.5px" onclick="rlFilterPresetCat('${esc(c)}')">${esc(c==='all'?'All':c)}</button>`).join('');
+  const filtered=rlAddCatFilter==='all'?rlAddPresets:rlAddPresets.filter(p=>p.category===rlAddCatFilter);
+  let html=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${catTabs}</div><div class="rl-preset-grid">`;
+  if(!filtered.length)html+=`<div style="grid-column:1/-1;color:var(--text-3);font-size:12.5px;padding:20px">No presets available.</div>`;
+  else filtered.forEach(p=>{
+    const sel=rlAddSelPreset&&rlAddSelPreset.preset_id===p.preset_id;
+    html+=`<div class="rl-preset-card${sel?' rl-sel':''}" onclick="rlSelectPreset('${esc(p.preset_id)}')">
+      <div style="font-size:26px;margin-bottom:6px">${esc(p.icon_emoji||p.emoji||'☲')}</div>
+      <div style="font-size:12.5px;font-weight:600">${esc(p.display_name||p.preset_id)}</div>
+      <div style="font-size:11.5px;color:var(--text-3);margin-top:3px">${esc((p.description||'').slice(0,60))}</div>
+    </div>`;
+  });
+  return html+'</div>';
+}
+
+function rlRenderPresetDetail(){
+  const p=rlAddSelPreset;
+  if(!p)return '<p style="color:var(--text-3)">No preset selected.</p>';
+  let html=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><span style="font-size:36px">${esc(p.icon_emoji||p.emoji||'☲')}</span><div><div style="font-size:15px;font-weight:600">${esc(p.display_name||p.preset_id)}</div>${p.description?`<div style="font-size:12.5px;color:var(--text-3);margin-top:3px">${esc(p.description)}</div>`:''}</div></div>`;
+  if(p.capabilities&&p.capabilities.length){html+=`<div style="margin-bottom:12px"><div style="font-size:10.5px;font-weight:600;color:var(--text-4);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Capabilities</div><ul style="padding-left:18px;font-size:12.5px;color:var(--text-2)">${p.capabilities.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></div>`;}
+  if(p.tools&&p.tools.length){html+=`<div style="margin-bottom:12px"><div style="font-size:10.5px;font-weight:600;color:var(--text-4);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Tools</div><div style="display:flex;flex-wrap:wrap;gap:5px">${p.tools.map(t=>`<span class="pill">${esc(t)}</span>`).join('')}</div></div>`;}
+  const meta=[['Approval mode',p.approval_mode||'auto'],['Max instances',p.max_instances||1],['Uses worktree',p.uses_worktree?'Yes':'No'],['Revision cycles',p.max_revision_cycles||0]];
+  html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">${meta.map(([l,v])=>`<div style="background:var(--panel-2);border:1px solid var(--border);border-radius:7px;padding:8px 10px"><div style="font-size:10.5px;color:var(--text-3)">${esc(l)}</div><div style="font-size:12.5px;font-weight:550;margin-top:3px">${esc(String(v))}</div></div>`).join('')}</div>`;
+  if(p.system_prompt){html+=`<div><div style="font-size:10.5px;font-weight:600;color:var(--text-4);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">System prompt</div><pre style="font-family:var(--mono);font-size:11.5px;color:var(--text-2);background:var(--bg-content);border:1px solid var(--border);border-radius:7px;padding:10px;overflow:auto;max-height:140px;white-space:pre-wrap">${esc(p.system_prompt.slice(0,400)+(p.system_prompt.length>400?'…':''))}</pre></div>`;}
+  return html;
+}
+
+function rlRenderPresetModelPick(){
+  const p=rlAddSelPreset||{};
+  const fallback=[{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6'},{id:'claude-opus-4-6',name:'Claude Opus 4.6'},{id:'claude-haiku-4-5-20251001',name:'Claude Haiku 4.5'},{id:'gpt-5.5',name:'GPT-5.5'}];
+  const models=rlEditModels.length?rlEditModels:fallback;
+  const defModel=p.default_model||'';
+  const opts=models.map(m=>{const mid=m.id||m;return `<option value="${esc(mid)}"${defModel===mid?' selected':''}>${esc(m.name||m.label||mid)}</option>`;}).join('');
+  return `<div class="np-f"><span class="np-l">Model</span><select id="rl-add-model-pick" class="np-in">${opts}</select></div><p style="font-size:11.5px;color:var(--text-3);margin-top:8px">You can change the model later in agent settings.</p>`;
+}
+
+function rlRenderCustomStep1(){
+  return `
+    <div class="np-f"><span class="np-l">Display name</span><input id="rl-c-dname" class="np-in" value="${esc(rlAddCustom.display_name)}" placeholder="e.g. Product Manager" oninput="rlWizUpdateId()"></div>
+    <div class="np-row">
+      <div class="np-f"><span class="np-l">Role ID <span class="np-hint">auto-generated</span></span><input id="rl-c-role" class="np-in" value="${esc(rlAddCustom.role)}" placeholder="auto"></div>
+      <div class="np-f"><span class="np-l">Prefix <span class="np-hint">2–4 chars</span></span><input id="rl-c-prefix" class="np-in" value="${esc(rlAddCustom.prefix)}" maxlength="4" oninput="this._userEdited=true"></div>
+    </div>
+    <div class="np-row">
+      <div class="np-f"><span class="np-l">Color</span><input type="color" id="rl-c-color" class="np-in" value="${esc(rlAddCustom.color)}" style="padding:3px;height:38px;cursor:pointer"></div>
+      <div class="np-f"><span class="np-l">Emoji</span><input id="rl-c-emoji" class="np-in" value="${esc(rlAddCustom.emoji)}" placeholder="🤖" style="font-size:16px"></div>
+    </div>`;
+}
+
+function rlWizUpdateId(){
+  const n=document.getElementById('rl-c-dname');
+  const r=document.getElementById('rl-c-role');
+  const p=document.getElementById('rl-c-prefix');
+  if(n&&r)r.value=rlSlug(n.value);
+  if(n&&p&&!p._userEdited)p.value=rlAutoPrefix(n.value);
+}
+
+function rlRenderCustomStep2(){
+  const fallback=[{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6'},{id:'claude-opus-4-6',name:'Claude Opus 4.6'},{id:'claude-haiku-4-5-20251001',name:'Claude Haiku 4.5'},{id:'gpt-5.5',name:'GPT-5.5'}];
+  const models=rlEditModels.length?rlEditModels:fallback;
+  const opts=models.map(m=>{const mid=m.id||m;return `<option value="${esc(mid)}"${rlAddCustom.model===mid?' selected':''}>${esc(m.name||m.label||mid)}</option>`;}).join('');
+  const toolHtml=RL_COMMON_TOOLS.map(t=>`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer"><input type="checkbox" value="${esc(t)}"${rlAddCustom.tools.indexOf(t)>=0?' checked':''} class="rl-c-tool-cb"> ${esc(t)}</label>`).join('');
+  return `
+    <div class="np-f"><span class="np-l">Model</span><select id="rl-c-model" class="np-in">${opts}</select></div>
+    <div class="np-f"><span class="np-l">System prompt</span><textarea id="rl-c-prompt" class="np-in" rows="5" style="font-family:var(--mono);font-size:12px;resize:vertical" placeholder="Describe this agent's responsibilities…">${esc(rlAddCustom.system_prompt)}</textarea></div>
+    <div class="np-f"><span class="np-l">Tools</span><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:6px 0">${toolHtml}</div></div>
+    <div class="np-f"><span class="np-l">Approval mode</span><select id="rl-c-approval" class="np-in">${['auto','manual','first_run'].map(m=>`<option value="${m}"${rlAddCustom.approval_mode===m?' selected':''}>${m}</option>`).join('')}</select></div>
+    <div class="np-row">
+      <div class="np-f"><span class="np-l">Max revision cycles <span class="np-hint">0 = unlimited</span></span><input type="number" id="rl-c-maxrev" class="np-in" value="${rlAddCustom.max_revision_cycles||0}" min="0"></div>
+      <div class="np-f" style="display:flex;flex-direction:column;gap:6px"><span class="np-l">Uses git worktree</span><div class="tg${rlAddCustom.uses_worktree?' on':''}" id="rl-c-worktree" onclick="this.classList.toggle('on')"></div></div>
+    </div>`;
+}
+
+function rlCollectCustomStep1(){
+  const v=id=>{const el=document.getElementById(id);return el?el.value:'';};
+  rlAddCustom.display_name=v('rl-c-dname');
+  rlAddCustom.role=v('rl-c-role')||rlSlug(rlAddCustom.display_name);
+  rlAddCustom.prefix=v('rl-c-prefix')||rlAutoPrefix(rlAddCustom.display_name);
+  rlAddCustom.color=v('rl-c-color')||'#6c79ff';
+  rlAddCustom.emoji=v('rl-c-emoji');
+}
+
+function rlCollectCustomStep2(){
+  const v=id=>{const el=document.getElementById(id);return el?el.value:'';};
+  rlAddCustom.model=v('rl-c-model');
+  rlAddCustom.system_prompt=v('rl-c-prompt');
+  rlAddCustom.tools=[...document.querySelectorAll('.rl-c-tool-cb:checked')].map(el=>el.value);
+  rlAddCustom.approval_mode=v('rl-c-approval')||'auto';
+  rlAddCustom.max_revision_cycles=parseInt(v('rl-c-maxrev'))||0;
+  const wt=document.getElementById('rl-c-worktree');
+  rlAddCustom.uses_worktree=!!(wt&&wt.classList.contains('on'));
 }
 async function interAct(id,act){if(!id)return;try{const r=await fetch('/api/interactions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);renderSettings();}catch(e){alert('Failed: '+e.message);}}
 async function roleCtl(role,act){try{const r=await fetch('/api/agents/'+act,{method:'POST',headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},body:JSON.stringify({role})});if(!r.ok)throw new Error('HTTP '+r.status);renderSettings();}catch(e){alert('Failed: '+e.message);}}
-async function renderSetPipeline(c,pid){
-  let nodes={},edges={};
-  [nodes,edges]=await Promise.all([
-    pFetch('/api/pipeline',pid).catch(()=>({})),
-    pFetch('/api/pipeline/edges',pid).catch(()=>({})),
+async function renderSetPipeline(c, pid) {
+  let pipeline = {}, roles = [];
+  [pipeline, roles] = await Promise.all([
+    pFetch('/api/pipeline', pid).catch(() => ({})),
+    pFetch('/api/settings/roles', pid).catch(() => []),
   ]);
-  const nArr=Array.isArray(nodes)?nodes:asArr(nodes,['nodes','pipeline','items']);
-  const eArr=Array.isArray(edges)?edges:asArr(edges,['edges','items']);
-  const lst=v=>Array.isArray(v)?v.join(', '):(v||'');
-  let html=`<div class="set-card"><h3>Pipeline nodes <span class="pill">${nArr.length}</span></h3><div class="sub">Roles in this project's pipeline.</div>`;
-  if(!nArr.length)html+=insEmpty('No pipeline','No pipeline configured for this project.');
-  else html+=`<table class="dtable"><thead><tr><th>Node</th><th>Role</th><th>Produces</th><th>Accepts</th></tr></thead><tbody>${nArr.map(n=>`<tr><td>${esc(n.name||n.id||n.role||'')}</td><td>${esc(n.role||'')}</td><td class="mono">${esc(lst(n.produces))}</td><td class="mono">${esc(lst(n.accepts))}</td></tr>`).join('')}</tbody></table>`;
-  html+='</div>';
-  html+=`<div class="set-card"><h3>Edges <span class="pill">${eArr.length}</span></h3>`;
-  if(!eArr.length)html+=insEmpty('No edges','No pipeline edges defined.');
-  else html+=`<table class="dtable"><thead><tr><th>From</th><th>To</th><th>Artifact</th></tr></thead><tbody>${eArr.map(e=>`<tr><td>${esc(e.from||e.source||e.from_role||'')}</td><td>${esc(e.to||e.target||e.to_role||'')}</td><td class="mono">${esc(e.artifact||e.artifact_type||e.type||'')}</td></tr>`).join('')}</tbody></table>`;
-  html+=`</div><div class="ins-bar"><div class="grow"></div><a class="btn-s" href="/settings?project=${encodeURIComponent(pid)}">Open pipeline editor ↗</a></div>`;
-  c.innerHTML=html;
+
+  const edges = Array.isArray(pipeline.edges) ? pipeline.edges : [];
+  const nodeCfg = pipeline.node_config || {};
+  const startAgent = pipeline.start_agent || null;
+  const rArr = Array.isArray(roles) ? roles : asArr(roles, ['roles', 'items']);
+
+  // ---- Nodes card ----
+  let html = `<div class="set-card"><h3>Pipeline nodes <span class="pill">${rArr.length}</span></h3>`
+    + `<div class="sub">Each role in this project. "Edit" adjusts join strategy. "Set start" marks the pipeline entry point.</div>`;
+
+  if (!rArr.length) {
+    html += insEmpty('No roles', 'Add roles in the Agents tab first.');
+  } else {
+    rArr.forEach(function(r) {
+      const rn  = esc(r.role || '');
+      const dn  = esc(r.display_name || r.role || '');
+      const mdl = esc(r.model || 'default model');
+      const mi  = r.max_instances != null ? esc(String(r.max_instances)) : '—';
+      const prod = Array.isArray(r.produces) && r.produces.length ? esc(r.produces.join(', ')) : '<em style="opacity:.45">none</em>';
+      const acc  = Array.isArray(r.accepts)  && r.accepts.length  ? esc(r.accepts.join(', '))  : '<em style="opacity:.45">any</em>';
+      const nc   = nodeCfg[r.role || ''] || {};
+      const js   = nc.join_strategy || 'wait_all';
+      const isStart = startAgent === r.role;
+
+      html += `<div class="set-row">
+        <div>
+          <div class="srl">${isStart ? `<span style="color:var(--green,#22c55e);margin-right:4px">▶</span>` : ''}${dn}<span class="pill" style="font-size:10px;opacity:.6;margin-left:6px">${rn}</span></div>
+          <div class="srs">${mdl} · max ${mi} · join: <code style="font-size:11px">${esc(js)}</code></div>
+          <div class="srs" style="margin-top:2px">produces: <code style="font-size:11px">${prod}</code> &nbsp;·&nbsp; accepts: <code style="font-size:11px">${acc}</code></div>
+        </div>
+        <div class="right" style="gap:6px;flex-wrap:wrap">
+          ${isStart
+            ? `<span class="pill" style="background:rgba(34,197,94,.15);color:var(--green,#22c55e);border:1px solid rgba(34,197,94,.25)">start agent</span>`
+            : `<button class="act-btn ghost" onclick="peStartAgent('${rn}')">▶ Set start</button>`}
+          <button class="act-btn" onclick="peEditNode('${rn}')">Edit</button>
+        </div>
+      </div>
+      <div id="pe-ne-${rn}" class="pe-inline-edit" style="display:none">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="font-size:12px;color:var(--text-3)">Join strategy</label>
+          <select id="pe-js-${rn}" class="set-in" style="width:auto">
+            <option value="wait_all"${js === 'wait_all' ? ' selected' : ''}>wait_all — wait for all upstream</option>
+            <option value="stream"${js === 'stream' ? ' selected' : ''}>stream — process as tasks arrive</option>
+          </select>
+          <button class="act-btn pri" onclick="peSaveNode('${rn}')">Save</button>
+          <button class="act-btn ghost" onclick="peCloseNodeEdit('${rn}')">Cancel</button>
+        </div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+
+  // ---- Edges card ----
+  html += `<div class="set-card"><h3>Edges <span class="pill">${edges.length}</span></h3>`
+    + `<div class="sub">Task routing connections. "Edit" sets task types and failure behaviour. "Delete" removes the connection.</div>`;
+
+  if (!edges.length) {
+    html += insEmpty('No edges', 'Use "Add edge" below to connect roles and define routing.');
+  } else {
+    html += `<table class="dtable"><thead><tr>
+      <th>From</th><th>To</th><th>Task types</th><th>On failure</th><th></th>
+    </tr></thead><tbody>`;
+
+    edges.forEach(function(e) {
+      const eid   = esc(e.id || '');
+      const fromR = esc(e.from || '');
+      const toR   = esc(e.to || '');
+      const ttArr = Array.isArray(e.task_types) ? e.task_types : [];
+      const ttDisp = esc(ttArr.join(', ') || '—');
+      const ttVal  = esc(ttArr.join(', '));
+      const of_    = e.on_failure || 'block';
+      const ofE    = esc(of_);
+
+      html += `<tr>
+        <td>${fromR}</td>
+        <td>${toR}</td>
+        <td class="mono">${ttDisp}</td>
+        <td>${ofE}</td>
+        <td style="white-space:nowrap;text-align:right">
+          <button class="btn-s" onclick="peEditEdge('${eid}')">Edit</button>
+          <button class="btn-s" style="color:var(--red,#f43f5e);margin-left:4px" onclick="peDeleteEdge('${eid}')">Delete</button>
+        </td>
+      </tr>
+      <tr id="pe-ee-${eid}" style="display:none"><td colspan="5" class="pe-inline-edit">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 0">
+          <label style="font-size:12px;color:var(--text-3)">Task types</label>
+          <input id="pe-ett-${eid}" class="set-in" style="width:160px" placeholder="code, review, …" value="${ttVal}">
+          <label style="font-size:12px;color:var(--text-3)">On failure</label>
+          <select id="pe-eof-${eid}" class="set-in" style="width:auto">
+            <option value="block"${of_ === 'block' ? ' selected' : ''}>block</option>
+            <option value="continue_partial"${of_ === 'continue_partial' ? ' selected' : ''}>continue_partial</option>
+            <option value="cancel_pipeline"${of_ === 'cancel_pipeline' ? ' selected' : ''}>cancel_pipeline</option>
+          </select>
+          <button class="act-btn pri" onclick="peSaveEdge('${eid}')">Save</button>
+          <button class="act-btn ghost" onclick="peCloseEdgeEdit('${eid}')">Cancel</button>
+        </div>
+      </td></tr>`;
+    });
+
+    html += '</tbody></table>';
+  }
+
+  html += `<div class="ins-bar" style="margin-top:12px">
+    <div class="grow"></div>
+    <button class="act-btn pri" onclick="peOpenAddEdge()">+ Add edge</button>
+  </div></div>`;
+
+  c.innerHTML = html;
+
+  // Populate add-edge modal dropdowns with current role list
+  pePopulateAddEdge(rArr.map(function(r) { return r.role || ''; }).filter(Boolean));
 }
+
+// ---- Node handlers ----
+
+function peEditNode(rn) {
+  document.querySelectorAll('[id^="pe-ne-"]').forEach(function(el) { el.style.display = 'none'; });
+  var el = document.getElementById('pe-ne-' + rn);
+  if (el) el.style.display = 'block';
+}
+
+function peCloseNodeEdit(rn) {
+  var el = document.getElementById('pe-ne-' + rn);
+  if (el) el.style.display = 'none';
+}
+
+async function peSaveNode(rn) {
+  var jsEl = document.getElementById('pe-js-' + rn);
+  if (!jsEl) return;
+  try {
+    var r = await fetch('/api/pipeline/node-config/' + encodeURIComponent(rn), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json', 'X-Taskbrew-Project': consoleProject},
+      body: JSON.stringify({join_strategy: jsEl.value})
+    });
+    if (!r.ok) { var d = await r.json().catch(function() { return {}; }); alert(d.detail || 'Save failed'); return; }
+    renderSettings();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function peStartAgent(rn) {
+  try {
+    var r = await fetch('/api/pipeline/start-agent', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json', 'X-Taskbrew-Project': consoleProject},
+      body: JSON.stringify({role: rn})
+    });
+    if (!r.ok) { var d = await r.json().catch(function() { return {}; }); alert(d.detail || 'Failed to set start agent'); return; }
+    renderSettings();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ---- Edge handlers ----
+
+function peEditEdge(eid) {
+  document.querySelectorAll('[id^="pe-ee-"]').forEach(function(el) { el.style.display = 'none'; });
+  var row = document.getElementById('pe-ee-' + eid);
+  if (row) row.style.display = '';
+}
+
+function peCloseEdgeEdit(eid) {
+  var row = document.getElementById('pe-ee-' + eid);
+  if (row) row.style.display = 'none';
+}
+
+async function peSaveEdge(eid) {
+  var ttEl = document.getElementById('pe-ett-' + eid);
+  var ofEl = document.getElementById('pe-eof-' + eid);
+  if (!ttEl || !ofEl) return;
+  var taskTypes = ttEl.value.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+  try {
+    var r = await fetch('/api/pipeline/edges/' + encodeURIComponent(eid), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json', 'X-Taskbrew-Project': consoleProject},
+      body: JSON.stringify({task_types: taskTypes, on_failure: ofEl.value})
+    });
+    if (!r.ok) { var d = await r.json().catch(function() { return {}; }); alert(d.detail || 'Save failed'); return; }
+    renderSettings();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function peDeleteEdge(eid) {
+  if (!confirm('Delete this edge?')) return;
+  try {
+    var r = await fetch('/api/pipeline/edges/' + encodeURIComponent(eid), {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json', 'X-Taskbrew-Project': consoleProject},
+      body: '{}'
+    });
+    if (!r.ok) { var d = await r.json().catch(function() { return {}; }); alert(d.detail || 'Delete failed'); return; }
+    renderSettings();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ---- Add-edge modal ----
+
+function pePopulateAddEdge(roleNames) {
+  var fromSel = document.getElementById('pe-ae-from');
+  var toSel   = document.getElementById('pe-ae-to');
+  if (!fromSel || !toSel) return;
+  var opts = roleNames.map(function(rn) { return '<option value="' + esc(rn) + '">' + esc(rn) + '</option>'; }).join('');
+  fromSel.innerHTML = opts || '<option value="">— no roles —</option>';
+  toSel.innerHTML   = opts || '<option value="">— no roles —</option>';
+  var ttEl = document.getElementById('pe-ae-tt');
+  var ofEl = document.getElementById('pe-ae-of');
+  if (ttEl) ttEl.value = '';
+  if (ofEl) ofEl.value = 'block';
+}
+
+function peOpenAddEdge() {
+  var overlay = document.getElementById('pe-add-edge-overlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function peCloseAddEdge() {
+  var overlay = document.getElementById('pe-add-edge-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function peAddEdge() {
+  var fromEl = document.getElementById('pe-ae-from');
+  var toEl   = document.getElementById('pe-ae-to');
+  var ttEl   = document.getElementById('pe-ae-tt');
+  var ofEl   = document.getElementById('pe-ae-of');
+  if (!fromEl || !toEl || !fromEl.value || !toEl.value) { alert('Select both From and To roles.'); return; }
+  var taskTypes = ttEl ? ttEl.value.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+  try {
+    var r = await fetch('/api/pipeline/edges', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Taskbrew-Project': consoleProject},
+      body: JSON.stringify({from_agent: fromEl.value, to_agent: toEl.value, task_types: taskTypes, on_failure: ofEl ? ofEl.value : 'block'})
+    });
+    if (!r.ok) { var d = await r.json().catch(function() { return {}; }); alert(d.detail || 'Failed to add edge'); return; }
+    peCloseAddEdge();
+    renderSettings();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+/* ── st module state ── */
+let stTeamData={};
+let stAvailableModels=[];
+
+function stProviderForModel(m){m=m||'';if(m.indexOf('gpt-')===0||/^o\d/.test(m)||m.indexOf('codex')===0)return 'codex';return 'claude';}
+function stModelsForProvider(provider){return stAvailableModels.filter(m=>(m.provider||stProviderForModel(m.id||m))===provider);}
+function stModelObj(id){return stAvailableModels.find(m=>(m.id||m)===id)||null;}
+function stReasoningOptsForModel(modelId){const m=stModelObj(modelId);return(m&&Array.isArray(m.reasoning_efforts))?m.reasoning_efforts:[];}
+
+function stRerenderSystemAgent(){
+  const provEl=$('st-sa-provider'),modelEl=$('st-sa-model'),rsnRow=$('st-sa-rsn-row'),rsnEl=$('st-sa-reasoning');
+  if(!provEl||!modelEl)return;
+  const provider=provEl.value;
+  const currentModel=modelEl.value;
+  const FB={
+    claude:[{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6',reasoning_efforts:['low','medium','high','max']},{id:'claude-opus-4-7',name:'Claude Opus 4.7',reasoning_efforts:['low','medium','high','xhigh','max']}],
+    codex:[{id:'gpt-5.5',name:'GPT-5.5',reasoning_efforts:['low','medium','high','xhigh']},{id:'gpt-5.4',name:'GPT-5.4',reasoning_efforts:['low','medium','high','xhigh']}]
+  };
+  const mlist=stModelsForProvider(provider);
+  const models=mlist.length?mlist:(FB[provider]||FB.codex);
+  const bestModel=models.some(m=>(m.id||m)===currentModel)?currentModel:(models[0]?(models[0].id||models[0]):'');
+  modelEl.innerHTML=models.map(m=>{const mid=m.id||m;return`<option value="${esc(mid)}"${mid===bestModel?' selected':''}>${esc(m.name||m.label||mid)}</option>`;}).join('');
+  const rsnOpts=stReasoningOptsForModel(bestModel);
+  if(rsnRow)rsnRow.style.display=rsnOpts.length?'':'none';
+  if(rsnEl&&rsnOpts.length){const cur=rsnEl.value;rsnEl.innerHTML=rsnOpts.map(o=>`<option value="${esc(o)}"${o===cur?' selected':''}>${esc(o)}</option>`).join('');}
+}
+
 async function renderSetGeneral(c,pid){
-  let team={};try{team=await pFetch('/api/settings/team',pid);}catch(e){team={};}
+  c.innerHTML=`<div class="ins-loading">Loading\u2026</div>`;
+  let team={},budgets=[],models=[];
+  [team,budgets,models]=await Promise.all([
+    pFetch('/api/settings/team',pid).catch(()=>({})),
+    pFetch('/api/budgets',pid).catch(()=>[]),
+    pFetch('/api/settings/models',pid).catch(()=>[])
+  ]);
   const t=(team&&team.team)?team.team:(team||{});
-  const tg=(k,label,desc)=>{const on=!!t[k];return `<div class="set-row"><div><div class="srl">${esc(label)}</div><div class="srs">${esc(desc)}</div></div><div class="right"><div class="tg ${on?'on':''}" id="tg-${k}" onclick="this.classList.toggle('on')"></div></div></div>`;};
-  c.innerHTML=`<div class="set-card"><h3>Team settings</h3><div class="sub">Project-wide configuration.</div>
-    <div class="set-row"><div><div class="srl">Project name</div></div><div class="right"><input class="set-in" id="set-name" value="${esc(t.name||'')}"></div></div>
-    ${tg('auth_enabled','Authentication','Require auth for the dashboard and API.')}
-    ${tg('cost_budgets_enabled','Cost budgets','Enforce per-project spend limits.')}
-    ${tg('webhooks_enabled','Webhooks','Emit lifecycle events to subscribers.')}
-    <div class="set-row"><div class="grow"></div><div class="right"><button class="tb-primary" onclick="saveTeam()">Save settings</button></div></div>
-  </div>
-  <div class="set-card"><h3>Advanced</h3><div class="sub">Model defaults, role editing, budgets and the pipeline node editor live in the classic settings page.</div><div class="ins-bar"><div class="grow"></div><a class="btn-s" href="/settings?project=${encodeURIComponent(pid)}">Open classic settings ↗</a></div></div>`;
+  stTeamData=t;
+  budgets=Array.isArray(budgets)?budgets:asArr(budgets,['budgets','items','data']);
+  stAvailableModels=Array.isArray(models)?models:(models&&models.models?models.models:[]);
+
+  const tg=(k,label,desc)=>{const on=!!t[k];return`<div class="set-row"><div><div class="srl">${esc(label)}</div><div class="srs">${esc(desc)}</div></div><div class="right"><div class="tg${on?' on':''}" id="tg-${k}" onclick="this.classList.toggle('on')"></div></div></div>`;};
+
+  /* system AI profile */
+  const sa=t.system_agent||{};
+  const saProvider=sa.provider||t.cli_provider||'codex';
+  const saModel=sa.model||'';
+  const saRsn=sa.reasoning_effort||'';
+  const FB={
+    claude:[{id:'claude-sonnet-4-6',name:'Claude Sonnet 4.6',reasoning_efforts:['low','medium','high','max']},{id:'claude-opus-4-7',name:'Claude Opus 4.7',reasoning_efforts:['low','medium','high','xhigh','max']}],
+    codex:[{id:'gpt-5.5',name:'GPT-5.5',reasoning_efforts:['low','medium','high','xhigh']},{id:'gpt-5.4',name:'GPT-5.4',reasoning_efforts:['low','medium','high','xhigh']}]
+  };
+  const saML=stModelsForProvider(saProvider);
+  const saMList=saML.length?saML:(FB[saProvider]||FB.codex);
+  const saModelOpts=saMList.map(m=>{const mid=m.id||m;return`<option value="${esc(mid)}"${mid===saModel?' selected':''}>${esc(m.name||m.label||mid)}</option>`;}).join('');
+  const rsnOpts=stReasoningOptsForModel(saModel);
+  const rsnRowStyle=rsnOpts.length?'':'display:none';
+  const rsnOptHtml=rsnOpts.map(o=>`<option value="${esc(o)}"${o===saRsn?' selected':''}>${esc(o)}</option>`).join('');
+
+  /* budgets */
+  const budgetsHtml=budgets.length
+    ?`<table class="dtable"><thead><tr><th>Scope</th><th class="num">Amount</th><th>Period</th></tr></thead><tbody>${budgets.map(b=>`<tr><td>${esc(b.scope||'')}</td><td class="num">${money(b.budget_usd||b.amount||0)}</td><td>${esc(b.period||'')}</td></tr>`).join('')}</tbody></table>`
+    :insEmpty('No budgets','No cost budgets configured yet.');
+
+  /* available models */
+  const allM=stAvailableModels;
+  const modelsHtml=allM.length
+    ?`<table class="dtable"><thead><tr><th>Model</th><th>Provider</th><th>Label</th></tr></thead><tbody>${allM.map(m=>`<tr><td class="mono">${esc(m.id||m)}</td><td>${esc(m.provider||stProviderForModel(m.id||m))}</td><td>${esc(m.label||m.name||'')}</td></tr>`).join('')}</tbody></table><div class="srs" style="margin-top:8px">Per-role model selection is in the Agents tab.</div>`
+    :insEmpty('No models','Could not load available models.');
+
+  c.innerHTML=`
+<div class="set-card">
+  <h3>Team settings</h3><div class="sub">Project-wide configuration.</div>
+  <div class="set-row"><div><div class="srl">Project name</div></div><div class="right"><input class="set-in" id="set-name" value="${esc(t.name||'')}"></div></div>
+  ${tg('auth_enabled','Authentication','Require auth for the dashboard and API.')}
+  ${tg('cost_budgets_enabled','Cost budgets','Enforce per-project spend limits.')}
+  ${tg('webhooks_enabled','Webhooks','Emit lifecycle events to subscribers.')}
+  <div class="set-row"><div><div class="srl">Poll interval <span class="pill">sec</span></div></div><div class="right"><input type="number" class="set-in" id="st-poll" min="1" value="${esc(t.default_poll_interval??5)}"></div></div>
+  <div class="set-row"><div><div class="srl">Idle timeout <span class="pill">sec</span></div></div><div class="right"><input type="number" class="set-in" id="st-idle" min="0" value="${esc(t.default_idle_timeout??30)}"></div></div>
+  <div class="set-row"><div><div class="srl">Max instances</div></div><div class="right"><input type="number" class="set-in" id="st-maxinst" min="1" value="${esc(t.default_max_instances??1)}"></div></div>
+  <div class="set-row"><div class="grow"></div><div class="right"><button class="tb-primary" onclick="stSaveTeam()">Save settings</button></div></div>
+</div>
+<div class="set-card">
+  <h3>System AI profile</h3><div class="sub">Provider and model for the system orchestrator.</div>
+  <div class="set-row"><div class="srl">Provider</div><div class="right"><select class="set-in" id="st-sa-provider" onchange="stRerenderSystemAgent()"><option value="codex"${saProvider==='codex'?' selected':''}>Codex CLI</option><option value="claude"${saProvider==='claude'?' selected':''}>Claude Code</option></select></div></div>
+  <div class="set-row"><div class="srl">Model</div><div class="right"><select class="set-in" id="st-sa-model" onchange="stRerenderSystemAgent()">${saModelOpts}</select></div></div>
+  <div id="st-sa-rsn-row" style="${rsnRowStyle}"><div class="set-row"><div class="srl">Reasoning</div><div class="right"><select class="set-in" id="st-sa-reasoning">${rsnOptHtml}</select></div></div></div>
+  <div class="set-row"><div><div class="srl">Max instances <span class="pill">restart</span></div><div class="srs">Changing this requires an orchestrator restart.</div></div><div class="right"><input type="number" class="set-in" id="st-sa-maxinst" min="1" value="${esc(sa.max_instances??1)}"></div></div>
+  <div class="set-row"><div><div class="srl">Review rounds</div></div><div class="right"><input type="number" class="set-in" id="st-sa-rounds" min="0" value="${esc(sa.max_review_rounds??3)}"></div></div>
+  <div class="set-row"><div class="grow"></div><div class="right"><button class="tb-primary" onclick="stSaveTeam()">Save AI profile</button></div></div>
+</div>
+<div class="set-card">
+  <h3>Cost budgets <span class="pill">${budgets.length}</span></h3><div class="sub">Per-project spend limits.</div>
+  ${budgetsHtml}
+  <h3 style="font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2);margin:20px 0 4px">Add budget</h3>
+  <div class="set-row"><div class="srl">Scope</div><div class="right"><select class="set-in" id="st-bscope"><option value="global">Global</option><option value="role">Role</option><option value="group">Group</option></select></div></div>
+  <div class="set-row"><div><div class="srl">Amount ($)</div></div><div class="right"><input type="number" class="set-in" id="st-bamount" min="0.01" step="0.01" placeholder="100.00"></div></div>
+  <div class="set-row"><div class="srl">Period</div><div class="right"><select class="set-in" id="st-bperiod"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option></select></div></div>
+  <div class="set-row"><div class="grow"></div><div class="right"><button class="tb-primary" onclick="stSaveBudget()">Create budget</button></div></div>
+</div>
+<div class="set-card">
+  <h3>Available models <span class="pill">${allM.length}</span></h3><div class="sub">Models served by this project's providers.</div>
+  ${modelsHtml}
+</div>`;
 }
-async function saveTeam(){
-  const g=(k)=>{const el=$('tg-'+k);return !!(el&&el.classList.contains('on'));};
-  const body={name:($('set-name')||{}).value||'',auth_enabled:g('auth_enabled'),cost_budgets_enabled:g('cost_budgets_enabled'),webhooks_enabled:g('webhooks_enabled')};
-  try{const r=await fetch('/api/settings/team',{method:'PUT',headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},body:JSON.stringify(body)});if(!r.ok)throw new Error('HTTP '+r.status);alert('Settings saved.');}catch(e){alert('Could not save: '+e.message);}
+
+async function stSaveTeam(){
+  const g=k=>{const el=$('tg-'+k);return !!(el&&el.classList.contains('on'));};
+  const body={
+    name:($('set-name')||{}).value||'',
+    auth_enabled:g('auth_enabled'),
+    cost_budgets_enabled:g('cost_budgets_enabled'),
+    webhooks_enabled:g('webhooks_enabled'),
+    default_poll_interval:parseInt(($('st-poll')||{}).value,10)||5,
+    default_idle_timeout:parseInt(($('st-idle')||{}).value,10)||0,
+    default_max_instances:parseInt(($('st-maxinst')||{}).value,10)||1,
+    group_prefixes:stTeamData.group_prefixes||{},
+    system_agent:{
+      provider:($('st-sa-provider')||{}).value||'codex',
+      model:($('st-sa-model')||{}).value||'',
+      reasoning_effort:($('st-sa-reasoning')||{}).value||'',
+      max_instances:parseInt(($('st-sa-maxinst')||{}).value,10)||1,
+      max_review_rounds:parseInt(($('st-sa-rounds')||{}).value,10)||0
+    }
+  };
+  try{
+    const r=await fetch('/api/settings/team',{method:'PUT',headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},body:JSON.stringify(body)});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    alert('Settings saved.');
+  }catch(e){alert('Could not save: '+e.message);}
+}
+
+async function stSaveBudget(){
+  const scope=($('st-bscope')||{}).value||'global';
+  const budget_usd=parseFloat(($('st-bamount')||{}).value||0);
+  const period=($('st-bperiod')||{}).value||'monthly';
+  if(!budget_usd||budget_usd<=0){alert('Please enter a valid budget amount greater than 0.');return;}
+  try{
+    const r=await fetch('/api/budgets',{method:'POST',headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},body:JSON.stringify({scope,budget_usd,period})});
+    if(!r.ok){let txt='HTTP '+r.status;try{txt=await r.text();}catch(_){}throw new Error(txt);}
+    alert('Budget created: $'+budget_usd.toFixed(2)+' '+period+' ('+scope+')');
+    renderSettings();
+  }catch(e){alert('Could not create budget: '+e.message);}
 }
 function focusGoal(){go('home');const g=$('goalInput');if(g&&!g.disabled){g.focus();g.scrollIntoView({behavior:'smooth',block:'center'});}}
 function focusGoalConsole(){focusGoal();}
