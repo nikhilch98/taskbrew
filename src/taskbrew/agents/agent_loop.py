@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from taskbrew.agents.instance_manager import InstanceManager
 from taskbrew.config_loader import RoleConfig
 from taskbrew.intelligence.clarification import ClarificationDetector
+from taskbrew.intelligence.compression import compress_text_async
 from taskbrew.intelligence.execution import CommitPlanner, DebuggingHelper
 from taskbrew.orchestrator.event_bus import EventBus
 from taskbrew.orchestrator.task_board import TaskBoard
@@ -254,8 +255,29 @@ class AgentLoop:
                 if parent.get("description"):
                     parts.append(f"Description: {parent['description']}")
                 if parent.get("output_text"):
+                    # Compress the parent's raw output at its source. This is
+                    # the biggest structured sink in the assembled context
+                    # (verbatim upstream tool/command/agent output), and the
+                    # no-torch core compresses JSON/logs here strongly. Bounded
+                    # and fail-safe: passthrough on prose, small blobs, or any
+                    # error. See intelligence.compression.
+                    parent_output, _comp = await compress_text_async(
+                        parent["output_text"],
+                        model=getattr(self.role_config, "model", None),
+                    )
+                    if _comp is not None and self.event_bus is not None:
+                        await self.event_bus.emit("context.compressed", {
+                            "agent_id": self.instance_id,
+                            "sink": "parent_output",
+                            "task_id": task["id"],
+                            "tokens_before": _comp.tokens_before,
+                            "tokens_after": _comp.tokens_after,
+                            "tokens_saved": _comp.tokens_saved,
+                            "ratio": round(_comp.ratio, 3),
+                            "transforms": _comp.transforms,
+                        })
                     parts.append(
-                        f"\n### Parent Output:\n{parent['output_text']}"
+                        f"\n### Parent Output:\n{parent_output}"
                     )
 
         # --- Rejection Context Forwarding ---

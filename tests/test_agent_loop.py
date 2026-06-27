@@ -252,6 +252,60 @@ async def test_build_context(
     assert "When Complete" not in context
 
 
+async def test_build_context_compresses_parent_output(
+    board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager, monkeypatch
+):
+    """Parent output_text is routed through the compression adapter at source."""
+    from taskbrew.agents import agent_loop as al
+    from taskbrew.intelligence.compression import CompressionStats
+
+    captured: dict = {}
+
+    async def fake_compress(text, *, model=None):
+        captured["text"] = text
+        captured["model"] = model
+        return "COMPRESSED_PARENT_OUTPUT", CompressionStats(
+            tokens_before=1000, tokens_after=200, tokens_saved=800,
+            ratio=0.8, transforms=["router:smart_crusher"],
+        )
+
+    monkeypatch.setattr(al, "compress_text_async", fake_compress)
+
+    events: list = []
+    event_bus.subscribe("context.compressed", lambda payload: events.append(payload))
+
+    group = await board.create_group(title="Feature C", created_by="pm")
+    parent = await board.create_task(
+        group_id=group["id"], title="Design", task_type="tech_design",
+        assigned_to="architect",
+    )
+    raw_output = "RAW_PARENT_OUTPUT_PAYLOAD " * 80
+    await board._db.execute(
+        "UPDATE tasks SET output_text = ? WHERE id = ?",
+        (raw_output, parent["id"]),
+    )
+    child = await board.create_task(
+        group_id=group["id"], title="Implement", task_type="implementation",
+        assigned_to="coder", parent_id=parent["id"],
+    )
+
+    role_config = _make_role(context_includes=["parent_artifact"])
+    loop = _make_loop(board, event_bus, instance_mgr, role_config=role_config)
+
+    context = await loop.build_context(child)
+
+    # The adapter received the raw output, and the compressed form (not the
+    # raw payload) is what lands in the assembled context.
+    assert captured["text"] == raw_output
+    assert "COMPRESSED_PARENT_OUTPUT" in context
+    assert "RAW_PARENT_OUTPUT_PAYLOAD" not in context
+    # A context.compressed event was emitted with the sink label and savings.
+    assert any(
+        e.get("sink") == "parent_output" and e.get("tokens_saved") == 800
+        for e in events
+    )
+
+
 async def test_build_context_memory_recall_failure(
     board: TaskBoard, event_bus: EventBus, instance_mgr: InstanceManager
 ):
