@@ -40,31 +40,34 @@ class ConnectionManager:
     """
 
     def __init__(self):
-        self.active: list[WebSocket] = []
+        # ws -> project scope. None = unscoped: receives ALL projects' events
+        # (the aggregated home). A project id = receives only that project's
+        # events (a scoped detail page, /advanced?project=<id>).
+        self.active: dict[WebSocket, str | None] = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, ws: WebSocket, subprotocol: str | None = None):
+    async def connect(self, ws: WebSocket, subprotocol: str | None = None, project: str | None = None):
         # Caller must have already validated origin + auth. subprotocol
         # is echoed back so browser clients can confirm negotiation.
         await ws.accept(subprotocol=subprotocol)
         async with self._lock:
-            self.active.append(ws)
+            self.active[ws] = project
 
     async def disconnect(self, ws: WebSocket):
         async with self._lock:
-            try:
-                self.active.remove(ws)
-            except ValueError:
-                pass  # already removed
+            self.active.pop(ws, None)
 
     async def broadcast(self, data: dict[str, Any]):
         message = json.dumps(data)
-        # Snapshot under the lock so a disconnect mid-iteration doesn't
-        # mutate the list we're iterating.
+        # Route by project: an event tagged with _project goes only to
+        # connections scoped to that project (plus unscoped/home connections).
+        ev_project = data.get("_project") if isinstance(data, dict) else None
         async with self._lock:
-            targets = list(self.active)
+            targets = list(self.active.items())
         dead: list[WebSocket] = []
-        for ws in targets:
+        for ws, scope in targets:
+            if scope is not None and ev_project is not None and scope != ev_project:
+                continue
             try:
                 await ws.send_text(message)
             except Exception:
@@ -72,10 +75,7 @@ class ConnectionManager:
         if dead:
             async with self._lock:
                 for ws in dead:
-                    try:
-                        self.active.remove(ws)
-                    except ValueError:
-                        pass
+                    self.active.pop(ws, None)
 
 
 def create_app(
@@ -284,11 +284,31 @@ def create_app(
     async def broadcast_event(event: dict):
         await ws_manager.broadcast(event)
 
-    # Subscribe to events - will be re-subscribed on project switch
+    def subscribe_orch_events(orch):
+        """Subscribe the WS broadcast to *orch*'s event bus, tagging every event
+        with the project id so the WS layer routes it only to connections scoped
+        to that project (unscoped/home connections receive all). Used at boot
+        and whenever a project starts (system.py)."""
+        bus = getattr(orch, "event_bus", None)
+        if bus is None:
+            return
+        pid = getattr(orch, "project_id", None)
+
+        async def _tagged(event):
+            if isinstance(event, dict):
+                ev = event if event.get("_project") else {**event, "_project": pid}
+            else:
+                ev = {"type": str(event), "_project": pid}
+            await ws_manager.broadcast(ev)
+
+        bus.subscribe("*", _tagged)
+
+    # Subscribe to events - re-subscribed per project as they start (system.py).
     if event_bus:
+        # Legacy/test single-bus path: untagged -> reaches all connections.
         event_bus.subscribe("*", broadcast_event)
     elif project_manager and project_manager.orchestrator:
-        project_manager.orchestrator.event_bus.subscribe("*", broadcast_event)
+        subscribe_orch_events(project_manager.orchestrator)
 
     # ------------------------------------------------------------------
     # Server restart (kept here for auth dependency introspection by tests)
@@ -397,7 +417,7 @@ def create_app(
             set_pipeline_deps(pc)
 
     system_router.set_auth_deps(verify_admin)
-    system_router.set_project_deps(project_manager, broadcast_event)
+    system_router.set_project_deps(project_manager, broadcast_event, subscribe_orch_events)
     comparison_router.set_comparison_deps(project_manager)
     # audit 10 F#4/F#7: wire auth_manager + cors_origins into the WS
     # router so it can validate the Origin header and the bearer token

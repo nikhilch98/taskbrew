@@ -133,7 +133,11 @@ async def websocket_endpoint(ws: WebSocket):
     ok, subproto = await _ws_accept_or_reject(ws)
     if not ok:
         return
-    await _ws_manager.connect(ws, subprotocol=subproto)
+    # Scope the connection to a project when the page passes ?project=<id> so it
+    # only receives that project's live events (unscoped = all projects, used by
+    # the aggregated home).
+    project = ws.query_params.get("project")
+    await _ws_manager.connect(ws, subprotocol=subproto, project=project)
     try:
         while True:
             data = await ws.receive_text()

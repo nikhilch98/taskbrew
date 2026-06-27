@@ -313,6 +313,7 @@ function toggleTheme(){const h=document.documentElement;const l=h.getAttribute('
 /* ---------- data ---------- */
 async function loadStatus(){STATE.status=await getJSON('/api/projects/status');}
 async function loadProjects(){try{STATE.projects=await getJSON('/api/projects')||[];}catch(e){STATE.projects=[];}}
+async function loadSummary(){try{STATE.summary=await getJSON('/api/projects/summary');}catch(e){STATE.summary=null;}}
 async function loadActiveData(){await Promise.all([
   getJSON('/api/board').then(d=>STATE.board=d).catch(()=>STATE.board=null),
   getJSON('/api/agents').then(d=>STATE.agents=Array.isArray(d)?d:[]).catch(()=>STATE.agents=[]),
@@ -350,17 +351,20 @@ function renderHome(){
   const u=(STATE.usage&&STATE.usage.daily)||{};
   const w=working().length;
   const dg=$('home-digest');
+  const sm=STATE.summary;
   if(!st.has_manager){dg.innerHTML=`<span class="d">No project manager attached — start TaskBrew with a project.</span>`;}
+  else if(sm&&sm.totals){const T=sm.totals;dg.innerHTML=`<span class="d"><span class="dot" style="background:${T.needs_you?'var(--red)':'var(--green)'}"></span> <b>${T.needs_you||0}</b> thing${T.needs_you===1?'':'s'} need${T.needs_you===1?'s':''} you</span><span class="pipe">·</span><span class="d"><span class="beacon${T.agents_working?'':' idle'}"></span> <b>${T.agents_working||0}</b> agent${T.agents_working===1?'':'s'} working across <b>${T.running||0}</b> of ${T.projects||0} project${T.projects===1?'':'s'}</span><span class="pipe">·</span><span class="d"><b>${num(T.tasks_today)}</b> task${T.tasks_today===1?'':'s'} today</span><span class="pipe">·</span><span class="d">◈ <b>${money(T.spend_usd)}</b> spent</span>`;}
   else if(!an){dg.innerHTML=`<span class="d"><span class="dot" style="background:var(--text-4)"></span> No active project</span><span class="pipe">·</span><span class="d"><b>${STATE.projects.length}</b> registered</span>`;}
   else{dg.innerHTML=`<span class="d"><span class="dot" style="background:${inbox.length?'var(--red)':'var(--green)'}"></span> <b>${inbox.length}</b> thing${inbox.length===1?'':'s'} need${inbox.length===1?'s':''} you</span><span class="pipe">·</span><span class="d"><span class="beacon${w?'':' idle'}"></span> <b>${w}</b> agent${w===1?'':'s'} working on <b>${esc(an)}</b></span><span class="pipe">·</span><span class="d"><b>${num(u.tasks)}</b> task${u.tasks===1?'':'s'} today</span><span class="pipe">·</span><span class="d">◈ <b>${money(u.cost_usd)}</b> spent</span>`;}
   // inbox
-  $('inbox-ct').textContent=inbox.length;
-  $('notif-dot').style.display=inbox.length?'block':'none';
+  const needTotal=(sm&&sm.totals)?(sm.totals.needs_you||0):inbox.length;
+  $('inbox-ct').textContent=needTotal;
+  $('notif-dot').style.display=needTotal?'block':'none';
   $('home-inbox').innerHTML=inbox.length?inbox.map(it=>`
     <div class="inrow"><div class="ii" style="background:${it.bg};color:${it.cl}">${esc(it.ico)}</div>
       <div class="ib"><div class="it">${esc(it.t)}</div><div class="is"><span class="pj-tag" style="background:${it.pjc[0]};color:${it.pjc[1]}">${esc(it.pj)}</span> ${esc(it.sub)}</div></div>
       <div class="ac"><button class="act-btn pri" onclick="window.location.href='${esc(it.href)}'">${esc(it.cta)}</button></div></div>`).join('')
-    :`<div class="empty-soft">${an?'Nothing needs your attention right now. ✨':'Activate a project to see what needs you.'}</div>`;
+    :(needTotal?`<div class="empty-soft">${needTotal} item${needTotal===1?'':'s'} need your attention on a background project — focus it to act.</div>`:`<div class="empty-soft">Nothing needs your attention right now. ✨</div>`);
   // composer
   const gi=$('goalInput'),gb=$('goalBtn');
   $('composer-proj').innerHTML=`▣ ${esc(an||'no active project')} <span style="color:var(--text-4)">▾</span>`;
@@ -376,17 +380,16 @@ function renderHome(){
 function renderProjectTiles(wrap){
   if(!wrap)return;
   if(!STATE.projects.length){wrap.innerHTML=`<div class="empty-soft" style="grid-column:1/-1">No projects registered yet.</div>`;return;}
-  const b=board();
+  const smap={};((STATE.summary&&STATE.summary.projects)||[]).forEach(s=>smap[s.id]=s);
   wrap.innerHTML=STATE.projects.map((p,i)=>{
     const isA=isActive(p),c=projColor(i,isA);
     const run=projRunning(p.id),pz=projPaused(p.id);
-    const sd=run?(pz?'var(--amber)':(isA?(working().length?'var(--green)':'var(--amber)'):'var(--green)')):'var(--text-4)';
-    const goal=isA
-      ?(pz?'Paused — agents stopped':(b.in_progress[0]?b.in_progress[0].title:(activeName()+' — live')))
-      :(run?(pz?'Paused — agents stopped':'Running · agents active'):'Registered · idle');
-    const done=isA?b.completed.length:0,total=isA?(b.backlog.length+b.pending.length+b.in_progress.length+b.review.length+b.completed.length):0;
-    const pct=total?Math.round(done/total*100):(isA?5:0);
-    const cost=isA?money((STATE.usage&&STATE.usage.daily&&STATE.usage.daily.cost_usd)||0):money(0);
+    const s=smap[p.id]||{};const cnt=s.counts||{};
+    const sd=run?(pz?'var(--amber)':'var(--green)'):'var(--text-4)';
+    const done=cnt.completed||0,total=s.tasks_total||0;
+    const goal=run?(pz?'Paused — agents stopped':'Running · agents active'):(total?`${total} task${total===1?'':'s'} · idle`:'Registered · idle');
+    const pct=total?Math.round(done/total*100):0;
+    const cost=money(s.spend_usd||0);
     const avs=isA?working().slice(0,3).map(a=>{const rc=roleColor(a.role);return `<div class="av" style="background:${rc[0]};color:${rc[1]}">${esc(roleTag(a.role))}</div>`;}).join(''):'';
     return `<div class="ptile" onclick="openProj('${esc(p.id)}')"><div class="pt-h"><div class="pt-ic" style="background:${c[0]};color:${c[1]}">${esc(abbr(p.name||p.id))}</div><span class="pt-nm">${esc(p.name||p.id)}</span><span class="pt-sd" style="background:${sd}"></span>${projCtrl(p)}</div><div class="pt-g">${esc(goal)}</div><div class="pbar"><i style="width:${pct}%;background:${isA?'linear-gradient(90deg,var(--accent),var(--accent-hi))':'var(--text-4)'}"></i></div><div class="pt-f">${avs||'<span style="color:var(--text-4)">idle</span>'}<span class="cost">${cost}</span></div></div>`;
   }).join('');
@@ -394,14 +397,21 @@ function renderProjectTiles(wrap){
 
 function renderFeed(){
   const wrap=$('home-feed');if(!wrap)return;
+  const sc={completed:'var(--green)',in_progress:'var(--blue)',review:'var(--blue)',blocked:'var(--red)',failed:'var(--red)',pending:'var(--violet)',backlog:'var(--text-3)'};
+  // Aggregated: recent activity merged across ALL projects, each tagged.
+  const rec=(STATE.summary&&STATE.summary.recent)||null;
+  if(rec){
+    if(!rec.length){wrap.innerHTML=`<div class="empty-soft">No activity yet across your projects — submit a goal to get started.</div>`;return;}
+    wrap.innerHTML=rec.map(r=>`<div class="frowi"><span class="ft">${esc(hhmm(r.ts))}</span><span class="fd" style="background:${sc[r.status]||'var(--text-3)'}"></span><span><b>${esc(r.role||r.status||'task')}</b> · ${esc(r.task_id||'')} ${esc(r.title||'')}</span><span class="pjt">${esc(r.project_name||'')}</span></div>`).join('');
+    return;
+  }
   const an=activeName();
-  if(!an){wrap.innerHTML=`<div class="empty-soft">No active project — no recent activity.</div>`;return;}
+  if(!an){wrap.innerHTML=`<div class="empty-soft">No recent activity.</div>`;return;}
   const b=board();
   const all=[...b.in_progress,...b.review,...b.completed,...b.blocked,...b.failed,...b.pending];
   const items=all.map(t=>({t,ts:t.completed_at||t.started_at||t.created_at})).filter(x=>x.ts)
     .sort((a,z)=>new Date(z.ts)-new Date(a.ts)).slice(0,5);
   if(!items.length){wrap.innerHTML=`<div class="empty-soft">No task activity yet — submit a goal to get started.</div>`;return;}
-  const sc={completed:'var(--green)',in_progress:'var(--blue)',review:'var(--blue)',blocked:'var(--red)',failed:'var(--red)',pending:'var(--violet)',backlog:'var(--text-3)'};
   wrap.innerHTML=items.map(({t,ts})=>`<div class="frowi"><span class="ft">${esc(hhmm(ts))}</span><span class="fd" style="background:${sc[t.status]||'var(--text-3)'}"></span><span><b>${esc(t.assigned_to||t.claimed_by||t.status||'task')}</b> · ${esc(t.id||'')} ${esc(t.title||'')}</span><span class="pjt">${esc(an)}</span></div>`).join('');
 }
 
@@ -509,7 +519,7 @@ function connectWS(){try{const proto=location.protocol==='https:'?'wss:':'ws:';w
 function scheduleRefresh(){if(refreshScheduled)return;refreshScheduled=true;setTimeout(()=>{refreshScheduled=false;refresh();},900);}
 
 /* ---------- refresh ---------- */
-async function refresh(){await loadStatus();await loadProjects();if(STATE.status&&STATE.status.active){await loadActiveData();}else{STATE.paused=[];}renderAll();}
+async function refresh(){await loadStatus();await loadProjects();await loadSummary();if(STATE.status&&STATE.status.active){await loadActiveData();}else{STATE.paused=[];}renderAll();}
 async function init(){
   try{await refresh();}catch(e){$('home-digest').innerHTML=`<span class="d">Could not load workspace: ${esc(e.message)}</span>`;}
   connectWS();

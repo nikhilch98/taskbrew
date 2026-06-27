@@ -121,13 +121,26 @@ def set_auth_deps(verify_admin):
 # ------------------------------------------------------------------
 _project_manager = None
 _broadcast_event = None
+_subscribe_orch_events = None
 
 
-def set_project_deps(project_manager, broadcast_event):
-    """Called by app.py to inject project_manager and broadcast callback."""
-    global _project_manager, _broadcast_event
+def set_project_deps(project_manager, broadcast_event, subscribe_orch_events=None):
+    """Called by app.py to inject project_manager, the broadcast callback, and
+    (optionally) a project-tagging event subscriber used so WS events route to
+    the right project's scoped connections."""
+    global _project_manager, _broadcast_event, _subscribe_orch_events
     _project_manager = project_manager
     _broadcast_event = broadcast_event
+    _subscribe_orch_events = subscribe_orch_events
+
+
+def _subscribe_events(orch):
+    """Subscribe the WS broadcast to *orch*'s event bus, project-tagged when the
+    tagging subscriber is wired (falls back to the untagged broadcast)."""
+    if _subscribe_orch_events:
+        _subscribe_orch_events(orch)
+    elif _broadcast_event:
+        orch.event_bus.subscribe("*", _broadcast_event)
 
 
 @router.get("/api/projects/status")
@@ -287,9 +300,8 @@ async def activate_project_endpoint(project_id: str):
     # Update the global orchestrator reference so all API endpoints use the new one
     set_orchestrator(orch)
 
-    # Re-subscribe to events for new project
-    if _broadcast_event:
-        orch.event_bus.subscribe("*", _broadcast_event)
+    # Re-subscribe to events for new project (project-tagged for WS routing)
+    _subscribe_events(orch)
 
     # Start agents
     from taskbrew.main import start_agents
@@ -337,8 +349,7 @@ async def start_project_endpoint(project_id: str):
         return {"status": "ok", "project": _project_manager.get_active()}
 
     # First start: subscribe events + spawn agents (paused unless first-run).
-    if _broadcast_event:
-        orch.event_bus.subscribe("*", _broadcast_event)
+    _subscribe_events(orch)
     from taskbrew.main import start_agents
     await start_agents(orch, start_paused=not auto_resume)
     if auto_resume:
@@ -387,6 +398,123 @@ async def get_active_project():
             if p["id"] == pid:
                 return p
     return _project_manager.get_active()
+
+
+@router.get("/api/projects/summary")
+async def projects_summary():
+    """Cross-project aggregate for the home page.
+
+    Per-project task counts + spend, merged recent activity tagged by project,
+    and live totals across ALL registered projects. Reads each project's own DB
+    (running -> its live connection; stopped -> a lightweight read-only open, no
+    orchestrator build, so the home page stays fast). Live signals (agents
+    working, things needing you) come only from running projects.
+    """
+    empty = {"projects": [], "totals": {}, "recent": []}
+    if not _project_manager:
+        return empty
+    from taskbrew.dashboard.routers._deps import get_all_orchestrators
+    pool = get_all_orchestrators()
+    projects = _project_manager.list_projects()
+    today = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).isoformat()
+
+    per_project = []
+    recent = []
+    totals = {
+        "projects": len(projects), "running": 0, "agents_working": 0,
+        "spend_usd": 0.0, "tasks_today": 0, "tasks_total": 0, "needs_you": 0,
+    }
+
+    for p in projects:
+        pid = p["id"]
+        orch = pool.get(pid)
+        running = orch is not None
+        db = None
+        close_db = False
+        if running:
+            db = orch.task_board._db
+        else:
+            try:
+                from taskbrew.config_loader import load_team_config
+                from taskbrew.orchestrator.database import Database
+                project_dir = Path(p["directory"])
+                tc = load_team_config(project_dir / "config" / "team.yaml")
+                db = Database(str(project_dir / tc.db_path))
+                await db.initialize()
+                close_db = True
+            except Exception:
+                per_project.append({
+                    "id": pid, "name": p["name"], "running": False,
+                    "counts": {}, "spend_usd": 0.0, "tasks_today": 0,
+                    "tasks_total": 0, "unavailable": True,
+                })
+                continue
+        try:
+            count_rows = await db.execute_fetchall(
+                "SELECT status, COUNT(*) AS c FROM tasks GROUP BY status"
+            )
+            counts = {r["status"]: r["c"] for r in count_rows}
+            spend_row = await db.execute_fetchone(
+                "SELECT COALESCE(SUM(cost_usd), 0) AS s FROM task_usage"
+            )
+            spend = float(spend_row["s"] or 0) if spend_row else 0.0
+            today_row = await db.execute_fetchone(
+                "SELECT COUNT(*) AS c FROM tasks WHERE created_at >= ?", (today,)
+            )
+            tasks_today = (today_row["c"] if today_row else 0) or 0
+            recent_rows = await db.execute_fetchall(
+                "SELECT id, title, assigned_to, status, created_at, completed_at "
+                "FROM tasks ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 6"
+            )
+        finally:
+            if close_db:
+                await db.close()
+
+        ptotal = sum(counts.values())
+        per_project.append({
+            "id": pid, "name": p["name"], "running": running,
+            "counts": counts, "spend_usd": round(spend, 4),
+            "tasks_today": tasks_today, "tasks_total": ptotal,
+        })
+        for r in recent_rows:
+            recent.append({
+                "project_id": pid, "project_name": p["name"],
+                "task_id": r["id"], "title": r["title"], "role": r["assigned_to"],
+                "status": r["status"], "ts": r["completed_at"] or r["created_at"],
+            })
+        totals["spend_usd"] += spend
+        totals["tasks_today"] += tasks_today
+        totals["tasks_total"] += ptotal
+        if running:
+            totals["running"] += 1
+
+    # Live signals only from running projects (a stopped project isn't working
+    # or asking). Best-effort: never let one project's error sink the summary.
+    for _pid, orch in pool.items():
+        im = getattr(orch, "instance_manager", None)
+        if im is not None:
+            try:
+                instances = await im.get_all_instances()
+                totals["agents_working"] += sum(
+                    1 for i in instances
+                    if (i.get("status") or "").lower()
+                    in ("working", "active", "running", "busy")
+                )
+            except Exception:
+                pass
+        qmgr = getattr(orch, "agent_question_manager", None)
+        if qmgr is not None:
+            try:
+                pending = await qmgr.get_pending()
+                totals["needs_you"] += len(pending or [])
+            except Exception:
+                pass
+
+    recent.sort(key=lambda x: x["ts"] or "", reverse=True)
+    totals["spend_usd"] = round(totals["spend_usd"], 4)
+    return {"projects": per_project, "totals": totals, "recent": recent[:14]}
 
 
 @router.post("/api/projects/active/deactivate")
