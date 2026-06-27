@@ -42,7 +42,7 @@ class ConnectionManager:
     def __init__(self):
         # ws -> project scope. None = unscoped: receives ALL projects' events
         # (the aggregated home). A project id = receives only that project's
-        # events (a scoped detail page, /advanced?project=<id>).
+        # events (a scoped detail page, /home?project=<id>).
         self.active: dict[WebSocket, str | None] = {}
         self._lock = asyncio.Lock()
 
@@ -184,7 +184,7 @@ def create_app(
         # WebSocket auth hardening is tracked in audit 10 F#4/F#7 and is
         # deferred from this fix.
         skip_paths = {
-            "/", "/home", "/advanced", "/metrics", "/settings", "/costs", "/trace", "/questions",
+            "/", "/home", "/metrics", "/settings", "/costs", "/trace", "/questions",
             "/api/health", "/docs", "/redoc", "/openapi.json",
         }
         if (
@@ -691,29 +691,20 @@ def create_app(
 
     @app.get("/")
     async def index(request: Request):
-        # The v6 calm console is the default landing page; the dense
-        # original board is opt-in at /advanced.
+        # The v6 calm console is the only dashboard; the dense original
+        # board (index.html / /advanced) has been removed.
         return RedirectResponse(url="/home")
 
     @app.get("/home")
     async def home_page(request: Request):
-        """Calm console (v6 redesign) — the simplified front door.
+        """Calm console (v6 redesign) — the only dashboard.
 
-        Progressive-disclosure entry point: live data for the active
-        project (board / agents / usage / needs-you), a goal composer,
-        and an honest single-active-project launcher. The dense
-        ``index.html`` board stays reachable at ``/`` as the advanced view.
+        Progressive-disclosure entry point: an aggregated cross-project
+        home, an in-page per-project detail view (board / agents /
+        usage / needs-you) scoped via the X-Taskbrew-Project header, a
+        goal composer, and a project launcher / create-project modal.
         """
         return templates.TemplateResponse(request, "home.html")
-
-    @app.get("/advanced")
-    async def advanced_page(request: Request):
-        """The full dense dashboard (original index.html), now opt-in.
-
-        Reachable from the v6 console rail (◈), the account avatar, and
-        the in-console deep-links. Kept verbatim so no feature is lost.
-        """
-        return templates.TemplateResponse(request, "index.html")
 
     @app.get("/metrics")
     async def metrics_page(request: Request):

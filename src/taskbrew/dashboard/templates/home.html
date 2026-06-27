@@ -6,6 +6,7 @@
 <title>TaskBrew</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;600;700&family=Geist+Mono:wght@400;450;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
 <style>
 :root,[data-theme="dark"]{
   --bg:#08090c; --bg-rail:#060708; --bg-side:#0a0b0e; --bg-content:#0c0e12;
@@ -150,6 +151,40 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .kb{display:grid;grid-template-columns:repeat(5,1fr);gap:13px;align-items:start} .col-h{display:flex;align-items:center;gap:8px;padding:0 3px 12px;font-size:12px;font-weight:600;color:var(--text-2)} .col-h .dt{width:7px;height:7px;border-radius:2px} .col-h .c{font-family:var(--mono);color:var(--text-4);font-weight:450} .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;cursor:pointer;transition:.14s;position:relative;box-shadow:var(--shadow)} .card:hover{border-color:var(--border-2);transform:translateY(-1px)} .card.live-card{border-color:var(--accent-line)} .card.live-card::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:60% 100%;animation:slide 1.6s linear infinite;border-radius:0 0 10px 10px} @keyframes slide{from{background-position:-60% 0}to{background-position:160% 0}} .card .top{display:flex;align-items:center;gap:7px;margin-bottom:8px} .card .id{font-family:var(--mono);font-size:11px;color:var(--text-3)} .card .pdot{width:6px;height:6px;border-radius:50%;margin-left:auto} .card .ti{font-size:13px;line-height:1.4;margin-bottom:11px} .card .foot{display:flex;align-items:center;gap:8px} .card .as{width:21px;height:21px;border-radius:50%;display:grid;place-items:center;font-size:9.5px;font-weight:600;font-family:var(--mono)} .card .label{font-size:10.5px;color:var(--text-3);font-family:var(--mono);display:inline-flex;align-items:center;gap:5px} .card .label.r{margin-left:auto} .more-row{text-align:center;font-size:11.5px;color:var(--text-3);padding:10px;border:1px dashed var(--border);border-radius:9px} .col-empty{font-size:11.5px;color:var(--text-4);padding:14px 10px;border:1px dashed var(--border);border-radius:9px;text-align:center}
 .foot-note{margin-top:26px;font-size:11.5px;color:var(--text-4);text-align:center} .foot-note b{color:var(--accent-hi);font-weight:500}
 .banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--panel);color:var(--text-3);font-size:12px;margin-bottom:18px} .banner b{color:var(--text-2);font-weight:600} .banner .dot{width:7px;height:7px;border-radius:50%;background:var(--blue);flex:0 0 7px}
+/* ===== INSIGHTS / SETTINGS (in-page) ===== */
+.ins-head{margin-bottom:16px} .ins-head h1{font-size:22px;font-weight:600;letter-spacing:-.02em} .ins-sub{font-size:13px;color:var(--text-3);margin-top:6px}
+.ins-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:20px}
+.ins-tabs button{padding:9px 13px;border-radius:8px 8px 0 0;font-size:12.5px;font-weight:550;color:var(--text-3);border-bottom:2px solid transparent;margin-bottom:-1px;display:inline-flex;align-items:center;gap:7px} .ins-tabs button:hover{color:var(--text-2);background:var(--panel)} .ins-tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:20px}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:15px 16px;box-shadow:var(--shadow)} .kpi .kl{font-size:11.5px;color:var(--text-3);font-weight:550;display:flex;align-items:center;gap:7px} .kpi .kv{font-size:23px;font-weight:600;font-family:var(--mono);letter-spacing:-.02em;margin-top:8px} .kpi .kd{font-size:11px;color:var(--text-4);margin-top:4px}
+.ins-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:14px}
+.chart-card{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:16px;box-shadow:var(--shadow);min-width:0} .chart-card.full{grid-column:1/-1} .chart-card h3{font-size:13px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px} .chart-card .sub{font-size:11.5px;color:var(--text-3);margin-bottom:12px} .chart-card .ch-wrap{position:relative;height:240px}
+.dtable{width:100%;border-collapse:collapse;font-size:12.5px} .dtable th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-4);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border)} .dtable td{padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text-2)} .dtable tr:last-child td{border-bottom:0} .dtable td.mono,.dtable td.num{font-family:var(--mono);color:var(--text)} .dtable td.num{text-align:right}
+.ins-empty{padding:38px 20px;text-align:center;color:var(--text-3);font-size:13px;background:var(--panel);border:1px dashed var(--border);border-radius:12px} .ins-empty .eh{font-weight:600;color:var(--text-2);margin-bottom:5px}
+.ins-loading{padding:38px 20px;text-align:center;color:var(--text-4);font-size:12.5px}
+.ins-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px} .ins-bar .grow{flex:1}
+.pill{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--border-2);color:var(--text-2)} .pill.g{background:var(--green-soft);color:var(--green);border-color:transparent} .pill.r{background:var(--red-soft);color:var(--red);border-color:transparent} .pill.a{background:var(--amber-soft);color:var(--amber);border-color:transparent}
+/* settings cards */
+.set-card{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:16px 17px;box-shadow:var(--shadow);margin-bottom:14px} .set-card h3{font-size:13.5px;font-weight:600;margin-bottom:3px} .set-card .sub{font-size:12px;color:var(--text-3);margin-bottom:14px}
+.set-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)} .set-row:last-child{border-bottom:0} .set-row .srl{font-size:13px;font-weight:550} .set-row .srs{font-size:11.5px;color:var(--text-3);margin-top:2px} .set-row .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.set-in{background:var(--bg-content);border:1px solid var(--border-2);border-radius:8px;padding:8px 11px;color:var(--text);font-family:inherit;font-size:13px;outline:none} .set-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.tg{position:relative;width:38px;height:22px;border-radius:20px;background:var(--border-2);transition:.15s;cursor:pointer;flex:0 0 38px} .tg::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s} .tg.on{background:var(--accent)} .tg.on::after{transform:translateX(16px)}
+@media(max-width:1040px){.kpi-grid{grid-template-columns:1fr 1fr}.ins-grid{grid-template-columns:1fr}}
+/* ===== NEW PROJECT MODAL ===== */
+.np-overlay{position:fixed;inset:0;background:rgba(4,5,8,.6);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:100;animation:fade .2s ease both}
+.np-overlay.on{display:flex}
+.np-card{width:460px;max-width:calc(100vw - 32px);background:var(--panel);border:1px solid var(--border-2);border-radius:16px;box-shadow:var(--shadow-lg);overflow:hidden}
+.np-head{display:flex;align-items:flex-start;gap:12px;padding:18px 18px 6px}
+.np-ic{width:34px;height:34px;border-radius:10px;background:var(--accent-soft);color:var(--accent-hi);display:grid;place-items:center;font-size:17px;flex:0 0 34px}
+.np-t{font-size:15px;font-weight:600} .np-s{font-size:12px;color:var(--text-3);margin-top:3px;line-height:1.4}
+.np-x{margin-left:auto;width:28px;height:28px;border-radius:8px;color:var(--text-3);display:grid;place-items:center;font-size:13px} .np-x:hover{background:var(--panel-hi);color:var(--text)}
+.np-body{padding:14px 18px 4px;display:flex;flex-direction:column;gap:13px}
+.np-f{display:flex;flex-direction:column;gap:6px} .np-l{font-size:12px;font-weight:550;color:var(--text-2)} .np-hint{font-weight:400;color:var(--text-4);font-family:var(--mono);font-size:10.5px;margin-left:6px}
+.np-in{background:var(--bg-content);border:1px solid var(--border-2);border-radius:9px;padding:10px 12px;color:var(--text);font-family:inherit;font-size:13.5px;outline:none;transition:.13s;width:100%} .np-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.np-row{display:flex;gap:8px} .np-row .np-in{flex:1}
+.np-browse{flex:0 0 auto;padding:0 13px;border-radius:9px;border:1px solid var(--border-2);background:var(--panel-2);color:var(--text);font-size:12.5px;font-weight:550} .np-browse:hover{background:var(--panel-hi)}
+.np-err{font-size:12px;color:var(--red);background:var(--red-soft);border:1px solid rgba(232,82,95,.25);border-radius:8px;padding:8px 11px}
+.np-foot{display:flex;justify-content:flex-end;gap:9px;padding:14px 18px 18px}
 @media(max-width:1040px){.pgrid,.pstrip{grid-template-columns:1fr 1fr}.kb,.live-grid{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
@@ -162,20 +197,19 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
     <div class="ritem" id="r-proj" onclick="go('projects')">▦<span class="tip">All projects</span></div>
     <div class="rdiv"></div>
     <div id="rail-pjs" style="display:flex;flex-direction:column;align-items:center;gap:6px"></div>
-    <div class="pj add" onclick="window.location.href='/advanced'"><span>+</span><span class="tip">New project <span class="ts">advanced</span></span></div>
+    <div class="pj add" onclick="openNewProject()"><span>+</span><span class="tip">New project</span></div>
     <div class="sp"></div>
-    <div class="ritem" onclick="window.location.href='/advanced'" title="Advanced view">❖<span class="tip">Advanced view <span class="ts">full UI</span></span></div>
   </div>
 
   <!-- NAV SIDE -->
   <aside class="nav-side">
     <div class="ns-top"><div class="ns-back" onclick="go('home')">‹ Home</div><div class="ns-name"><div class="pc-ic" style="width:26px;height:26px;background:var(--accent-soft);color:var(--accent-hi)" id="ns-ic">tb</div><div><div class="nm" id="ns-nm">—</div><div class="pp" id="ns-pp"></div></div></div></div>
     <nav class="nav">
-      <div class="grp" id="g-work"><div class="grp-h" onclick="tgGrp('g-work')">Work <span class="chev">▾</span></div><div class="grp-body"><div class="item on" onclick="openProjActive()"><span class="ic">▤</span> Board <span class="tail" id="nav-board-ct"></span></div><a class="item" href="/advanced"><span class="ic">☰</span> List</a><a class="item" href="/trace"><span class="ic">⌥</span> Dependency graph</a></div></div>
-      <div class="grp closed" id="g-ins"><div class="grp-h" onclick="tgGrp('g-ins')">Insights <span class="ct">5</span><span class="chev">▾</span></div><div class="grp-body"><a class="item" href="/metrics"><span class="ic">◈</span> Cost &amp; performance</a><a class="item" href="/metrics"><span class="ic">⛨</span> Quality &amp; safety</a><a class="item" href="/metrics"><span class="ic">◉</span> Knowledge &amp; memory</a><a class="item" href="/metrics"><span class="ic">▲</span> Agent intelligence</a><a class="item" href="/metrics"><span class="ic">◱</span> Planning &amp; coordination</a></div></div>
-      <div class="grp closed" id="g-team"><div class="grp-h" onclick="tgGrp('g-team')">Team &amp; config <span class="chev">▾</span></div><div class="grp-body"><div class="item" onclick="openProjActive()"><span class="ic">☲</span> Agents <span class="tail" id="nav-agent-ct"></span></div><a class="item" href="/settings"><span class="ic">◇</span> Pipeline</a><a class="item" href="/settings"><span class="ic">⚙</span> Settings</a></div></div>
+      <div class="grp" id="g-work"><div class="grp-h" onclick="tgGrp('g-work')">Work <span class="chev">▾</span></div><div class="grp-body"><div class="item on" data-nav="board" onclick="openProjActive()"><span class="ic">▤</span> Board <span class="tail" id="nav-board-ct"></span></div><a class="item" href="/trace"><span class="ic">⌥</span> Dependency graph</a></div></div>
+      <div class="grp closed" id="g-ins"><div class="grp-h" onclick="tgGrp('g-ins')">Insights <span class="ct">5</span><span class="chev">▾</span></div><div class="grp-body"><div class="item" data-ins="cost" onclick="openInsights('cost')"><span class="ic">◈</span> Cost &amp; performance</div><div class="item" data-ins="quality" onclick="openInsights('quality')"><span class="ic">⛨</span> Quality &amp; safety</div><div class="item" data-ins="knowledge" onclick="openInsights('knowledge')"><span class="ic">◉</span> Knowledge &amp; memory</div><div class="item" data-ins="agents" onclick="openInsights('agents')"><span class="ic">▲</span> Agent intelligence</div><div class="item" data-ins="planning" onclick="openInsights('planning')"><span class="ic">◱</span> Planning &amp; coordination</div></div></div>
+      <div class="grp closed" id="g-team"><div class="grp-h" onclick="tgGrp('g-team')">Team &amp; config <span class="chev">▾</span></div><div class="grp-body"><div class="item" data-set="agents" onclick="openSettings('agents')"><span class="ic">☲</span> Agents <span class="tail" id="nav-agent-ct"></span></div><div class="item" data-set="pipeline" onclick="openSettings('pipeline')"><span class="ic">◇</span> Pipeline</div><div class="item" data-set="settings" onclick="openSettings('settings')"><span class="ic">⚙</span> Settings</div></div></div>
     </nav>
-    <div class="ns-foot"><div class="frow"><span class="beacon" id="ns-beacon"></span> <span id="ns-state">—</span> <span class="right"><a class="btn-s" href="/advanced">Open full</a></span></div></div>
+    <div class="ns-foot"><div class="frow"><span class="beacon" id="ns-beacon"></span> <span id="ns-state">—</span> <span class="right"><a class="btn-s" onclick="go('home')" style="cursor:pointer">‹ Home</a></span></div></div>
   </aside>
 
   <!-- MAIN -->
@@ -187,7 +221,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
       <button class="tb-icon" onclick="toggleTheme()" title="Theme" id="theme-btn">◐</button>
       <button class="tb-icon" onclick="window.location.href='/questions'" title="Notifications">␇<span class="ndot" id="notif-dot" style="display:none"></span></button>
       <button class="tb-primary" id="primary" onclick="focusGoal()">＋ New goal</button>
-      <div class="acc" onclick="window.location.href='/advanced'" title="Advanced view">TB</div>
+      <div class="acc" onclick="window.location.href='/settings'" title="Settings">TB</div>
     </div>
     <div class="scroll"><div class="pad wide">
 
@@ -232,12 +266,50 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
           <div class="pulse-line" onclick="document.getElementById('pulse').classList.toggle('open')" id="pulse-line"></div>
           <div class="pulse-detail"><div class="pd-h">Who's working right now</div><div class="live-grid" id="live-grid"></div></div>
         </div>
-        <div class="bar"><h2>Tasks</h2><div class="seg" style="margin-left:8px"><button class="on">▤ Board</button><button onclick="window.location.href='/advanced'">☰ List</button><button onclick="window.location.href='/trace'">⌥ Graph</button></div><div class="grow"></div><div class="srch"><span>⌕</span> Search…</div><button class="add" onclick="focusGoalConsole()">＋ New task</button></div>
+        <div class="bar"><h2>Tasks</h2><div class="seg" style="margin-left:8px"><button class="on">▤ Board</button><button onclick="window.location.href='/trace?project='+encodeURIComponent(consoleProject||'')">⌥ Graph</button></div><div class="grow"></div><div class="srch"><span>⌕</span> Search…</div><button class="add" onclick="focusGoalConsole()">＋ New task</button></div>
         <div class="kb" id="console-board"></div>
       </section>
 
-      <div class="foot-note">TaskBrew · <b>calm front door</b> · wired to your live workspace · click <b>▦</b> for all projects, a project to drill in · toggle <b>◐</b> for light mode · <b>❖</b> opens the full advanced UI</div>
+      <!-- ===================== INSIGHTS ===================== -->
+      <section class="view" id="insights">
+        <div class="ins-head"><h1>Insights</h1><div class="ins-sub" id="ins-sub">Diagnostics for this project.</div></div>
+        <div class="ins-tabs" id="ins-tabs">
+          <button data-ins="cost" onclick="openInsights('cost')">◈ Cost &amp; performance</button>
+          <button data-ins="quality" onclick="openInsights('quality')">⛨ Quality &amp; safety</button>
+          <button data-ins="knowledge" onclick="openInsights('knowledge')">◉ Knowledge &amp; memory</button>
+          <button data-ins="agents" onclick="openInsights('agents')">▲ Agent intelligence</button>
+          <button data-ins="planning" onclick="openInsights('planning')">▱ Planning &amp; coordination</button>
+        </div>
+        <div id="ins-content"></div>
+      </section>
+
+      <!-- ===================== TEAM & CONFIG ===================== -->
+      <section class="view" id="settings-v">
+        <div class="ins-head"><h1>Team &amp; config</h1><div class="ins-sub">Agents, pipeline, and project settings.</div></div>
+        <div class="ins-tabs" id="set-tabs">
+          <button data-set="agents" onclick="openSettings('agents')">☲ Agents</button>
+          <button data-set="pipeline" onclick="openSettings('pipeline')">◇ Pipeline</button>
+          <button data-set="settings" onclick="openSettings('settings')">⚙ Settings</button>
+        </div>
+        <div id="set-content"></div>
+      </section>
+
+      <div class="foot-note">TaskBrew · <b>calm console</b> · wired to your live workspace · click <b>▦</b> for all projects, a project to drill in · toggle <b>◐</b> for light mode</div>
     </div></div>
+  </div>
+</div>
+
+<!-- ===================== NEW PROJECT MODAL ===================== -->
+<div class="np-overlay" id="np-overlay" onclick="if(event.target===this)closeNewProject()">
+  <div class="np-card" role="dialog" aria-modal="true" aria-labelledby="np-title">
+    <div class="np-head"><div class="np-ic">＋</div><div><div class="np-t" id="np-title">New project</div><div class="np-s">Register a project directory. TaskBrew scaffolds a PM, Architect, and Coder with sensible defaults.</div></div><button class="np-x" onclick="closeNewProject()" aria-label="Close">✕</button></div>
+    <div class="np-body">
+      <label class="np-f"><span class="np-l">Project name</span><input id="np-name" class="np-in" placeholder="e.g. Billing service" autocomplete="off" onkeydown="if(event.key==='Enter')submitNewProject()"></label>
+      <label class="np-f"><span class="np-l">Directory <span class="np-hint">absolute path</span></span><div class="np-row"><input id="np-dir" class="np-in" placeholder="/Users/you/code/project" autocomplete="off"><button class="np-browse" type="button" onclick="browseNewProjectDir()">Browse…</button></div></label>
+      <label class="np-f"><span class="np-l">CLI provider</span><select id="np-cli" class="np-in"><option value="codex">Codex (GPT)</option><option value="claude">Claude</option></select></label>
+      <div class="np-err" id="np-err" style="display:none"></div>
+    </div>
+    <div class="np-foot"><button class="act-btn ghost" onclick="closeNewProject()">Cancel</button><button class="tb-primary" id="np-submit" onclick="submitNewProject()">Create project →</button></div>
   </div>
 </div>
 
@@ -248,7 +320,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
    are registered/idle. Switching = activate + reload.
    ============================================================ */
 let STATE={status:null,projects:[],board:null,agents:[],usage:null,questions:[],interactions:[],paused:[]};
-let ws=null,wsRetry=0,refreshScheduled=false,curView='home';
+let ws=null,wsRetry=0,refreshScheduled=false,curView='home',consoleProject=null,insSection='cost',setSection='agents',insCharts={},insRange='today';
 const PAL=[['var(--blue-soft)','var(--blue)'],['var(--violet-soft)','var(--violet)'],['var(--green-soft)','var(--green)'],['var(--amber-soft)','var(--amber)'],['var(--red-soft)','var(--red)']];
 const DORMANT=new Set(['idle','stopped','paused','error','dead','completed','done','offline']);
 const ROLECOL={pm:['var(--accent-soft)','var(--accent-hi)'],architect:['var(--violet-soft)','var(--violet)'],coder:['var(--green-soft)','var(--green)'],tester:['var(--amber-soft)','var(--amber)'],reviewer:['var(--blue-soft)','var(--blue)'],system:['var(--panel-hi)','var(--text-2)']};
@@ -322,13 +394,25 @@ async function loadActiveData(){await Promise.all([
   getJSON('/api/interactions/pending').then(d=>STATE.interactions=(d&&d.interactions)||[]).catch(()=>STATE.interactions=[]),
   getJSON('/api/agents/paused').then(d=>STATE.paused=(d&&d.paused_roles)||[]).catch(()=>STATE.paused=[]),
 ]);}
+/* Scoped loader for the in-page project detail view: same data as
+   loadActiveData but tagged with X-Taskbrew-Project so it resolves the
+   CLICKED project (running, or a read-only idle view of its DB when
+   stopped) instead of the focused one. */
+async function loadProjectData(id){const H={'X-Taskbrew-Project':id};await Promise.all([
+  getJSON('/api/board',{headers:H}).then(d=>STATE.board=d).catch(()=>STATE.board=null),
+  getJSON('/api/agents',{headers:H}).then(d=>STATE.agents=Array.isArray(d)?d:[]).catch(()=>STATE.agents=[]),
+  getJSON('/api/usage',{headers:H}).then(d=>STATE.usage=d).catch(()=>STATE.usage=null),
+  getJSON('/api/questions/pending',{headers:H}).then(d=>STATE.questions=(d&&d.questions)||[]).catch(()=>STATE.questions=[]),
+  getJSON('/api/interactions/pending',{headers:H}).then(d=>STATE.interactions=(d&&d.interactions)||[]).catch(()=>STATE.interactions=[]),
+  getJSON('/api/agents/paused',{headers:H}).then(d=>STATE.paused=(d&&d.paused_roles)||[]).catch(()=>STATE.paused=[]),
+]);}
 function board(){const b=STATE.board||{};const g=(k)=>Array.isArray(b[k])?b[k]:[];return {backlog:g('backlog'),pending:g('pending'),in_progress:g('in_progress'),review:g('review'),completed:g('completed'),failed:g('failed'),blocked:g('blocked'),rejected:g('rejected')};}
 
 /* ---------- inbox ---------- */
-function inboxItems(){const out=[];const an=activeName()||'project';
+function inboxItems(){const out=[];const an=activeName()||'project';const aid=(STATE.status&&STATE.status.active&&STATE.status.active.id)||null;
   (STATE.questions||[]).forEach(q=>out.push({ico:'?',bg:'var(--blue-soft)',cl:'var(--blue)',t:q.question||'Agent needs a decision',pj:an,pjc:['var(--accent-soft)','var(--accent-hi)'],sub:`${q.agent_role||'agent'} · ${q.group_id||q.task_id||''}`,href:'/questions',cta:'Answer →'}));
-  (STATE.interactions||[]).forEach(i=>out.push({ico:'✋',bg:'var(--amber-soft)',cl:'var(--amber)',t:(i.request_type||'Approval')+' needed',pj:an,pjc:['var(--amber-soft)','var(--amber)'],sub:`${i.request_key||''} · ${i.task_id||''}`,href:'/advanced',cta:'Review →'}));
-  board().blocked.forEach(t=>out.push({ico:'⛔',bg:'var(--red-soft)',cl:'var(--red)',t:'Blocked: '+(t.title||t.id),pj:an,pjc:['var(--red-soft)','var(--red)'],sub:`${t.assigned_to||t.claimed_by||''} · ${t.id||''}`,href:'/advanced',cta:'Open →'}));
+  (STATE.interactions||[]).forEach(i=>out.push({ico:'✋',bg:'var(--amber-soft)',cl:'var(--amber)',t:(i.request_type||'Approval')+' needed',pj:an,pjc:['var(--amber-soft)','var(--amber)'],sub:`${i.request_key||''} · ${i.task_id||''}`,pid:aid,cta:'Review →'}));
+  board().blocked.forEach(t=>out.push({ico:'⛔',bg:'var(--red-soft)',cl:'var(--red)',t:'Blocked: '+(t.title||t.id),pj:an,pjc:['var(--red-soft)','var(--red)'],sub:`${t.assigned_to||t.claimed_by||''} · ${t.id||''}`,pid:aid,cta:'Open →'}));
   return out;}
 
 /* ============================ RENDER ============================ */
@@ -363,7 +447,7 @@ function renderHome(){
   $('home-inbox').innerHTML=inbox.length?inbox.map(it=>`
     <div class="inrow"><div class="ii" style="background:${it.bg};color:${it.cl}">${esc(it.ico)}</div>
       <div class="ib"><div class="it">${esc(it.t)}</div><div class="is"><span class="pj-tag" style="background:${it.pjc[0]};color:${it.pjc[1]}">${esc(it.pj)}</span> ${esc(it.sub)}</div></div>
-      <div class="ac"><button class="act-btn pri" onclick="window.location.href='${esc(it.href)}'">${esc(it.cta)}</button></div></div>`).join('')
+      <div class="ac"><button class="act-btn pri" onclick="${it.href?`window.location.href='${esc(it.href)}'`:`openProj('${esc(it.pid||'')}')`}">${esc(it.cta)}</button></div></div>`).join('')
     :(needTotal?`<div class="empty-soft">${needTotal} item${needTotal===1?'':'s'} need your attention on a background project — focus it to act.</div>`:`<div class="empty-soft">Nothing needs your attention right now. ✨</div>`);
   // composer
   const gi=$('goalInput'),gb=$('goalBtn');
@@ -475,7 +559,7 @@ function renderConsole(){
   $('nav-board-ct').textContent=b.in_progress.length+b.review.length+b.pending.length||'';
   $('nav-agent-ct').textContent=team||'';
   const beacon=$('ns-beacon'),state=$('ns-state');
-  if(beacon&&state){beacon.className='beacon'+(wk.length?'':' idle');state.textContent=wk.length?'Brewing':(an?'Paused':'—');}
+  if(beacon&&state){beacon.className='beacon'+(wk.length?'':' idle');state.textContent=wk.length?'Brewing':(projPaused(consoleProject)?'Paused':(consoleProject?'Idle':'—'));}
 }
 
 function renderAll(){renderRail();renderHome();renderProjects();if(curView==='console')renderConsole();}
@@ -483,18 +567,248 @@ function renderAll(){renderRail();renderHome();renderProjects();if(curView==='co
 /* ---------- navigation ---------- */
 function showView(id){document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));$(id).classList.add('on');document.querySelector('.scroll').scrollTo({top:0});curView=id;}
 function setRail(which){$('r-home').classList.toggle('on',which==='home');$('r-proj').classList.toggle('on',which==='projects');}
-function go(v){$('app').classList.remove('console');$('ws').style.display='flex';$('crumb').style.display='none';
-  if(v==='projects'){showView('projects');setRail('projects');renderProjects();}else{showView('home');setRail('home');renderHome();}}
+function applyConsoleScope(id){document.querySelectorAll('.nav-side a[href^="/"]').forEach(a=>{const base=a.getAttribute('href').split('?')[0];a.setAttribute('href',base+'?project='+encodeURIComponent(id));});}
+function clearConsoleScope(){document.querySelectorAll('.nav-side a[href^="/"]').forEach(a=>{a.setAttribute('href',a.getAttribute('href').split('?')[0]);});}
+function go(v){consoleProject=null;clearConsoleScope();try{history.pushState({},'','/home');}catch(e){}
+  $('app').classList.remove('console');$('ws').style.display='flex';$('crumb').style.display='none';
+  if(v==='projects'){showView('projects');setRail('projects');renderProjects();}else{showView('home');setRail('home');renderHome();}
+  refresh();}
 function openProjActive(){const a=STATE.status&&STATE.status.active;if(a)return openProj(a.id);const p=(STATE.projects||[])[0];if(p)openProj(p.id);}
 function openProj(id){
   if(!id)return;
-  // One click opens the project's board, scoped to it via ?project=<id> (the
-  // board page tags its /api calls with X-Taskbrew-Project). Works whether the
-  // project is running or stopped — a stopped project resolves to a read-only
-  // idle view of its own DB. No focus switch, no Start prompt.
-  window.location.href='/advanced?project='+encodeURIComponent(id);
+  // In-page project detail (v6). Loads THIS project's board/agents/usage via
+  // scoped /api calls (X-Taskbrew-Project header) — works whether it is running
+  // or stopped (a stopped project resolves to a read-only view of its DB).
+  consoleProject=id;
+  const i=(STATE.projects||[]).findIndex(x=>x.id===id);
+  const p=(i>=0?STATE.projects[i]:null)||{id};
+  const c=projColor(i<0?0:i,isActive(p));
+  $('ns-ic').textContent=abbr(p.name||id);$('ns-ic').style.background=c[0];$('ns-ic').style.color=c[1];
+  $('ns-nm').textContent=p.name||id;$('ns-pp').textContent=p.directory||'';
+  $('app').classList.add('console');$('ws').style.display='none';
+  const cb=$('crumb');cb.style.display='flex';cb.innerHTML=`<span class="lk" onclick="go('home')">Workspace</span><span class="sep">/</span><b>${esc(p.name||id)}</b>`;
+  showView('console');setRail('');applyConsoleScope(id);setNavActive(document.querySelector('.nav-side [data-nav="board"]'));
+  try{history.pushState({project:id},'','/home?project='+encodeURIComponent(id));}catch(e){}
+  refresh();
 }
 function tgGrp(id){$(id).classList.toggle('closed');}
+
+/* ---------- insights / settings (in-page, project-scoped) ---------- */
+function setNavActive(el){document.querySelectorAll('.nav-side .item').forEach(x=>x.classList.remove('on'));if(el)el.classList.add('on');}
+function projName(id){const p=(STATE.projects||[]).find(x=>x.id===id);return (p&&p.name)||id||'project';}
+function pFetch(url,pid){return getJSON(url,{headers:{'X-Taskbrew-Project':pid||consoleProject||''}});}
+function destroyCharts(){Object.values(insCharts).forEach(c=>{try{c.destroy();}catch(e){}});insCharts={};}
+function consoleCrumb(extra){const cb=$('crumb');if(!cb)return;const nm=esc(projName(consoleProject));cb.style.display='flex';cb.innerHTML=`<span class="lk" onclick="go('home')">Workspace</span><span class="sep">/</span><span class="lk" onclick="openProj('${esc(consoleProject)}')">${nm}</span>`+(extra?`<span class="sep">/</span><b>${esc(extra)}</b>`:'');}
+function openInsights(section){
+  if(!consoleProject){openProjActive();return;}
+  insSection=section||'cost';destroyCharts();
+  $('app').classList.add('console');$('ws').style.display='none';
+  showView('insights');setRail('');
+  document.querySelectorAll('#ins-tabs button').forEach(b=>b.classList.toggle('on',b.dataset.ins===insSection));
+  setNavActive(document.querySelector('.nav-side [data-ins="'+insSection+'"]'));
+  consoleCrumb('Insights');
+  try{history.pushState({project:consoleProject,ins:insSection},'','/home?project='+encodeURIComponent(consoleProject)+'&ins='+insSection);}catch(e){}
+  renderInsights();
+}
+function openSettings(section){
+  if(!consoleProject){openProjActive();return;}
+  setSection=section||'agents';destroyCharts();
+  $('app').classList.add('console');$('ws').style.display='none';
+  showView('settings-v');setRail('');
+  document.querySelectorAll('#set-tabs button').forEach(b=>b.classList.toggle('on',b.dataset.set===setSection));
+  setNavActive(document.querySelector('.nav-side [data-set="'+setSection+'"]'));
+  consoleCrumb('Team & config');
+  try{history.pushState({project:consoleProject,set:setSection},'','/home?project='+encodeURIComponent(consoleProject)+'&set='+setSection);}catch(e){}
+  renderSettings();
+}
+function renderInsights(){
+  const c=$('ins-content');if(!c)return;
+  c.innerHTML=`<div class="ins-loading">Loading…</div>`;
+  const fn={cost:renderInsCost,quality:renderInsQuality,knowledge:renderInsKnowledge,agents:renderInsAgents,planning:renderInsPlanning}[insSection];
+  if(fn){Promise.resolve().then(()=>fn(c,consoleProject)).catch(e=>{c.innerHTML=`<div class="ins-empty"><div class="eh">Could not load</div>${esc(e.message)}</div>`;});}
+  else c.innerHTML=`<div class="ins-empty">Unknown section.</div>`;
+}
+function renderSettings(){
+  const c=$('set-content');if(!c)return;
+  c.innerHTML=`<div class="ins-loading">Loading…</div>`;
+  const fn={agents:renderSetAgents,pipeline:renderSetPipeline,settings:renderSetGeneral}[setSection];
+  if(fn){Promise.resolve().then(()=>fn(c,consoleProject)).catch(e=>{c.innerHTML=`<div class="ins-empty"><div class="eh">Could not load</div>${esc(e.message)}</div>`;});}
+  else c.innerHTML=`<div class="ins-empty">Unknown section.</div>`;
+}
+function insEmpty(title,msg){return `<div class="ins-empty"><div class="eh">${esc(title)}</div>${esc(msg||'')}</div>`;}
+function mkChart(id,cfg){const el=document.getElementById(id);if(!el||!window.Chart)return;try{insCharts[id]=new Chart(el.getContext('2d'),cfg);}catch(e){}}
+const CHART_COLORS=['#6c79ff','#9b6cf0','#4f9bf0','#3fae63','#cf9a2f','#e8525f','#46b3c4','#ec6cb0'];
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+function kpi(label,val,sub){return `<div class="kpi"><div class="kl">${label}</div><div class="kv">${val}</div>${sub?`<div class="kd">${esc(sub)}</div>`:''}</div>`;}
+function fmtTok(n){n=Number(n||0);if(n>=1e6)return (n/1e6).toFixed(1)+'M';if(n>=1e3)return (n/1e3).toFixed(1)+'K';return String(Math.round(n));}
+function fmtDur(ms){ms=Number(ms||0);if(!ms)return '—';const s=ms/1000;if(s<60)return s.toFixed(0)+'s';return (s/60).toFixed(1)+'m';}
+function fmtBucket(b){const t=new Date(b);return isNaN(t.getTime())?String(b||''):(String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0'));}
+function asArr(d,keys){if(Array.isArray(d))return d;if(d&&typeof d==='object'){for(const k of (keys||[]))if(Array.isArray(d[k]))return d[k];for(const k in d)if(Array.isArray(d[k]))return d[k];}return [];}
+function axisOpts(){return {grid:{color:cssVar('--border')},ticks:{color:cssVar('--text-3'),font:{size:10}}};}
+function lineOpts(){const o={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:axisOpts(),y:axisOpts()}};o.scales.x.ticks.maxTicksLimit=8;o.scales.x.ticks.maxRotation=0;o.scales.x.ticks.autoSkip=true;o.scales.y.beginAtZero=true;return o;}
+function stackedOpts(){const o=lineOpts();o.plugins.legend={display:true,labels:{color:cssVar('--text-3'),font:{size:10},boxWidth:10,boxHeight:10}};o.scales.x.stacked=true;o.scales.y.stacked=true;return o;}
+function hbarOpts(){const o={indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:axisOpts(),y:axisOpts()}};o.scales.x.beginAtZero=true;o.scales.y.grid={display:false};return o;}
+function doughnutOpts(){const o={responsive:true,maintainAspectRatio:false,cutout:'62%'};o.plugins={legend:{position:'right',labels:{color:cssVar('--text-3'),font:{size:11},boxWidth:10,boxHeight:10,padding:8}}};return o;}
+function leaderboardTable(rows){if(!rows||!rows.length)return insEmpty('No agent activity','Agents appear here once they run tasks.');return `<table class="dtable"><thead><tr><th>#</th><th>Agent</th><th class="num">Tasks</th><th class="num">Cost</th><th class="num">Avg</th></tr></thead><tbody>${rows.map((a,i)=>`<tr><td class="mono">${i+1}</td><td>${esc(a.agent_id||a.role||'')}</td><td class="num">${num(+a.tasks_completed||0)}</td><td class="num">${money(+a.total_cost||0)}</td><td class="num">${fmtDur(a.avg_duration_ms)}</td></tr>`).join('')}</tbody></table>`;}
+function failuresTable(rows){if(!rows||!rows.length)return insEmpty('No failures','No failed tasks in this project.');return `<table class="dtable"><thead><tr><th>ID</th><th>Role</th><th>Title</th><th class="num">When</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.id||'')}</td><td>${esc(r.assigned_to||r.claimed_by||'')}</td><td>${esc(String(r.title||'').slice(0,70))}</td><td class="num">${esc(agoText(r.timestamp||r.created_at))}</td></tr>`).join('')}</tbody></table>`;}
+async function dataPanel(opts){let d;try{d=await pFetch(opts.url,opts.pid);}catch(e){return `<div class="set-card"><h3>${esc(opts.title)}</h3>${insEmpty('Unavailable',e.message)}</div>`;}const rows=asArr(d,opts.arrKeys);if(!rows.length)return `<div class="set-card"><h3>${esc(opts.title)}</h3>${insEmpty(opts.empty||'Nothing yet','No data for this project.')}</div>`;const head=opts.cols.map(co=>`<th class="${co.cls==='num'?'num':''}">${esc(co.label)}</th>`).join('');const body=rows.slice(0,opts.limit||25).map(r=>`<tr>${opts.cols.map(co=>{const v=co.fmt?co.fmt(r[co.key],r):(r[co.key]==null?'':r[co.key]);return `<td class="${co.cls||''}">${co.fmt?v:esc(v)}</td>`;}).join('')}</tr>`).join('');return `<div class="set-card"><h3>${esc(opts.title)} <span class="pill">${rows.length}</span></h3><table class="dtable"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;}
+/* section renderers — filled in below */
+async function renderInsCost(c,pid){
+  const gran=(insRange==='today')?'hour':'day';
+  let ts={},roles={},agents=[],fails=[];
+  try{[ts,roles,agents,fails]=await Promise.all([
+    pFetch('/api/metrics/timeseries?range='+insRange+'&granularity='+gran,pid).catch(()=>({})),
+    pFetch('/api/metrics/roles',pid).catch(()=>({})),
+    pFetch('/api/metrics/agents?top=10',pid).catch(()=>[]),
+    pFetch('/api/metrics/failures?limit=15',pid).catch(()=>[]),
+  ]);}catch(e){c.innerHTML=insEmpty('Could not load metrics',e.message);return;}
+  const usage=ts.usage||[],st=ts.status_totals||{};
+  const totalCost=ts.total_cost!=null?ts.total_cost:usage.reduce((s,u)=>s+(+u.cost||0),0);
+  const totIn=usage.reduce((s,u)=>s+(+u.input_tokens||0),0),totOut=usage.reduce((s,u)=>s+(+u.output_tokens||0),0);
+  const done=+st.completed||0,failed=+st.failed||0;const succ=(done+failed)?Math.round(done/(done+failed)*100):0;
+  const agArr=Array.isArray(agents)?agents:asArr(agents,['agents']);
+  const activeAg=agArr.filter(a=>(+a.tasks_completed||0)>0||(+a.tasks_in_progress||0)>0).length;
+  const buckets=[...new Set(usage.map(u=>u.bucket))].sort();const labels=buckets.map(fmtBucket);
+  const costSeries=buckets.map(b=>usage.filter(u=>u.bucket===b).reduce((s,u)=>s+(+u.cost||0),0));
+  const inSeries=buckets.map(b=>usage.filter(u=>u.bucket===b).reduce((s,u)=>s+(+u.input_tokens||0),0));
+  const outSeries=buckets.map(b=>usage.filter(u=>u.bucket===b).reduce((s,u)=>s+(+u.output_tokens||0),0));
+  const costStats=roles.cost_stats||[];const st2=ts.status_totals||{};
+  const bar=`<div class="ins-bar"><div class="seg">${['today','week','month'].map(r=>`<button class="${r===insRange?'on':''}" onclick="insRange='${r}';renderInsights()">${r[0].toUpperCase()+r.slice(1)}</button>`).join('')}</div><div class="grow"></div><a class="btn-s" href="/metrics?project=${encodeURIComponent(pid)}">Open classic ↗</a></div>`;
+  c.innerHTML=bar+`<div class="kpi-grid">${kpi('◈ Total cost',money(totalCost),insRange)}${kpi('✓ Completed',num(done),succ+'% success')}${kpi('⎂ Tokens',fmtTok(totIn+totOut),fmtTok(totIn)+' in · '+fmtTok(totOut)+' out')}${kpi('☲ Active agents',num(activeAg),agArr.length+' total')}</div>
+    <div class="ins-grid">
+      <div class="chart-card"><h3>Cost over time</h3><div class="ch-wrap"><canvas id="ch-cost"></canvas></div></div>
+      <div class="chart-card"><h3>Token usage</h3><div class="ch-wrap"><canvas id="ch-tok"></canvas></div></div>
+      <div class="chart-card"><h3>Cost by role</h3><div class="ch-wrap"><canvas id="ch-role"></canvas></div></div>
+      <div class="chart-card"><h3>Tasks by status</h3><div class="ch-wrap"><canvas id="ch-status"></canvas></div></div>
+    </div>
+    <div class="chart-card full" style="margin-bottom:14px"><h3>Agent leaderboard</h3>${leaderboardTable(agArr)}</div>
+    <div class="chart-card full"><h3>Recent failures</h3>${failuresTable(Array.isArray(fails)?fails:asArr(fails,['failures','items']))}</div>`;
+  mkChart('ch-cost',{type:'line',data:{labels,datasets:[{label:'Cost',data:costSeries,borderColor:CHART_COLORS[0],backgroundColor:CHART_COLORS[0]+'22',fill:true,tension:.3,pointRadius:0}]},options:lineOpts()});
+  mkChart('ch-tok',{type:'bar',data:{labels,datasets:[{label:'Input',data:inSeries,backgroundColor:CHART_COLORS[2]},{label:'Output',data:outSeries,backgroundColor:CHART_COLORS[1]}]},options:stackedOpts()});
+  mkChart('ch-role',{type:'bar',data:{labels:costStats.map(r=>r.role),datasets:[{label:'Cost',data:costStats.map(r=>+r.total_cost||0),backgroundColor:CHART_COLORS[3]}]},options:hbarOpts()});
+  mkChart('ch-status',{type:'doughnut',data:{labels:Object.keys(st2),datasets:[{data:Object.values(st2).map(Number),backgroundColor:CHART_COLORS}]},options:doughnutOpts()});
+}
+async function renderInsQuality(c,pid){
+  let vuln={},secrets={},sast={},trends={},roles={};
+  [vuln,secrets,sast,trends,roles]=await Promise.all([
+    pFetch('/api/v2/security/vulnerabilities',pid).catch(()=>({})),
+    pFetch('/api/v2/security/secrets',pid).catch(()=>({})),
+    pFetch('/api/v2/security/sast',pid).catch(()=>({})),
+    pFetch('/api/v2/observability/trends?metric_name=quality_score',pid).catch(()=>({})),
+    pFetch('/api/metrics/roles',pid).catch(()=>({})),
+  ]);
+  const vrows=asArr(vuln,['vulnerabilities','items','data']);
+  const sev={critical:0,high:0,medium:0,low:0};vrows.forEach(v=>{const s=String(v.severity||'').toLowerCase();if(sev[s]!=null)sev[s]+=(+v.count||1);});
+  const vulnTotal=Object.values(sev).reduce((a,b)=>a+b,0)||vrows.length;
+  const secTotal=(secrets&&secrets.total!=null)?secrets.total:asArr(secrets,['secrets','detections','items']).length;
+  const sastTotal=(sast&&sast.total!=null)?sast.total:asArr(sast,['findings','items']).length;
+  const tpts=asArr(trends,['data','data_points','trends','points']);
+  const qval=p=>+(p.value!=null?p.value:(p.score!=null?p.score:p.quality_score))||0;
+  const qLatest=tpts.length?qval(tpts[tpts.length-1]):null;
+  c.innerHTML=`<div class="ins-bar"><div class="grow"></div><a class="btn-s" href="/metrics?project=${encodeURIComponent(pid)}">Open classic ↗</a></div><div class="kpi-grid">${kpi('⛨ Vulnerabilities',num(vulnTotal),vulnTotal?(sev.critical+' critical · '+sev.high+' high'):'none found')}${kpi('⚷ Secrets',num(secTotal),secTotal?'review needed':'clean')}${kpi('◈ SAST findings',num(sastTotal),sastTotal?'static analysis':'clean')}${kpi('★ Quality score',qLatest==null?'—':qLatest.toFixed(0),tpts.length?'latest':'no data')}</div>
+    <div class="ins-grid">
+      <div class="chart-card"><h3>Vulnerabilities by severity</h3><div class="ch-wrap"><canvas id="ch-vuln"></canvas></div></div>
+      <div class="chart-card"><h3>Quality score over time</h3><div class="ch-wrap"><canvas id="ch-qual"></canvas></div></div>
+    </div>`+(roles.task_stats&&roles.task_stats.length?`<div class="chart-card full"><h3>Outcomes by role</h3><table class="dtable"><thead><tr><th>Role</th><th class="num">Completed</th><th class="num">Failed</th></tr></thead><tbody>${roles.task_stats.map(r=>`<tr><td>${esc(r.role)}</td><td class="num">${num(+r.completed||0)}</td><td class="num">${num(+r.failed||0)}</td></tr>`).join('')}</tbody></table></div>`:'');
+  mkChart('ch-vuln',{type:'bar',data:{labels:['Critical','High','Medium','Low'],datasets:[{label:'Count',data:[sev.critical,sev.high,sev.medium,sev.low],backgroundColor:['#e8525f','#cf9a2f','#4f9bf0','#3fae63']}]},options:lineOpts()});
+  const qlabels=tpts.map(p=>fmtBucket(p.timestamp||p.bucket||p.date));const qdata=tpts.map(qval);
+  mkChart('ch-qual',{type:'line',data:{labels:qlabels,datasets:[{label:'Quality',data:qdata,borderColor:CHART_COLORS[3],backgroundColor:CHART_COLORS[3]+'22',fill:true,tension:.3,pointRadius:0}]},options:lineOpts()});
+}
+async function renderInsKnowledge(c,pid){
+  let kg={};try{kg=await pFetch('/api/knowledge-graph/stats',pid);}catch(e){kg={};}
+  const countOf=v=>{if(typeof v==='number')return v;if(v&&typeof v==='object'){const vals=Object.values(v);if(vals.length&&vals.every(x=>typeof x==='number'))return vals.reduce((a,b)=>a+b,0);return Object.keys(v).length;}return 0;};
+  const nodes=kg.node_count!=null?kg.node_count:countOf(kg.nodes);
+  const edges=kg.edge_count!=null?kg.edge_count:countOf(kg.edges);
+  const types=kg.nodes_by_type||kg.types||((kg.nodes&&typeof kg.nodes==='object')?kg.nodes:{});const tcount=(types&&typeof types==='object')?Object.keys(types).length:0;
+  const head=`<div class="kpi-grid">${kpi('◉ Graph nodes',num(nodes))}${kpi('↔ Edges',num(edges))}${kpi('⬡ Node types',num(tcount))}</div>`;
+  const panels=await Promise.all([
+    dataPanel({title:'Memory',url:'/api/memories',pid,arrKeys:['memories','items','data'],cols:[{label:'Type',key:'memory_type',fmt:(v,r)=>esc(v||r.type||'')},{label:'Title',key:'title',fmt:v=>esc(v||'')},{label:'Role',key:'agent_role',fmt:(v,r)=>esc(v||r.role||'')},{label:'When',key:'created_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No memories'}),
+    dataPanel({title:'Tech debt',url:'/api/v2/code-intel/debt?limit=20',pid,arrKeys:['debt','items','data'],cols:[{label:'File',key:'file',cls:'mono',fmt:v=>esc(v||'')},{label:'Category',key:'category',fmt:v=>esc(v||'')},{label:'Score',key:'score',cls:'num',fmt:v=>esc(v==null?'':v)},{label:'Suggestion',key:'suggestion',fmt:(v,r)=>esc(String(v||r.fix||'').slice(0,70))}],empty:'No debt findings'}),
+    dataPanel({title:'Code patterns',url:'/api/v2/code-intel/patterns',pid,arrKeys:['patterns','items','data'],cols:[{label:'Pattern',key:'pattern',fmt:v=>esc(v||'')},{label:'Category',key:'category',fmt:(v,r)=>esc(v||r.type||'')},{label:'File',key:'file',cls:'mono',fmt:(v,r)=>esc(v||r.location||'')}],empty:'No patterns detected'}),
+    dataPanel({title:'Test gaps',url:'/api/v2/code-intel/test-gaps',pid,arrKeys:['test_gaps','gaps','items','data'],cols:[{label:'Function',key:'function_name',cls:'mono',fmt:v=>esc(v||'')},{label:'File',key:'file',cls:'mono',fmt:v=>esc(v||'')},{label:'Risk',key:'risk',fmt:(v,r)=>esc(v||r.priority||'')}],empty:'No test gaps'}),
+  ]);
+  c.innerHTML=head+panels.join('');
+}
+async function renderInsAgents(c,pid){
+  const panels=await Promise.all([
+    dataPanel({title:'Skills',url:'/api/skills',pid,arrKeys:['skills','items','data'],cols:[{label:'Role',key:'agent_role',fmt:(v,r)=>esc(v||r.role||'')},{label:'Skill',key:'skill_type',fmt:(v,r)=>esc(v||r.type||'')},{label:'Proficiency',key:'proficiency',cls:'num',fmt:v=>esc(v==null?'':v)},{label:'Tasks',key:'tasks_completed',cls:'num',fmt:v=>num(+v||0)},{label:'Success',key:'success_rate',cls:'num',fmt:v=>v==null?'':(Math.round(v<=1?v*100:v)+'%')}],empty:'No skills tracked yet'}),
+    dataPanel({title:'Error clusters',url:'/api/v2/learning/error-clusters',pid,arrKeys:['error_clusters','clusters','items','data'],cols:[{label:'Message',key:'message',fmt:v=>esc(String(v||'').slice(0,70))},{label:'Count',key:'count',cls:'num',fmt:v=>num(+v||0)},{label:'Agent',key:'agent',fmt:v=>esc(v||'')},{label:'Suggested fix',key:'suggested_fix',fmt:v=>esc(String(v||'').slice(0,60))}],empty:'No recurring errors'}),
+    dataPanel({title:'Autonomous discoveries',url:'/api/v2/autonomous/discoveries',pid,arrKeys:['discoveries','items','data'],cols:[{label:'Type',key:'type',fmt:v=>esc(v||'')},{label:'Title',key:'title',fmt:v=>esc(v||'')},{label:'Agent',key:'agent',fmt:v=>esc(v||'')},{label:'When',key:'created_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No discoveries yet'}),
+    dataPanel({title:'Task decompositions',url:'/api/v2/autonomous/decompositions',pid,arrKeys:['decompositions','items','data'],cols:[{label:'Task',key:'task_id',cls:'mono',fmt:v=>esc(v||'')},{label:'Title',key:'title',fmt:v=>esc(v||'')},{label:'Subtasks',key:'subtask_count',cls:'num',fmt:(v,r)=>num(v!=null?v:(Array.isArray(r.subtasks)?r.subtasks.length:0))},{label:'Status',key:'status',fmt:v=>esc(v||'')}],empty:'No decompositions'}),
+  ]);
+  c.innerHTML=panels.join('');
+}
+async function renderInsPlanning(c,pid){
+  const panels=await Promise.all([
+    dataPanel({title:'Standups',url:'/api/v2/coordination/standups',pid,arrKeys:['standups','items','data'],cols:[{label:'Agent',key:'agent',fmt:(v,r)=>esc(v||r.agent_role||'')},{label:'Working on',key:'in_progress',fmt:(v,r)=>esc(String(v||r.working_on||'').slice(0,50))},{label:'Blocked',key:'blocked',fmt:(v,r)=>esc(String(v||r.blockers||'').slice(0,40))},{label:'When',key:'created_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No standups reported'}),
+    dataPanel({title:'Scope flags',url:'/api/v2/planning/scope-flags',pid,arrKeys:['scope_flags','flags','items','data'],cols:[{label:'Severity',key:'severity',fmt:v=>esc(v||'')},{label:'Task',key:'task_id',cls:'mono',fmt:v=>esc(v||'')},{label:'Type',key:'flag_type',fmt:v=>esc(v||'')},{label:'Description',key:'description',fmt:v=>esc(String(v||'').slice(0,60))}],empty:'No scope flags'}),
+    dataPanel({title:'File locks',url:'/api/v2/coordination/locks',pid,arrKeys:['locks','items','data'],cols:[{label:'File',key:'file',cls:'mono',fmt:v=>esc(v||'')},{label:'Locked by',key:'locked_by',fmt:v=>esc(v||'')},{label:'Type',key:'lock_type',fmt:v=>esc(v||'')},{label:'Acquired',key:'acquired_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No active locks'}),
+    dataPanel({title:'Heartbeats',url:'/api/v2/coordination/heartbeats',pid,arrKeys:['heartbeats','items','data'],cols:[{label:'Agent',key:'agent',fmt:v=>esc(v||'')},{label:'Task',key:'task_id',cls:'mono',fmt:v=>esc(v||'')},{label:'Status',key:'status',fmt:v=>esc(v||'')},{label:'Progress',key:'progress',cls:'num',fmt:v=>v==null?'':(v+'%')},{label:'Updated',key:'updated_at',cls:'mono',fmt:v=>esc(agoText(v))}],empty:'No heartbeats'}),
+    dataPanel({title:'Bottlenecks',url:'/api/v2/observability/bottlenecks',pid,arrKeys:['bottlenecks','items','data'],cols:[{label:'Type',key:'bottleneck_type',fmt:(v,r)=>esc(v||r.type||'')},{label:'Severity',key:'severity',fmt:v=>esc(v||'')},{label:'Location',key:'location',fmt:(v,r)=>esc(v||r.bottleneck_location||'')}],empty:'No bottlenecks detected'}),
+  ]);
+  c.innerHTML=panels.join('');
+}
+async function renderSetAgents(c,pid){
+  let roles=[],agents=[],paused={},inter={};
+  [roles,agents,paused,inter]=await Promise.all([
+    pFetch('/api/settings/roles',pid).catch(()=>[]),
+    pFetch('/api/agents',pid).catch(()=>[]),
+    pFetch('/api/agents/paused',pid).catch(()=>({})),
+    pFetch('/api/interactions/pending',pid).catch(()=>({})),
+  ]);
+  const rArr=Array.isArray(roles)?roles:asArr(roles,['roles','items']);
+  const aArr=Array.isArray(agents)?agents:asArr(agents,['agents']);
+  const pausedRoles=(paused&&paused.paused_roles)||asArr(paused,['paused_roles']);
+  const interArr=(inter&&inter.interactions)||asArr(inter,['interactions','items']);
+  let html=`<div class="set-card"><h3>Approvals needed <span class="pill ${interArr.length?'a':'g'}">${interArr.length}</span></h3><div class="sub">Agent actions waiting on your decision.</div>`;
+  if(!interArr.length)html+=insEmpty('All clear','No pending approvals.');
+  else html+=interArr.map(i=>{const id=i.request_key||i.id||i.request_id||'';return `<div class="set-row"><div><div class="srl">${esc(i.request_type||'Approval')}</div><div class="srs">${esc(i.task_id||'')} · ${esc(String(i.detail||i.description||i.request_key||'').slice(0,80))}</div></div><div class="right"><button class="act-btn" onclick="interAct('${esc(id)}','reject')">Reject</button><button class="act-btn pri" onclick="interAct('${esc(id)}','approve')">Approve</button></div></div>`;}).join('');
+  html+='</div>';
+  html+=`<div class="set-card"><h3>Roles <span class="pill">${rArr.length}</span></h3><div class="sub">Configured agent roles for this project.</div>`;
+  if(!rArr.length)html+=insEmpty('No roles','This project has no configured roles.');
+  else html+=rArr.map(r=>{const name=r.name||r.role||r.display_name||'';const live=aArr.filter(a=>String(a.role||'').toLowerCase()===String(name).toLowerCase());const isPaused=pausedRoles.indexOf(name)>=0||pausedRoles.indexOf('all')>=0;return `<div class="set-row"><div><div class="srl">${esc(r.display_name||name)}</div><div class="srs">${esc(r.model||'default model')} · max ${esc(r.max_instances!=null?r.max_instances:'—')} · ${live.length} live</div></div><div class="right">${isPaused?`<button class="act-btn" onclick="roleCtl('${esc(name)}','resume')">Resume</button>`:`<button class="act-btn" onclick="roleCtl('${esc(name)}','pause')">Pause</button>`}</div></div>`;}).join('');
+  html+='</div>';
+  c.innerHTML=html;
+}
+async function interAct(id,act){if(!id)return;try{const r=await fetch('/api/interactions/'+encodeURIComponent(id)+'/'+act,{method:'POST',headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},body:'{}'});if(!r.ok)throw new Error('HTTP '+r.status);renderSettings();}catch(e){alert('Failed: '+e.message);}}
+async function roleCtl(role,act){try{const r=await fetch('/api/agents/'+act,{method:'POST',headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},body:JSON.stringify({role})});if(!r.ok)throw new Error('HTTP '+r.status);renderSettings();}catch(e){alert('Failed: '+e.message);}}
+async function renderSetPipeline(c,pid){
+  let nodes={},edges={};
+  [nodes,edges]=await Promise.all([
+    pFetch('/api/pipeline',pid).catch(()=>({})),
+    pFetch('/api/pipeline/edges',pid).catch(()=>({})),
+  ]);
+  const nArr=Array.isArray(nodes)?nodes:asArr(nodes,['nodes','pipeline','items']);
+  const eArr=Array.isArray(edges)?edges:asArr(edges,['edges','items']);
+  const lst=v=>Array.isArray(v)?v.join(', '):(v||'');
+  let html=`<div class="set-card"><h3>Pipeline nodes <span class="pill">${nArr.length}</span></h3><div class="sub">Roles in this project's pipeline.</div>`;
+  if(!nArr.length)html+=insEmpty('No pipeline','No pipeline configured for this project.');
+  else html+=`<table class="dtable"><thead><tr><th>Node</th><th>Role</th><th>Produces</th><th>Accepts</th></tr></thead><tbody>${nArr.map(n=>`<tr><td>${esc(n.name||n.id||n.role||'')}</td><td>${esc(n.role||'')}</td><td class="mono">${esc(lst(n.produces))}</td><td class="mono">${esc(lst(n.accepts))}</td></tr>`).join('')}</tbody></table>`;
+  html+='</div>';
+  html+=`<div class="set-card"><h3>Edges <span class="pill">${eArr.length}</span></h3>`;
+  if(!eArr.length)html+=insEmpty('No edges','No pipeline edges defined.');
+  else html+=`<table class="dtable"><thead><tr><th>From</th><th>To</th><th>Artifact</th></tr></thead><tbody>${eArr.map(e=>`<tr><td>${esc(e.from||e.source||e.from_role||'')}</td><td>${esc(e.to||e.target||e.to_role||'')}</td><td class="mono">${esc(e.artifact||e.artifact_type||e.type||'')}</td></tr>`).join('')}</tbody></table>`;
+  html+=`</div><div class="ins-bar"><div class="grow"></div><a class="btn-s" href="/settings?project=${encodeURIComponent(pid)}">Open pipeline editor ↗</a></div>`;
+  c.innerHTML=html;
+}
+async function renderSetGeneral(c,pid){
+  let team={};try{team=await pFetch('/api/settings/team',pid);}catch(e){team={};}
+  const t=(team&&team.team)?team.team:(team||{});
+  const tg=(k,label,desc)=>{const on=!!t[k];return `<div class="set-row"><div><div class="srl">${esc(label)}</div><div class="srs">${esc(desc)}</div></div><div class="right"><div class="tg ${on?'on':''}" id="tg-${k}" onclick="this.classList.toggle('on')"></div></div></div>`;};
+  c.innerHTML=`<div class="set-card"><h3>Team settings</h3><div class="sub">Project-wide configuration.</div>
+    <div class="set-row"><div><div class="srl">Project name</div></div><div class="right"><input class="set-in" id="set-name" value="${esc(t.name||'')}"></div></div>
+    ${tg('auth_enabled','Authentication','Require auth for the dashboard and API.')}
+    ${tg('cost_budgets_enabled','Cost budgets','Enforce per-project spend limits.')}
+    ${tg('webhooks_enabled','Webhooks','Emit lifecycle events to subscribers.')}
+    <div class="set-row"><div class="grow"></div><div class="right"><button class="tb-primary" onclick="saveTeam()">Save settings</button></div></div>
+  </div>
+  <div class="set-card"><h3>Advanced</h3><div class="sub">Model defaults, role editing, budgets and the pipeline node editor live in the classic settings page.</div><div class="ins-bar"><div class="grow"></div><a class="btn-s" href="/settings?project=${encodeURIComponent(pid)}">Open classic settings ↗</a></div></div>`;
+}
+async function saveTeam(){
+  const g=(k)=>{const el=$('tg-'+k);return !!(el&&el.classList.contains('on'));};
+  const body={name:($('set-name')||{}).value||'',auth_enabled:g('auth_enabled'),cost_budgets_enabled:g('cost_budgets_enabled'),webhooks_enabled:g('webhooks_enabled')};
+  try{const r=await fetch('/api/settings/team',{method:'PUT',headers:{'Content-Type':'application/json','X-Taskbrew-Project':consoleProject},body:JSON.stringify(body)});if(!r.ok)throw new Error('HTTP '+r.status);alert('Settings saved.');}catch(e){alert('Could not save: '+e.message);}
+}
 function focusGoal(){go('home');const g=$('goalInput');if(g&&!g.disabled){g.focus();g.scrollIntoView({behavior:'smooth',block:'center'});}}
 function focusGoalConsole(){focusGoal();}
 
@@ -509,6 +823,29 @@ async function submitGoal(){
   finally{btn.style.pointerEvents='auto';btn.textContent='Start →';}
 }
 
+/* ---------- new project ---------- */
+function openNewProject(){$('np-err').style.display='none';$('np-name').value='';$('np-dir').value='';$('np-overlay').classList.add('on');setTimeout(()=>{const n=$('np-name');if(n)n.focus();},30);}
+function closeNewProject(){$('np-overlay').classList.remove('on');}
+async function browseNewProjectDir(){
+  try{const r=await fetch('/api/browse-directory',{method:'POST'});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();if(d&&d.path)$('np-dir').value=d.path;}
+  catch(e){/* native picker is macOS-only; the user can type the path manually */}
+}
+async function submitNewProject(){
+  const name=($('np-name').value||'').trim();const directory=($('np-dir').value||'').trim();const cli=$('np-cli').value||'codex';
+  const err=$('np-err'),btn=$('np-submit');
+  if(!name){err.textContent='Project name is required.';err.style.display='block';return;}
+  if(!directory){err.textContent='Project directory is required.';err.style.display='block';return;}
+  err.style.display='none';btn.style.pointerEvents='none';btn.textContent='Creating…';
+  try{
+    const r=await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,directory,with_defaults:true,cli_provider:cli})});
+    if(!r.ok){let m='HTTP '+r.status;try{const j=await r.json();if(j&&j.detail)m=j.detail;}catch(_){}throw new Error(m);}
+    const proj=await r.json();
+    closeNewProject();await refresh();
+    if(proj&&proj.id)openProj(proj.id);
+  }catch(e){err.textContent=e.message||'Could not create project.';err.style.display='block';}
+  finally{btn.style.pointerEvents='auto';btn.textContent='Create project →';}
+}
+
 /* ---------- websocket ---------- */
 function connectWS(){try{const proto=location.protocol==='https:'?'wss:':'ws:';ws=new WebSocket(`${proto}//${location.host}/ws`);
   ws.onopen=()=>{wsRetry=0;};
@@ -519,12 +856,16 @@ function connectWS(){try{const proto=location.protocol==='https:'?'wss:':'ws:';w
 function scheduleRefresh(){if(refreshScheduled)return;refreshScheduled=true;setTimeout(()=>{refreshScheduled=false;refresh();},900);}
 
 /* ---------- refresh ---------- */
-async function refresh(){await loadStatus();await loadProjects();await loadSummary();if(STATE.status&&STATE.status.active){await loadActiveData();}else{STATE.paused=[];}renderAll();}
+async function refresh(){await loadStatus();await loadProjects();await loadSummary();if(curView==='console'&&consoleProject){await loadProjectData(consoleProject);}else if(curView!=='insights'&&curView!=='settings-v'&&STATE.status&&STATE.status.active){await loadActiveData();}else{STATE.paused=[];}renderAll();}
 async function init(){
   try{await refresh();}catch(e){$('home-digest').innerHTML=`<span class="d">Could not load workspace: ${esc(e.message)}</span>`;}
+  // Deep link: /home?project=<id>[&ins=<section>|&set=<section>] opens that
+  // project's detail / insights / settings view directly.
+  try{const sp=new URLSearchParams(location.search);const pid=sp.get('project');if(pid){openProj(pid);const ins=sp.get('ins'),set=sp.get('set');if(ins)openInsights(ins);else if(set)openSettings(set);}}catch(e){}
   connectWS();
   setInterval(()=>{if(document.visibilityState==='visible')refresh();},30000);
   document.addEventListener('keydown',(e)=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();focusGoal();}});
+  window.addEventListener('popstate',()=>{try{const sp=new URLSearchParams(location.search);const pid=sp.get('project');if(pid){openProj(pid);const ins=sp.get('ins'),set=sp.get('set');if(ins)openInsights(ins);else if(set)openSettings(set);}else{go('home');}}catch(e){}});
 }
 init();
 </script>
