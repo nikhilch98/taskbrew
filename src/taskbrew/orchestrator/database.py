@@ -220,6 +220,19 @@ CREATE TABLE IF NOT EXISTS task_usage (
     recorded_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS compression_savings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT,
+    agent_id TEXT,
+    sink TEXT,
+    model TEXT DEFAULT '',
+    tokens_before INTEGER DEFAULT 0,
+    tokens_after INTEGER DEFAULT 0,
+    tokens_saved INTEGER DEFAULT 0,
+    transforms TEXT DEFAULT '',
+    recorded_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS approvals (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id),
@@ -813,6 +826,43 @@ class Database:
             (since,),
         )
         return dict(row) if row else {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0, "duration_api_ms": 0, "num_turns": 0, "tasks_completed": 0}
+
+    # ------------------------------------------------------------------
+    # Context-compression savings (Headroom)
+    # ------------------------------------------------------------------
+
+    async def record_compression_saving(
+        self, *, task_id: str, agent_id: str, sink: str, model: str = "",
+        tokens_before: int = 0, tokens_after: int = 0, tokens_saved: int = 0,
+        transforms: str = "",
+    ) -> None:
+        """Persist a single context-compression event for dashboard reporting."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self.execute(
+            "INSERT INTO compression_savings (task_id, agent_id, sink, model, "
+            "tokens_before, tokens_after, tokens_saved, transforms, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, agent_id, sink, model, tokens_before, tokens_after,
+             tokens_saved, transforms, now),
+        )
+
+    async def get_compression_summary(self, since: str) -> dict:
+        """Aggregate compression savings recorded at or after *since*."""
+        row = await self.execute_fetchone(
+            "SELECT COALESCE(SUM(tokens_before), 0) as tokens_before, "
+            "COALESCE(SUM(tokens_after), 0) as tokens_after, "
+            "COALESCE(SUM(tokens_saved), 0) as tokens_saved, "
+            "COUNT(*) as events "
+            "FROM compression_savings WHERE recorded_at >= ?",
+            (since,),
+        )
+        summary = dict(row) if row else {
+            "tokens_before": 0, "tokens_after": 0, "tokens_saved": 0, "events": 0,
+        }
+        before = summary.get("tokens_before") or 0
+        saved = summary.get("tokens_saved") or 0
+        summary["ratio"] = round(saved / before, 4) if before else 0.0
+        return summary
 
     # ------------------------------------------------------------------
     # Notifications

@@ -77,6 +77,47 @@ async def agent_performance_summary(days: int = Query(30, ge=1, le=365)):
 
 
 # ------------------------------------------------------------------
+# Context-compression savings (Headroom)
+# ------------------------------------------------------------------
+
+
+@router.get("/api/analytics/compression")
+async def compression_savings(days: int = Query(30, ge=1, le=365)):
+    """Context-compression token savings: totals, per-sink, and daily trend."""
+    orch = get_orch()
+    db = orch.task_board._db
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    totals = await db.get_compression_summary(cutoff)
+
+    by_sink = await db.execute_fetchall(
+        "SELECT sink, COUNT(*) as events, "
+        "  COALESCE(SUM(tokens_before), 0) as tokens_before, "
+        "  COALESCE(SUM(tokens_after), 0) as tokens_after, "
+        "  COALESCE(SUM(tokens_saved), 0) as tokens_saved "
+        "FROM compression_savings WHERE recorded_at >= ? "
+        "GROUP BY sink ORDER BY tokens_saved DESC",
+        (cutoff,),
+    )
+
+    daily = await db.execute_fetchall(
+        "SELECT DATE(recorded_at) as day, "
+        "  COALESCE(SUM(tokens_saved), 0) as tokens_saved, "
+        "  COUNT(*) as events "
+        "FROM compression_savings WHERE recorded_at >= ? "
+        "GROUP BY DATE(recorded_at) ORDER BY day",
+        (cutoff,),
+    )
+
+    return {
+        "days": days,
+        "totals": totals,
+        "by_sink": [dict(r) for r in by_sink],
+        "daily": [dict(r) for r in daily],
+    }
+
+
+# ------------------------------------------------------------------
 # Agent Detail
 # ------------------------------------------------------------------
 

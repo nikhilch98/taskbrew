@@ -1047,6 +1047,11 @@
                 <div class="kpi-value" id="kpiAgents">0</div>
                 <div class="kpi-sub">currently working</div>
             </div>
+            <div class="kpi-card accent-emerald">
+                <div class="kpi-label">Tokens Saved</div>
+                <div class="kpi-value" id="kpiSaved">0</div>
+                <div class="kpi-sub" id="kpiSavedSub">compression</div>
+            </div>
         </div>
 
         <!-- Section 2: Cost & Tokens -->
@@ -2013,13 +2018,28 @@
             }
         }
 
+        function updateCompressionKPI(data) {
+            var totals = (data && data.totals) || {};
+            var saved = totals.tokens_saved || 0;
+            var ratio = totals.ratio || 0;
+            var el = document.getElementById('kpiSaved');
+            if (el) el.textContent = Number(saved).toLocaleString();
+            var sub = document.getElementById('kpiSavedSub');
+            if (sub) {
+                sub.textContent = saved > 0
+                    ? (ratio * 100).toFixed(0) + '% of compressed'
+                    : 'compression';
+            }
+        }
+
         async function loadAll() {
             var results = await Promise.all([
                 fetchJSON('/api/metrics/timeseries?range=' + currentRange + '&granularity=' + currentGranularity),
                 fetchJSON('/api/metrics/roles'),
                 fetchJSON('/api/metrics/agents?top=10'),
                 fetchJSON('/api/metrics/failures?limit=20'),
-                fetchJSON('/api/agents')
+                fetchJSON('/api/agents'),
+                fetchJSON('/api/analytics/compression?days=30')
             ]);
 
             var timeseries = results[0] || { usage: [], tasks: [], status_totals: {} };
@@ -2027,8 +2047,10 @@
             var agents = results[2] || [];
             var failures = results[3] || [];
             var liveAgents = results[4] || [];
+            var compression = results[5] || { totals: {} };
 
             updateKPIs(timeseries, roles, agents, liveAgents);
+            updateCompressionKPI(compression);
             buildCostChart(timeseries);
             buildTokenChart(timeseries);
             buildThroughputChart(timeseries);

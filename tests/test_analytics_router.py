@@ -65,6 +65,45 @@ async def _seed(app_client):
     return group, t1, t2
 
 
+class TestCompressionSavings:
+    async def test_empty(self, app_client):
+        resp = await app_client["client"].get("/api/analytics/compression")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["totals"]["tokens_saved"] == 0
+        assert data["totals"]["ratio"] == 0.0
+        assert data["by_sink"] == []
+        assert data["daily"] == []
+
+    async def test_with_data(self, app_client):
+        db = app_client["db"]
+        await db.record_compression_saving(
+            task_id="CD-001", agent_id="coder-1", sink="parent_output",
+            model="claude", tokens_before=1000, tokens_after=200,
+            tokens_saved=800, transforms="router:smart_crusher",
+        )
+        await db.record_compression_saving(
+            task_id="CD-002", agent_id="coder-1", sink="parent_output",
+            model="claude", tokens_before=500, tokens_after=100,
+            tokens_saved=400, transforms="router:log",
+        )
+        resp = await app_client["client"].get("/api/analytics/compression?days=30")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["totals"]["tokens_before"] == 1500
+        assert data["totals"]["tokens_saved"] == 1200
+        assert data["totals"]["events"] == 2
+        assert round(data["totals"]["ratio"], 4) == round(1200 / 1500, 4)
+        sinks = {s["sink"]: s for s in data["by_sink"]}
+        assert sinks["parent_output"]["tokens_saved"] == 1200
+        assert sinks["parent_output"]["events"] == 2
+        assert len(data["daily"]) >= 1
+
+    async def test_days_param_validation(self, app_client):
+        resp = await app_client["client"].get("/api/analytics/compression?days=0")
+        assert resp.status_code == 422
+
+
 class TestAgentPerformanceSummary:
     async def test_empty(self, app_client):
         resp = await app_client["client"].get("/api/analytics/agents")

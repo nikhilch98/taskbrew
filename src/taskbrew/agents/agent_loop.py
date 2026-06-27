@@ -265,17 +265,30 @@ class AgentLoop:
                         parent["output_text"],
                         model=getattr(self.role_config, "model", None),
                     )
-                    if _comp is not None and self.event_bus is not None:
-                        await self.event_bus.emit("context.compressed", {
-                            "agent_id": self.instance_id,
-                            "sink": "parent_output",
-                            "task_id": task["id"],
-                            "tokens_before": _comp.tokens_before,
-                            "tokens_after": _comp.tokens_after,
-                            "tokens_saved": _comp.tokens_saved,
-                            "ratio": round(_comp.ratio, 3),
-                            "transforms": _comp.transforms,
-                        })
+                    if _comp is not None:
+                        # Persist for the dashboard savings view, then emit
+                        # for live WebSocket consumers.
+                        await self.board._db.record_compression_saving(
+                            task_id=task["id"],
+                            agent_id=self.instance_id,
+                            sink="parent_output",
+                            model=getattr(self.role_config, "model", "") or "",
+                            tokens_before=_comp.tokens_before,
+                            tokens_after=_comp.tokens_after,
+                            tokens_saved=_comp.tokens_saved,
+                            transforms=",".join(_comp.transforms),
+                        )
+                        if self.event_bus is not None:
+                            await self.event_bus.emit("context.compressed", {
+                                "agent_id": self.instance_id,
+                                "sink": "parent_output",
+                                "task_id": task["id"],
+                                "tokens_before": _comp.tokens_before,
+                                "tokens_after": _comp.tokens_after,
+                                "tokens_saved": _comp.tokens_saved,
+                                "ratio": round(_comp.ratio, 3),
+                                "transforms": _comp.transforms,
+                            })
                     parts.append(
                         f"\n### Parent Output:\n{parent_output}"
                     )
