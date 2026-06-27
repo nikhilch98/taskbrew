@@ -33,17 +33,17 @@ dependencies = [
     "pyyaml>=6.0",
     "websockets>=14.0",
     "python-dotenv>=1.0.0",
+    # Bundled context-compression layer. Pinned, lightweight (core
+    # SmartCrusher/JSON + CacheAligner, no torch), and ships a prebuilt
+    # wheel on Linux/Windows/macOS-arm so installs need no Rust toolchain.
+    # Used automatically and on by default; opt out at runtime with
+    # TASKBREW_COMPRESSION=0. Lazy-imported and fail-safe in
+    # taskbrew.intelligence.compression, so a missing/broken import only
+    # degrades to passthrough rather than breaking the orchestrator.
+    "headroom-ai==0.27.0",
 ]
 
 [project.optional-dependencies]
-# Optional context-compression layer (Headroom). Pinned and lightweight:
-# the core SmartCrusher/JSON + CacheAligner path needs no torch and runs
-# from the prebuilt wheel. Quarantined behind a feature flag + lazy import
-# in taskbrew.intelligence.compression, so the system runs unchanged when
-# this extra is not installed.
-compression = [
-    "headroom-ai==0.27.0",
-]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",

@@ -572,10 +572,17 @@ async def test_send_handles_network_exception(wh_mgr: WebhookManager):
 # ------------------------------------------------------------------
 
 
-async def test_start_without_aiohttp_is_noop(wh_mgr: WebhookManager):
-    """start() is a no-op when aiohttp is not installed."""
+async def test_start_without_aiohttp_is_noop(wh_mgr: WebhookManager, monkeypatch):
+    """start() is a no-op when aiohttp is not installed.
+
+    Simulate aiohttp's absence by patching the module flag rather than
+    relying on it being missing from the env (it is now a transitive
+    dependency, so the previous env assumption no longer holds).
+    """
+    from taskbrew.orchestrator import webhook_manager as wm
+
+    monkeypatch.setattr(wm, "_HAS_AIOHTTP", False)
     await wh_mgr.start()
-    # aiohttp is not installed in the test env, so session stays None
     assert wh_mgr._session is None
 
 

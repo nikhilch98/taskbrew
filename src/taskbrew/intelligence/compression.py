@@ -1,16 +1,17 @@
 """Optional context compression via Headroom (lazy, flag-gated, fail-safe).
 
-Thin adapter around the optional ``headroom-ai`` dependency (declared as the
-``[compression]`` extra in ``pyproject.toml``, pinned to a known version). It is
-**disabled by default** and only engages when BOTH:
-
-  * the ``TASKBREW_COMPRESSION`` env var is truthy (``1``/``true``/``yes``/``on``), and
-  * the ``headroom`` package is importable.
+Thin adapter around the bundled ``headroom-ai`` dependency (a pinned core
+dependency in ``pyproject.toml``, so it ships with taskbrew — no separate
+install). It is **enabled by default** and engages whenever the ``headroom``
+package is importable. Because it is fully fail-safe (see below), default-on is
+safe: if the import is ever unavailable (e.g. an unsupported platform where the
+wheel did not load) it is simply a no-op. Operators opt out explicitly with
+``TASKBREW_COMPRESSION=0`` (or ``false``/``no``/``off``).
 
 When disabled, unavailable, the input is too small, savings are non-positive, or
 anything raises, every entry point returns the input **unchanged**. The
-orchestrator therefore behaves identically with or without the dependency
-installed — the dependency is genuinely optional.
+orchestrator therefore behaves identically whether or not the dependency loads
+— it is used automatically when present and degrades to passthrough otherwise.
 
 With the lightweight pinned install (``headroom-ai`` core only, no ``[ml]``
 extra), Headroom runs *structural* compression (SmartCrusher/JSON + CacheAligner)
@@ -19,7 +20,7 @@ repetitive tool-output dumps, which is exactly where assembled agent context
 bloats. Installing the ``[ml]`` extra additionally enables prose compression.
 
 Env knobs:
-  * ``TASKBREW_COMPRESSION``           — enable flag (default off)
+  * ``TASKBREW_COMPRESSION``           — set to a falsy value to opt out (default on)
   * ``TASKBREW_COMPRESSION_MIN_CHARS`` — skip blobs smaller than this (default 2000)
   * ``TASKBREW_COMPRESSION_MODEL``     — model name for token counting (default sonnet)
 """
@@ -43,8 +44,17 @@ _compress_fn: Callable[..., Any] | None | bool = False
 
 
 def is_enabled() -> bool:
-    """True when the operator has opted into compression via env flag."""
-    return os.environ.get("TASKBREW_COMPRESSION", "").strip().lower() in _TRUTHY
+    """True unless the operator has explicitly opted out.
+
+    On by default: an unset ``TASKBREW_COMPRESSION`` enables compression. Any
+    set value is honoured literally (truthy enables, anything else disables),
+    so ``TASKBREW_COMPRESSION=0`` turns it off. Safe as a default because the
+    adapter no-ops when the headroom dependency is absent.
+    """
+    val = os.environ.get("TASKBREW_COMPRESSION")
+    if val is None:
+        return True
+    return val.strip().lower() in _TRUTHY
 
 
 def _min_chars() -> int:

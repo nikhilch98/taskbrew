@@ -178,11 +178,11 @@ class AgentRunner:
         options = self.build_options(cwd=cwd)
         result_text = ""
 
-        # Optional semantic compression (Headroom) before the hard trim.
-        # Disabled by default and fully fail-safe: a no-op unless
-        # TASKBREW_COMPRESSION is set and the optional dependency is
-        # installed. Runs at this single provider-agnostic chokepoint so
-        # Claude/Codex/Gemini all benefit. See intelligence.compression.
+        # Semantic compression (Headroom) before the hard trim. Bundled and
+        # on by default, fully fail-safe: degrades to a no-op if the headroom
+        # import is unavailable (opt out with TASKBREW_COMPRESSION=0). Runs at
+        # this single provider-agnostic chokepoint so Claude/Codex/Gemini all
+        # benefit. See intelligence.compression.
         prompt, _comp = await compress_text_async(prompt, model=self.config.model)
         if _comp is not None and self.event_bus is not None:
             await self.event_bus.emit("context.compressed", {

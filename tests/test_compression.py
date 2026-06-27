@@ -34,16 +34,30 @@ def enabled(monkeypatch):
     yield
 
 
-def test_disabled_by_default_is_passthrough(monkeypatch):
-    monkeypatch.delenv("TASKBREW_COMPRESSION", raising=False)
-    # Even if a compressor exists, disabled => untouched and never invoked.
+def test_explicit_opt_out_is_passthrough(monkeypatch):
+    monkeypatch.setenv("TASKBREW_COMPRESSION", "0")
+    # Even if a compressor exists, opted-out => untouched and never invoked.
     monkeypatch.setattr(
-        compression, "_load_compress", lambda: pytest.fail("should not load when disabled")
+        compression, "_load_compress", lambda: pytest.fail("should not load when opted out")
     )
     text = "x" * 5000
     out, stats = compression.compress_text(text)
     assert out == text
     assert stats is None
+
+
+def test_enabled_by_default_when_unset(monkeypatch):
+    # Unset env => on by default; with a compressor present it compresses.
+    monkeypatch.delenv("TASKBREW_COMPRESSION", raising=False)
+    monkeypatch.setenv("TASKBREW_COMPRESSION_MIN_CHARS", "0")
+    monkeypatch.setattr(
+        compression,
+        "_load_compress",
+        lambda: (lambda m, **k: _fake_result("TINY", before=500, after=50)),
+    )
+    out, stats = compression.compress_text("some context " * 100)
+    assert out == "TINY"
+    assert stats is not None and stats.tokens_saved == 450
 
 
 def test_enabled_compresses(enabled, monkeypatch):
@@ -129,7 +143,7 @@ def test_non_string_content_falls_back(enabled, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_async_wrapper_disabled_skips_thread(monkeypatch):
-    monkeypatch.delenv("TASKBREW_COMPRESSION", raising=False)
+    monkeypatch.setenv("TASKBREW_COMPRESSION", "0")
     out, stats = await compression.compress_text_async("hello")
     assert out == "hello"
     assert stats is None
@@ -148,6 +162,9 @@ async def test_async_wrapper_compresses(enabled, monkeypatch):
 
 
 def test_is_enabled_reads_env(monkeypatch):
+    # Unset => on by default.
+    monkeypatch.delenv("TASKBREW_COMPRESSION", raising=False)
+    assert compression.is_enabled() is True
     for val in ("1", "true", "YES", "On"):
         monkeypatch.setenv("TASKBREW_COMPRESSION", val)
         assert compression.is_enabled() is True
