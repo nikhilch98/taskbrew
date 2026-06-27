@@ -2191,7 +2191,6 @@
         const CONTEXT_OPTIONS = ['parent_artifact', 'root_artifact', 'sibling_summary', 'rejection_history'];
         const SYSTEM_PROVIDER_DEFAULT_MODELS = {
             claude: 'claude-sonnet-4-6',
-            gemini: 'gemini-3-flash-preview',
             codex: 'gpt-5.5'
         };
 
@@ -2213,7 +2212,6 @@
 
         function providerForModel(model) {
             model = model || '';
-            if (model.indexOf('gemini') === 0) return 'gemini';
             if (model.indexOf('gpt-') === 0 || /^o\d/.test(model) || model.indexOf('codex') === 0) return 'codex';
             return 'claude';
         }
@@ -2253,13 +2251,6 @@
                         { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', reasoning_efforts: ['low', 'medium', 'high', 'max'], default_reasoning_effort: 'high', reasoning_label: 'Effort' },
                         { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', reasoning_efforts: ['low', 'medium', 'high', 'max'], default_reasoning_effort: 'high', reasoning_label: 'Effort' },
                         { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5 Latest' }
-                    ],
-                    gemini: [
-                        { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', reasoning_label: 'Thinking' },
-                        { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', reasoning_label: 'Thinking' },
-                        { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', reasoning_efforts: ['minimal', 'low', 'medium', 'high'], default_reasoning_effort: 'medium', reasoning_label: 'Thinking' },
-                        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', reasoning_efforts: ['dynamic', 'low', 'medium', 'high'], default_reasoning_effort: 'dynamic', reasoning_label: 'Thinking' },
-                        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', reasoning_efforts: ['off', 'dynamic', 'low', 'medium', 'high'], default_reasoning_effort: 'dynamic', reasoning_label: 'Thinking' }
                     ],
                     codex: [
                         { id: 'gpt-5.5', name: 'GPT-5.5', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'xhigh', reasoning_label: 'Reasoning' },
@@ -2342,7 +2333,6 @@
                 '<div class="form-group"><label class="form-label" for="system-provider">Provider</label>' +
                 '<select class="form-select" id="system-provider" onchange="updateSystemAgentProvider(this.value)">' +
                 '<option value="claude"' + (profile.provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
-                '<option value="gemini"' + (profile.provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
                 '<option value="codex"' + (profile.provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
                 '</select></div>' +
                 '<div class="form-group"><label class="form-label" for="system-model">Model Version</label>' +
@@ -3428,7 +3418,6 @@
                 '<div class="form-group" role="group" aria-label="Provider selection for ' + r + '"><label class="form-label" for="provider-' + r + '">Provider</label>' +
                 '<select class="form-select" id="provider-' + r + '" onchange="updateRoleProvider(\'' + r + '\',this.value)">' +
                 '<option value="claude"' + (provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
-                '<option value="gemini"' + (provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
                 '<option value="codex"' + (provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
                 '</select></div>' +
                 '<div class="form-group" role="group" aria-label="Model selection for ' + r + '"><label class="form-label" for="model-' + r + '">Model Version</label>' +

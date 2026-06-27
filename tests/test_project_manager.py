@@ -331,17 +331,6 @@ class TestScaffolding:
         assert claude_coder["model"] == "claude-sonnet-4-6"
         assert claude_coder["reasoning_effort"] == "high"
 
-        gemini_dir = tmp_path / "gemini-defaults"
-        pm.create_project("Gemini Defaults", str(gemini_dir), cli_provider="gemini")
-        with open(gemini_dir / "config" / "roles" / "pm.yaml") as f:
-            gemini_pm = yaml.safe_load(f)
-        with open(gemini_dir / "config" / "roles" / "coder.yaml") as f:
-            gemini_coder = yaml.safe_load(f)
-        assert gemini_pm["model"] == "gemini-3-pro-preview"
-        assert gemini_pm["reasoning_effort"] == "high"
-        assert gemini_coder["model"] == "gemini-3-flash-preview"
-        assert gemini_coder["reasoning_effort"] == "medium"
-
         codex_dir = tmp_path / "codex-defaults"
         pm.create_project("Codex Defaults", str(codex_dir), cli_provider="codex")
         with open(codex_dir / "config" / "roles" / "coder.yaml") as f:
@@ -404,34 +393,6 @@ class TestScaffolding:
         assert pm_role["reasoning_effort"] == "xhigh"
         assert coder_role["model"] == "gpt-5.4-mini"
         assert coder_role["reasoning_effort"] == "low"
-
-    def test_system_agent_settings_override_scaffold_defaults(
-        self, pm: ProjectManager, tmp_path: Path
-    ):
-        d = tmp_path / "custom-system-agent"
-        pm.create_project(
-            "Custom System Agent",
-            str(d),
-            cli_provider="claude",
-            system_agent_settings={
-                "provider": "gemini",
-                "model": "gemini-3-pro-preview",
-                "reasoning_effort": "high",
-                "max_instances": 3,
-                "max_review_rounds": 0,
-            },
-        )
-
-        with open(d / "config" / "team.yaml") as f:
-            team_data = yaml.safe_load(f)
-
-        assert team_data["system_agent"] == {
-            "provider": "gemini",
-            "model": "gemini-3-pro-preview",
-            "reasoning_effort": "high",
-            "max_instances": 3,
-            "max_review_rounds": 0,
-        }
 
     def test_pm_routes_to_architect(
         self, pm: ProjectManager, tmp_path: Path

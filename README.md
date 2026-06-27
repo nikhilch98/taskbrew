@@ -2,7 +2,7 @@
   <h1 align="center">TaskBrew</h1>
   <p align="center">
     <strong>Multi-agent AI team orchestrator</strong><br>
-    Coordinate Claude Code, Gemini CLI, Codex CLI, and custom AI agents into collaborative development workflows.
+    Coordinate Claude Code, Codex CLI, and custom AI agents into collaborative development workflows.
   </p>
   <p align="center">
     <a href="https://pypi.org/project/taskbrew/"><img src="https://img.shields.io/pypi/v/taskbrew.svg" alt="PyPI"></a>
@@ -24,7 +24,7 @@
 
 TaskBrew turns AI coding agents into a coordinated software team. You define roles -- Product Manager, Architect, Coder, Verifier -- each with a system prompt, tools, and routing rules. TaskBrew handles the rest: task decomposition, dependency resolution, parallel execution, code review, and verification. Everything is driven by a shared task board backed by SQLite.
 
-Each agent runs as an independent loop that polls for work matching its role, executes using a real CLI provider (Claude Code, Gemini CLI, or Codex CLI), and routes results downstream. The PM decomposes goals into architecture tasks, the Architect produces implementation plans, Coders write code in isolated git worktrees, and Verifiers run tests and review the output. The entire pipeline is **config-driven** -- no Python code changes needed to add roles, swap providers, or wire in new MCP tool servers.
+Each agent runs as an independent loop that polls for work matching its role, executes using a real CLI provider (Claude Code or Codex CLI), and routes results downstream. The PM decomposes goals into architecture tasks, the Architect produces implementation plans, Coders write code in isolated git worktrees, and Verifiers run tests and review the output. The entire pipeline is **config-driven** -- no Python code changes needed to add roles, swap providers, or wire in new MCP tool servers.
 
 ### How it works
 
@@ -34,7 +34,7 @@ Each agent runs as an independent loop that polls for work matching its role, ex
        v
   +----+-----+     decomposes into      +--------------+
   |    PM     | ───────────────────────> |   Architect   |
-  |Opus 4.6   |     architecture tasks  |Gemini 3.1 Pro |
+  |Opus 4.6   |     architecture tasks  |Sonnet 4.6     |
   +----------+                           +------+-------+
                                                 |
                                       creates coder tasks
@@ -96,7 +96,7 @@ Each agent runs as an independent loop that polls for work matching its role, ex
 
 ### Agent System
 
-- **Multi-provider support** -- Built-in Claude Code SDK, Gemini CLI, and Codex CLI integration; add custom providers via YAML or Python
+- **Multi-provider support** -- Built-in Claude Code SDK and Codex CLI integration; add custom providers via YAML or Python
 - **Auto-scaling** -- Spawn/remove agent instances based on pending task queue depth, with configurable thresholds and cooldowns
 - **Git worktree isolation** -- Each Coder agent works in an isolated worktree on a feature branch, never touching the main checkout
 - **Heartbeat monitoring** -- Agents send heartbeats every 15s; stale agents are detected and their tasks recovered automatically
@@ -148,7 +148,7 @@ TaskBrew ships with 33 built-in intelligence modules that enhance agent behavior
 ### Prerequisites
 
 - Python 3.10+
-- At least one CLI agent installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Codex CLI](https://github.com/openai/codex)
+- At least one CLI agent installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex)
 
 > **Note:** No API keys are needed in your environment -- the CLI tools handle authentication themselves.
 
@@ -218,12 +218,12 @@ taskbrew status
               |         |               |         |
         +-----+---+  +-+-------+  +----+----+  +-+-------+
         |   PM    |  |Architect|  | Coder x3|  |Verifier |
-        |Opus 4.6 |  |Gemini   |  |Sonnet4.6|  |Opus 4.6 |
+        |Opus 4.6 |  |Sonnet4.6|  |Sonnet4.6|  |Opus 4.6 |
         +---------+  +---------+  +---------+  +---------+
               |         |               |         |
         +-----+---------+---------------+---------+-----+
         |           Provider Abstraction Layer           |
-        |     Claude SDK  |  Gemini CLI  |  Codex CLI   |
+        |          Claude SDK  |  Codex CLI          |
         +---------------------------------------------------+
 ```
 
@@ -354,7 +354,7 @@ Tool naming convention: `mcp__<server-name>__<tool-name>`.
 
 ### Add a CLI provider
 
-For providers beyond Claude, Gemini, and Codex, create a YAML config:
+For providers beyond Claude and Codex, create a YAML config:
 
 ```yaml
 # config/providers/ollama.yaml

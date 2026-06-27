@@ -63,7 +63,7 @@ mcp_servers: {}
 | `dashboard.host` | string | *required* | Bind address for the dashboard server |
 | `dashboard.port` | integer | *required* | Port for the dashboard server |
 | `artifacts.base_dir` | string | *required* | Directory for storing task artifacts |
-| `cli_provider` | string | `"claude"` | Default CLI provider (`"claude"` or `"gemini"`) |
+| `cli_provider` | string | `"claude"` | Default CLI provider (`"claude"` or `"codex"`) |
 | `defaults.max_instances` | integer | `1` | Default max agent instances per role |
 | `defaults.poll_interval_seconds` | integer | `5` | Seconds between task poll cycles |
 | `defaults.idle_timeout_minutes` | integer | `30` | Minutes before idle agents are considered stale |
@@ -198,7 +198,7 @@ Available context providers that can be listed in `context_includes`:
 ## Provider YAML
 
 Provider YAML files in `config/providers/` define CLI agent providers. Two
-built-in providers are included: `claude.yaml` and `gemini.yaml`.
+built-in providers are included: `claude.yaml` and `codex.yaml`.
 
 ### Example: claude.yaml
 
@@ -216,26 +216,23 @@ models:
     tier: fast
 ```
 
-### Example: gemini.yaml
+### Example: codex.yaml
 
 ```yaml
-name: gemini
-display_name: "Gemini CLI"
-binary: gemini
-detect_models: ["gemini-*"]
+name: codex
+display_name: "Codex CLI"
+binary: codex
+detect_models: ["codex-*", "o1*", "o3*", "o4*"]
 command_template:
   prompt_flag: "-p"
-  output_format_flag: "--output-format"
-  output_format_value: "stream-json"
-  model_flag: "-m"
-  auto_approve_flag: "-y"
+  model_flag: "--model"
+  auto_approve_flag: "--full-auto"
 output_parser: "stream-json"
-system_prompt_mode: "xml-inject"
 models:
-  - id: "gemini-3.1-pro-preview"
-    tier: flagship
-  - id: "gemini-3-flash-preview"
+  - id: "codex-mini-latest"
     tier: balanced
+  - id: "o4-mini"
+    tier: fast
 ```
 
 ### Field reference

@@ -6,7 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 
-PROVIDER_ORDER = ("claude", "gemini", "codex")
+PROVIDER_ORDER = ("claude", "codex")
 
 _COMMON_CODEX_REASONING = ["low", "medium", "high", "xhigh"]
 _CLAUDE_OPUS_47_REASONING = ["low", "medium", "high", "xhigh", "max"]
@@ -48,53 +48,6 @@ MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             "id": "claude-haiku-4-5-20251001",
             "label": "Pinned Fast",
             "name": "Claude Haiku 4.5",
-        },
-    ],
-    "gemini": [
-        {
-            "id": "gemini-3-pro-preview",
-            "label": "Flagship",
-            "name": "Gemini 3 Pro Preview",
-            "reasoning_label": "Thinking",
-            "reasoning_efforts": ["low", "high"],
-            "default_reasoning_effort": "high",
-            "thinking_config_type": "level",
-        },
-        {
-            "id": "gemini-3.1-pro-preview",
-            "label": "Preview",
-            "name": "Gemini 3.1 Pro Preview",
-            "reasoning_label": "Thinking",
-            "reasoning_efforts": ["low", "high"],
-            "default_reasoning_effort": "high",
-            "thinking_config_type": "level",
-        },
-        {
-            "id": "gemini-3-flash-preview",
-            "label": "Balanced",
-            "name": "Gemini 3 Flash Preview",
-            "reasoning_label": "Thinking",
-            "reasoning_efforts": ["minimal", "low", "medium", "high"],
-            "default_reasoning_effort": "medium",
-            "thinking_config_type": "level",
-        },
-        {
-            "id": "gemini-2.5-pro",
-            "label": "Previous Pro",
-            "name": "Gemini 2.5 Pro",
-            "reasoning_label": "Thinking",
-            "reasoning_efforts": ["dynamic", "low", "medium", "high"],
-            "default_reasoning_effort": "dynamic",
-            "thinking_config_type": "budget",
-        },
-        {
-            "id": "gemini-2.5-flash",
-            "label": "Previous Flash",
-            "name": "Gemini 2.5 Flash",
-            "reasoning_label": "Thinking",
-            "reasoning_efforts": ["off", "dynamic", "low", "medium", "high"],
-            "default_reasoning_effort": "dynamic",
-            "thinking_config_type": "budget",
         },
     ],
     "codex": [
@@ -162,11 +115,6 @@ _PROVIDER_ROLE_DEFAULTS: dict[str, dict[str, str]] = {
         "flagship": "claude-opus-4-7",
         "balanced": "claude-sonnet-4-6",
         "fast": "claude-haiku-4-5",
-    },
-    "gemini": {
-        "flagship": "gemini-3-pro-preview",
-        "balanced": "gemini-3-flash-preview",
-        "fast": "gemini-3-flash-preview",
     },
     "codex": {
         "flagship": "gpt-5.5",

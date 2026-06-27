@@ -336,34 +336,6 @@ class TestValidateRouting:
 class TestCliProvider:
     """Tests for cli_provider field in TeamConfig."""
 
-    TEAM_YAML_WITH_PROVIDER = dedent("""\
-        team_name: "Gemini Team"
-        cli_provider: "gemini"
-
-        database:
-          path: "data/gemini.db"
-
-        dashboard:
-          host: "0.0.0.0"
-          port: 8420
-
-        artifacts:
-          base_dir: "artifacts"
-
-        defaults:
-          max_instances: 1
-          poll_interval_seconds: 5
-          idle_timeout_minutes: 30
-          auto_scale:
-            enabled: false
-    """)
-
-    def test_cli_provider_parsed(self, tmp_path: Path) -> None:
-        cfg_file = tmp_path / "team.yaml"
-        cfg_file.write_text(self.TEAM_YAML_WITH_PROVIDER)
-        cfg = load_team_config(cfg_file)
-        assert cfg.cli_provider == "gemini"
-
     def test_cli_provider_defaults_to_codex(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "team.yaml"
         cfg_file.write_text(TEAM_YAML)
@@ -396,9 +368,9 @@ class TestSystemAgentConfig:
             enabled: false
 
         system_agent:
-          provider: "gemini"
-          model: "gemini-3-pro-preview"
-          reasoning_effort: "high"
+          provider: "codex"
+          model: "gpt-5.5"
+          reasoning_effort: "xhigh"
     """)
 
     TEAM_YAML_WITH_CODEX_DEFAULT = dedent("""\
@@ -422,17 +394,6 @@ class TestSystemAgentConfig:
           auto_scale:
             enabled: false
     """)
-
-    def test_system_agent_profile_parsed(self, tmp_path: Path) -> None:
-        cfg_file = tmp_path / "team.yaml"
-        cfg_file.write_text(self.TEAM_YAML_WITH_SYSTEM_AGENT)
-        cfg = load_team_config(cfg_file)
-
-        assert cfg.system_agent.provider == "gemini"
-        assert cfg.system_agent.model == "gemini-3-pro-preview"
-        assert cfg.system_agent.reasoning_effort == "high"
-        assert cfg.system_agent.max_instances == 1
-        assert cfg.system_agent.max_review_rounds == 3
 
     def test_system_agent_max_instances_parsed(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "team.yaml"

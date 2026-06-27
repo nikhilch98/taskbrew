@@ -30,7 +30,7 @@ connect, how tasks flow through the system, and how agents execute work.
               |              |              |
         +-----+----+  +-----+----+  +------+---+
         |AgentRunner|  |AgentRunner|  |AgentRunner|
-        |  (Claude) |  |  (Claude) |  | (Gemini) |
+        |  (Claude) |  |  (Claude) |  |  (Codex) |
         +-----------+  +-----------+  +----------+
 ```
 
@@ -175,7 +175,7 @@ Each `AgentLoop.run_once()` performs one cycle:
    - Learned conventions and error patterns
 
 4. **Execute**: The built context is passed to `AgentRunner.run()`, which
-   dispatches to the appropriate SDK (Claude or Gemini) via the provider
+   dispatches to the appropriate SDK (Claude or Codex) via the provider
    abstraction layer. A heartbeat loop runs in the background to keep the
    instance alive.
 
@@ -227,10 +227,10 @@ through a unified interface.
   AgentRunner
        |
        v
-  detect_provider(model) --> "claude" | "gemini" | custom
+  detect_provider(model) --> "claude" | "codex" | custom
        |
        v
-  build_sdk_options(provider, ...) --> ClaudeAgentOptions | GeminiOptions
+  build_sdk_options(provider, ...) --> ClaudeAgentOptions | CodexOptions
        |
        v
   sdk_query(prompt, options, provider) --> AsyncIterator[Message]
@@ -239,12 +239,12 @@ through a unified interface.
 ### Flow
 
 1. **Detection**: `detect_provider()` examines the model name. Models
-   starting with `claude-` route to the Claude SDK; models starting with
-   `gemini-` route to the Gemini CLI wrapper.
+   starting with `claude-` route to the Claude SDK; other models route
+   to the Codex CLI wrapper.
 
 2. **Options building**: `build_sdk_options()` creates provider-specific
    option objects. For Claude, this includes MCP server configs, allowed
-   tools, and permission mode. For Gemini, it sets the system prompt and
+   tools, and permission mode. For Codex, it sets the system prompt and
    model.
 
 3. **Query dispatch**: `sdk_query()` is an async generator that delegates to
@@ -256,7 +256,7 @@ through a unified interface.
 
 ### Custom providers
 
-For providers beyond Claude and Gemini, subclass `ProviderPlugin` from
+For providers beyond Claude and Codex, subclass `ProviderPlugin` from
 `taskbrew.agents.provider_base`. See [extending.md](extending.md) for a
 detailed guide.
 

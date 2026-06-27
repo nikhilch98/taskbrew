@@ -8,7 +8,7 @@ and submitting your first task.
 - **Python 3.10+** (check with `python --version`)
 - **At least one CLI agent installed**:
   - Claude Code: `npm install -g @anthropic-ai/claude-code`
-  - Gemini CLI: `npm install -g @google/gemini-cli`
+  - Codex CLI: `npm install -g @openai/codex`
 
 > **Note:** No API keys are needed in your environment -- the CLI tools handle authentication themselves.
 
@@ -61,7 +61,7 @@ my-project/
 You can choose a different default provider with the `--provider` flag:
 
 ```bash
-taskbrew init --name "My Project" --provider gemini
+taskbrew init --name "My Project" --provider codex
 ```
 
 ## Configure your team
@@ -81,7 +81,7 @@ dashboard:
 artifacts:
   base_dir: "artifacts"
 
-cli_provider: "claude"   # or "gemini"
+cli_provider: "claude"   # or "codex"
 ```
 
 ### Add roles
@@ -115,7 +115,6 @@ Checking system requirements...
 
   [OK] Python 3.12.0
   [OK] Claude CLI found: /usr/local/bin/claude
-  [WARN] Gemini CLI not found (install: npm install -g @google/gemini-cli)
   [OK] config/team.yaml found
   [OK] 4 role(s) found in config/roles/
 
@@ -125,7 +124,7 @@ All checks passed!
 The doctor checks:
 
 - Python version (3.10+ required)
-- CLI binaries on PATH (claude, gemini)
+- CLI binaries on PATH (claude, codex)
 - Configuration files in the current directory
 
 ## Start the server

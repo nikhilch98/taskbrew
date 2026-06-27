@@ -286,12 +286,6 @@ async def test_cli_provider_forwarded_to_agent_config(
 ):
     """cli_provider should be forwarded through AgentLoop to AgentConfig."""
     rc = _make_role()
-    loop = _make_loop(
-        board, event_bus, instance_mgr,
-        role_config=rc,
-        cli_provider="gemini",
-    )
-    assert loop.cli_provider == "gemini"
 
     # Default should be "claude"
     loop2 = _make_loop(board, event_bus, instance_mgr, role_config=rc)
@@ -302,9 +296,7 @@ def test_provider_detect():
     """detect_provider should infer provider from model name."""
     from taskbrew.agents.provider import detect_provider
 
-    assert detect_provider(model="gemini-3.1-pro-preview") == "gemini"
     assert detect_provider(model="claude-opus-4-6") == "claude"
-    assert detect_provider(cli_provider="gemini") == "gemini"
     assert detect_provider() == "claude"
 
 
@@ -373,11 +365,6 @@ def test_provider_model_mapping():
     assert _model_for_role("architect", "claude") == "claude-opus-4-7"
     assert _model_for_role("coder", "claude") == "claude-sonnet-4-6"
     assert _model_for_role("verifier", "claude") == "claude-sonnet-4-6"
-
-    assert _model_for_role("pm", "gemini") == "gemini-3-pro-preview"
-    assert _model_for_role("architect", "gemini") == "gemini-3-pro-preview"
-    assert _model_for_role("coder", "gemini") == "gemini-3-flash-preview"
-    assert _model_for_role("verifier", "gemini") == "gemini-3-flash-preview"
 
     assert _model_for_role("pm", "codex") == "gpt-5.5"
     assert _model_for_role("architect", "codex") == "gpt-5.5"

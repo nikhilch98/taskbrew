@@ -52,35 +52,6 @@ def test_validate_startup_passes():
             )
 
 
-def test_validate_startup_gemini_missing_cli():
-    """Should error when Gemini CLI binary is missing."""
-    from taskbrew.main import StartupValidationError, _validate_startup
-
-    with patch.dict(os.environ, {}, clear=True):
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(StartupValidationError):
-                _validate_startup(
-                    project_dir=Path("/tmp"),
-                    team_config=None,
-                    roles={"pm": "dummy"},
-                    cli_provider="gemini",
-                )
-
-
-def test_validate_startup_gemini_passes():
-    """Should not raise when Gemini CLI is found and roles exist."""
-    from taskbrew.main import _validate_startup
-
-    with patch.dict(os.environ, {}, clear=True):
-        with patch("shutil.which", return_value="/usr/bin/gemini"):
-            # Should not raise — no API key needed
-            _validate_startup(
-                project_dir=Path("/tmp"),
-                team_config=None,
-                roles={"pm": "dummy"},
-                cli_provider="gemini",
-            )
-
 
 def test_validate_startup_codex_missing_cli():
     """Should error when Codex CLI binary is missing."""

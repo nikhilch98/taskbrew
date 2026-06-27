@@ -1,4 +1,4 @@
-"""Provider abstraction layer for Claude Code, Gemini CLI, and Codex CLI.
+"""Provider abstraction layer for Claude Code and Codex CLI.
 
 Dispatches to the correct SDK based on model name or explicit provider string.
 Both SDKs expose a compatible ``query()`` async generator and similar message
@@ -108,7 +108,7 @@ def _build_mcp_dict(
 class ProviderRegistry:
     """Registry for CLI agent providers.
 
-    Manages built-in (Claude, Gemini, Codex) and user-defined providers.
+    Manages built-in (Claude, Codex) and user-defined providers.
     User providers can be added via YAML config or Python plugins.
     """
 
@@ -120,9 +120,8 @@ class ProviderRegistry:
         self._providers[name] = {"detect_patterns": detect_patterns, **kwargs}
 
     def register_builtins(self):
-        """Register the built-in Claude, Gemini, and Codex providers."""
+        """Register the built-in Claude and Codex providers."""
         self.register("claude", detect_patterns=["claude-*"], builtin=True)
-        self.register("gemini", detect_patterns=["gemini-*"], builtin=True)
         self.register("codex", detect_patterns=["codex-*", "gpt-*", "o[0-9]*"], builtin=True)
 
     def detect(self, model: str) -> str:
@@ -170,15 +169,11 @@ class ProviderRegistry:
 def detect_provider(model: str | None = None, cli_provider: str = "claude") -> str:
     """Infer the CLI provider from a model name or explicit setting.
 
-    >>> detect_provider(model="gemini-3.1-pro-preview")
-    'gemini'
     >>> detect_provider(model="claude-opus-4-6")
     'claude'
-    >>> detect_provider(cli_provider="gemini")
-    'gemini'
+    >>> detect_provider(model="gpt-5.5")
+    'codex'
     """
-    if model and model.startswith("gemini"):
-        return "gemini"
     if model and model.startswith("claude"):
         return "claude"
     if model and (
@@ -196,8 +191,8 @@ def resolve_cli_provider(
 ) -> str:
     """Resolve the CLI tool name from a model string.
 
-    Uses prefix matching: ``claude-*`` -> ``"claude"``,
-    ``gemini-*`` -> ``"gemini"``, and OpenAI model names -> ``"codex"``.
+    Uses prefix matching: ``claude-*`` -> ``"claude"`` and OpenAI model
+    names -> ``"codex"``.
     Falls back to *fallback* if the model is None or unrecognised.
 
     This is a thin wrapper around ``detect_provider`` with a clearer name
@@ -230,35 +225,8 @@ def build_sdk_options(
 ) -> Any:
     """Build SDK options for the given provider.
 
-    Returns a ``ClaudeAgentOptions`` or ``GeminiOptions`` instance.
+    Returns a ``ClaudeAgentOptions`` or ``CodexOptions`` instance.
     """
-    if provider == "gemini":
-        from taskbrew.agents.gemini_cli import GeminiOptions
-
-        opts = GeminiOptions(
-            system_prompt=system_prompt,
-            allowed_tools=allowed_tools or [],
-            permission_mode=permission_mode,
-            mcp_servers=_build_mcp_dict(
-                mcp_servers or {},
-                api_url=api_url,
-                db_path=db_path,
-                allowed_tools=allowed_tools,
-                agent_role=agent_role,
-                agent_instance=agent_instance,
-            ),
-            reasoning_effort=reasoning_effort,
-        )
-        if model:
-            opts.model = model
-        if max_turns:
-            opts.max_turns = max_turns
-        if cwd:
-            opts.cwd = cwd
-        if cli_path:
-            opts.cli_path = cli_path
-        return opts
-
     if provider == "codex":
         from taskbrew.agents.codex_cli import CodexOptions
 
@@ -324,11 +292,7 @@ def build_sdk_options(
 
 async def sdk_query(prompt: str, options: Any, provider: str) -> AsyncIterator:
     """Dispatch to the correct SDK's ``query()`` async generator."""
-    if provider == "gemini":
-        from taskbrew.agents.gemini_cli import query
-        async for message in query(prompt=prompt, options=options):
-            yield message
-    elif provider == "codex":
+    if provider == "codex":
         from taskbrew.agents.codex_cli import query
         async for message in query(prompt=prompt, options=options):
             yield message
@@ -348,20 +312,6 @@ def get_message_types(provider: str) -> dict[str, type]:
 
     Keys: ``AssistantMessage``, ``ResultMessage``, ``TextBlock``, ``ToolUseBlock``.
     """
-    if provider == "gemini":
-        from taskbrew.agents.gemini_cli import (
-            AssistantMessage,
-            ResultMessage,
-            TextBlock,
-            ToolUseBlock,
-        )
-        return {
-            "AssistantMessage": AssistantMessage,
-            "ResultMessage": ResultMessage,
-            "TextBlock": TextBlock,
-            "ToolUseBlock": ToolUseBlock,
-        }
-
     if provider == "codex":
         from taskbrew.agents.codex_cli import (
             AssistantMessage,

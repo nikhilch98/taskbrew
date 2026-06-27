@@ -83,8 +83,8 @@ allowed tools, and behavioural constraints. See existing roles (`pm.yaml`,
 
 ### New Providers
 
-Add a provider config under `config/providers/` (see `claude.yaml` and
-`gemini.yaml` for examples) or extend `src/taskbrew/agents/provider_base.py`
+Add a provider config under `config/providers/` (see `claude.yaml` for an
+example) or extend `src/taskbrew/agents/provider_base.py`
 with a new Python provider class.
 
 ### New MCP Tools

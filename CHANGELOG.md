@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Gemini CLI provider support has been dropped. The only supported CLI
+  providers are now Claude Code and Codex CLI. Remove any `cli_provider:
+  "gemini"` settings and Gemini model references from your role configs.
+
 ### Security
 - Close all 15 CRITICAL findings from the Google-class OSS audit
   (see `AUDIT_REPORT.md`): default-on auth, atomic task claiming,
   idempotent migrations, webhook SSRF with DNS + IP pin, CSV formula-
-  injection guard on exports, Gemini CLI wall-clock timeout, worktree
-  path-traversal and prune safety, MCP bearer-token verification, and
+  injection guard on exports, worktree path-traversal and prune safety,
+  MCP bearer-token verification, and
   more.
 
 ### Fixed

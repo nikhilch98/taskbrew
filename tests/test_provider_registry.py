@@ -9,12 +9,6 @@ def test_registry_detect_claude():
     assert registry.detect("claude-sonnet-4-6") == "claude"
 
 
-def test_registry_detect_gemini():
-    registry = ProviderRegistry()
-    registry.register_builtins()
-    assert registry.detect("gemini-3.1-pro-preview") == "gemini"
-
-
 def test_registry_detect_default():
     registry = ProviderRegistry()
     registry.register_builtins()

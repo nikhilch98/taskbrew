@@ -1,4 +1,4 @@
-"""Base agent runner wrapping Claude/Gemini SDK via provider abstraction."""
+"""Base agent runner wrapping Claude/Codex SDK via provider abstraction."""
 
 from __future__ import annotations
 
@@ -181,7 +181,7 @@ class AgentRunner:
         # Semantic compression (Headroom) before the hard trim. Bundled and
         # on by default, fully fail-safe: degrades to a no-op if the headroom
         # import is unavailable (opt out with TASKBREW_COMPRESSION=0). Runs at
-        # this single provider-agnostic chokepoint so Claude/Codex/Gemini all
+        # this single provider-agnostic chokepoint so Claude and Codex both
         # benefit. See intelligence.compression.
         prompt, _comp = await compress_text_async(prompt, model=self.config.model)
         if _comp is not None and self.event_bus is not None:

@@ -35,17 +35,6 @@ def test_cmd_init_creates_structure(tmp_path):
     assert "TASKBREW_API_URL" in env_content
 
 
-def test_cmd_init_gemini_provider(tmp_path):
-    """taskbrew init --provider gemini should set cli_provider to gemini."""
-    args = argparse.Namespace(name="gemini-proj", dir=str(tmp_path), provider="gemini")
-    _cmd_init(args)
-
-    team_content = (tmp_path / "config" / "team.yaml").read_text()
-    assert 'cli_provider: "gemini"' in team_content
-
-    env_content = (tmp_path / ".env.example").read_text()
-    assert "TASKBREW_API_URL" in env_content
-
 
 def test_cmd_init_codex_provider(tmp_path):
     """taskbrew init --provider codex should set Codex defaults."""

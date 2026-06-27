@@ -864,7 +864,7 @@ async def get_available_models(provider: str = ""):
     if not active_provider and orch and hasattr(orch.team_config, "cli_provider"):
         # Backward compatibility: callers can still request the active
         # provider explicitly, but the settings UI needs all families so
-        # existing team members can be moved across Claude/Gemini/Codex.
+        # existing team members can be moved across Claude/Codex.
         active_provider = ""
     return available_models(active_provider)
 

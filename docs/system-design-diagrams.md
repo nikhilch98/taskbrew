@@ -38,7 +38,7 @@ flowchart LR
     Artifacts["Artifacts directory"]
     Worktrees["Git worktrees"]
     Git["Git repository<br/>branches refs commits"]
-    Providers["CLI providers<br/>Claude Code Gemini CLI Codex CLI"]
+    Providers["CLI providers<br/>Claude Code Codex CLI"]
     MCP["MCP tool servers<br/>task-tools intelligence-tools custom"]
     Webhooks["Optional webhooks"]
 
@@ -99,7 +99,6 @@ flowchart TB
     subgraph Execution["Execution Plane"]
         ProviderLayer["Provider abstraction"]
         Claude["Claude Code"]
-        Gemini["Gemini CLI"]
         Codex["Codex CLI"]
         MCPTools["MCP tools"]
         WorktreeManager["WorktreeManager"]
@@ -134,7 +133,6 @@ flowchart TB
     AgentLoops --> ProviderLayer
     SystemGates --> ProviderLayer
     ProviderLayer --> Claude
-    ProviderLayer --> Gemini
     ProviderLayer --> Codex
     ProviderLayer --> MCPTools
     AgentLoops --> WorktreeManager
@@ -584,7 +582,6 @@ flowchart TB
     ProviderDetect["detect_provider or explicit provider"]
     Options["build_sdk_options"]
     ClaudeOpts["ClaudeAgentOptions"]
-    GeminiOpts["GeminiOptions"]
     CodexOpts["CodexOptions"]
     MCPDict["MCP server config<br/>allowed tool policy role identity"]
     TaskTools["task-tools MCP<br/>create task package complete ask question"]
@@ -597,7 +594,6 @@ flowchart TB
     SystemProfile --> AgentConfig
     AgentConfig --> ProviderDetect --> Options
     Options --> ClaudeOpts
-    Options --> GeminiOpts
     Options --> CodexOpts
     Options --> MCPDict
     MCPDict --> TaskTools
@@ -607,7 +603,7 @@ flowchart TB
 ```
 
 Provider selection is configured per role and separately for the locked
-system agent profile. Claude, Gemini, and Codex models have provider-specific
+system agent profile. Claude and Codex models have provider-specific
 reasoning or thinking options in the model catalog.
 
 ---
@@ -626,7 +622,7 @@ flowchart TB
     EventBus["orchestrator/event_bus.py"]
     Agents["agents/agent_loop.py"]
     Provider["agents/provider.py"]
-    ProviderImpl["agents/codex_cli.py<br/>agents/gemini_cli.py<br/>claude_agent_sdk"]
+    ProviderImpl["agents/codex_cli.py<br/>claude_agent_sdk"]
     SystemGates["orchestrator/system_gates.py"]
     MergeQueue["orchestrator/merge_queue.py"]
     MergeBroker["orchestrator/merge_broker.py"]
@@ -1015,7 +1011,7 @@ flowchart TD
     WS["WebSocket broadcast"]
     Agents["Agent loops"]
     Provider["Provider adapter"]
-    CLIs["Claude Gemini Codex"]
+    CLIs["Claude Codex"]
     MCP["MCP tools"]
     Gates["System gates"]
     Packages["Work packages"]

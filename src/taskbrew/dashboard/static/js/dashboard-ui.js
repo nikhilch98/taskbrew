@@ -361,13 +361,6 @@ const FALLBACK_MODEL_CATALOG = {
         { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', label: 'Balanced', reasoning_efforts: ['low', 'medium', 'high', 'max'], default_reasoning_effort: 'high', reasoning_label: 'Effort' },
         { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5 Latest', label: 'Fast' },
     ],
-    gemini: [
-        { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', label: 'Flagship', reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', reasoning_label: 'Thinking' },
-        { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', label: 'Preview', reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', reasoning_label: 'Thinking' },
-        { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', label: 'Balanced', reasoning_efforts: ['minimal', 'low', 'medium', 'high'], default_reasoning_effort: 'medium', reasoning_label: 'Thinking' },
-        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', label: 'Previous Pro', reasoning_efforts: ['dynamic', 'low', 'medium', 'high'], default_reasoning_effort: 'dynamic', reasoning_label: 'Thinking' },
-        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', label: 'Previous Flash', reasoning_efforts: ['off', 'dynamic', 'low', 'medium', 'high'], default_reasoning_effort: 'dynamic', reasoning_label: 'Thinking' },
-    ],
     codex: [
         { id: 'gpt-5.5', name: 'GPT-5.5', label: 'Flagship', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'xhigh', reasoning_label: 'Reasoning' },
         { id: 'gpt-5.4', name: 'GPT-5.4', label: 'Balanced', reasoning_efforts: ['low', 'medium', 'high', 'xhigh'], default_reasoning_effort: 'medium', reasoning_label: 'Reasoning' },
@@ -381,7 +374,6 @@ const FALLBACK_MODEL_CATALOG = {
 const DEFAULT_ROLE_MODEL_TIERS = { pm: 'flagship', architect: 'flagship', coder: 'balanced', verifier: 'balanced' };
 const PROVIDER_DEFAULT_MODELS = {
     claude: { flagship: 'claude-opus-4-7', balanced: 'claude-sonnet-4-6', fast: 'claude-haiku-4-5' },
-    gemini: { flagship: 'gemini-3-pro-preview', balanced: 'gemini-3-flash-preview', fast: 'gemini-3-flash-preview' },
     codex: { flagship: 'gpt-5.5', balanced: 'gpt-5.5', fast: 'gpt-5.4-mini' },
 };
 const DEFAULT_PROJECT_ROLES = ['pm', 'architect', 'coder'];
@@ -415,7 +407,6 @@ async function loadSettings() {
 
 function providerForModel(model) {
     model = model || '';
-    if (model.indexOf('gemini') === 0) return 'gemini';
     if (model.indexOf('gpt-') === 0 || /^o\d/.test(model) || model.indexOf('codex') === 0) return 'codex';
     return 'claude';
 }
@@ -599,7 +590,6 @@ function renderSystemAgentSettings() {
     let html = '<div class="settings-field"><label>System AI Profile</label>' +
         '<select id="s_system_provider" onchange="updateSystemAgentProvider(this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">' +
         '<option value="claude"' + (profile.provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
-        '<option value="gemini"' + (profile.provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
         '<option value="codex"' + (profile.provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
         '</select></div>';
     html += '<div class="settings-field"><label>System Model</label><select id="s_system_model" onchange="updateSystemAgentModel(this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">' + modelOptions + '</select></div>';
@@ -653,7 +643,6 @@ function renderRoleSettings(c, role) {
     let html = '<div class="settings-field"><label>Display Name</label><input id="s_display_name" value="' + escapeHtml(r.display_name||'') + '" readonly style="opacity:0.6"></div>';
     html += '<div class="settings-field"><label>Provider</label><select id="s_provider" onchange="updateSettingsProvider(\'' + escapeHtml(role) + '\', this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">' +
         '<option value="claude"' + (provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
-        '<option value="gemini"' + (provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
         '<option value="codex"' + (provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
         '</select></div>';
     html += '<div class="settings-field"><label>Model Version</label><select id="s_model" onchange="document.getElementById(\'s_model_custom\').value=this.value;syncSettingsReasoningForModel(this.value)" style="width:100%;padding:10px 12px;background:rgba(15,20,38,0.9);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:0.9rem">';
@@ -911,7 +900,6 @@ function renderProjectSystemAgentSection() {
         '<label>Admin</label>' +
         '<select onchange="setProjectWizardSystemProvider(this.value)">' +
         '<option value="claude"' + (provider === 'claude' ? ' selected' : '') + '>Claude Code</option>' +
-        '<option value="gemini"' + (provider === 'gemini' ? ' selected' : '') + '>Gemini CLI</option>' +
         '<option value="codex"' + (provider === 'codex' ? ' selected' : '') + '>Codex CLI</option>' +
         '</select>' +
         '</div>' +
@@ -1122,7 +1110,6 @@ function renderWizardStep() {
     const nextBtn = document.getElementById('wizardNextBtn');
     const activeProvider = projectWizardData.cli_provider;
     const isClaude = activeProvider === 'claude';
-    const isGemini = activeProvider === 'gemini';
     const isCodex = activeProvider === 'codex';
 
     nextBtn.textContent = 'Create Project';
@@ -1158,12 +1145,6 @@ function renderWizardStep() {
         '<div class="option-content">' +
         '<strong><span class="option-letter">C</span> Claude Code</strong>' +
         '<p>Claude models with MCP tool servers included.</p>' +
-        '</div></label>' +
-        '<label class="wizard-option ' + (isGemini ? 'selected' : '') + '" onclick="setProjectWizardProvider(\'gemini\')" style="border-color:' + (isGemini ? '#4285f4' : '') + '">' +
-        '<div class="option-radio ' + (isGemini ? 'checked' : '') + '" style="' + (isGemini ? 'border-color:#4285f4;background:#4285f4' : '') + '"></div>' +
-        '<div class="option-content">' +
-        '<strong><span class="option-letter">G</span> Gemini CLI</strong>' +
-        '<p>Gemini models with MCP tool servers included.</p>' +
         '</div></label>' +
         '<label class="wizard-option ' + (isCodex ? 'selected' : '') + '" onclick="setProjectWizardProvider(\'codex\')" style="border-color:' + (isCodex ? '#10a37f' : '') + '">' +
         '<div class="option-radio ' + (isCodex ? 'checked' : '') + '" style="' + (isCodex ? 'border-color:#10a37f;background:#10a37f' : '') + '"></div>' +

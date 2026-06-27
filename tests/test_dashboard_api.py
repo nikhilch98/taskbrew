@@ -1196,63 +1196,6 @@ async def test_collaboration_returns_503_when_manager_none(app_client):
     assert "Collaboration manager not initialized" in resp.json()["detail"]
 
 
-async def test_gemini_usage_endpoint_returns_data(app_client):
-    """GET /api/usage/gemini/summary should return a response."""
-    resp = await app_client["client"].get("/api/usage/gemini/summary")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "available" in data
-    # May not be available in test env, but structure is correct
-    assert isinstance(data["available"], bool)
-
-
-async def test_create_project_with_cli_provider(app_client, tmp_path):
-    """POST /api/projects with cli_provider should be accepted."""
-    from taskbrew.dashboard.routers.system import set_project_deps
-
-    pm = ProjectManager(registry_path=tmp_path / "registry.yaml")
-    set_project_deps(pm, None)
-
-    project_dir = str(tmp_path / "gemini-project")
-    resp = await app_client["client"].post(
-        "/api/projects",
-        json={
-            "name": "Gemini Test",
-            "directory": project_dir,
-            "with_defaults": True,
-            "cli_provider": "gemini",
-        },
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["name"] == "Gemini Test"
-
-    # Verify the generated role YAMLs contain Gemini model IDs
-    import yaml
-    from pathlib import Path
-
-    pm_yaml = Path(project_dir) / "config" / "roles" / "pm.yaml"
-    assert pm_yaml.exists()
-    with open(pm_yaml) as f:
-        pm_data = yaml.safe_load(f)
-    assert pm_data["model"] == "gemini-3-pro-preview"
-    assert pm_data["reasoning_effort"] == "high"
-
-    coder_yaml = Path(project_dir) / "config" / "roles" / "coder.yaml"
-    with open(coder_yaml) as f:
-        coder_data = yaml.safe_load(f)
-    assert coder_data["model"] == "gemini-3-flash-preview"
-    assert coder_data["reasoning_effort"] == "medium"
-
-    # Verify team.yaml contains cli_provider
-    team_yaml = Path(project_dir) / "config" / "team.yaml"
-    with open(team_yaml) as f:
-        team_data = yaml.safe_load(f)
-    assert team_data["cli_provider"] == "gemini"
-
-    # Cleanup
-    set_project_deps(None, None)
-
 
 async def test_create_project_with_role_model_settings(app_client, tmp_path):
     """POST /api/projects should persist per-role model and reasoning choices."""
@@ -1294,49 +1237,6 @@ async def test_create_project_with_role_model_settings(app_client, tmp_path):
 
     set_project_deps(None, None)
 
-
-async def test_create_project_with_system_agent_profile(app_client, tmp_path):
-    """POST /api/projects should persist the per-project system agent profile."""
-    from taskbrew.dashboard.routers.system import set_project_deps
-
-    pm = ProjectManager(registry_path=tmp_path / "registry.yaml")
-    set_project_deps(pm, None)
-
-    project_dir = str(tmp_path / "system-agent-project")
-    resp = await app_client["client"].post(
-        "/api/projects",
-        json={
-            "name": "System Agent Test",
-            "directory": project_dir,
-            "with_defaults": True,
-            "cli_provider": "claude",
-            "system_agent": {
-                "provider": "gemini",
-                "model": "gemini-3-pro-preview",
-                "reasoning_effort": "high",
-                "max_instances": 3,
-                "max_review_rounds": 0,
-            },
-        },
-    )
-    assert resp.status_code == 200
-
-    import yaml
-    from pathlib import Path
-
-    team_yaml = Path(project_dir) / "config" / "team.yaml"
-    with open(team_yaml) as f:
-        team_data = yaml.safe_load(f)
-
-    assert team_data["system_agent"] == {
-        "provider": "gemini",
-        "model": "gemini-3-pro-preview",
-        "reasoning_effort": "high",
-        "max_instances": 3,
-        "max_review_rounds": 0,
-    }
-
-    set_project_deps(None, None)
 
 
 async def test_team_settings_system_agent_round_trip(tmp_path):

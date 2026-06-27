@@ -121,11 +121,6 @@ def _validate_startup(project_dir: Path, team_config, roles: dict, cli_provider:
             "Claude CLI not found (provider: 'claude').\n"
             "  -> Install: npm install -g @anthropic-ai/claude-code"
         )
-    if "gemini" in required_providers and not shutil.which("gemini"):
-        errors.append(
-            "Gemini CLI not found (provider: 'gemini').\n"
-            "  -> Install: npm install -g @google/gemini-cli"
-        )
     if "codex" in required_providers and not shutil.which("codex"):
         errors.append(
             "Codex CLI not found (provider: 'codex').\n"
@@ -1080,13 +1075,6 @@ def _cmd_doctor(args):
     else:
         print("  [WARN] Claude CLI not found (install: npm install -g @anthropic-ai/claude-code)")
 
-    # Gemini CLI
-    gemini_path = shutil.which("gemini")
-    if gemini_path:
-        print(f"  [OK] Gemini CLI found: {gemini_path}")
-    else:
-        print("  [WARN] Gemini CLI not found (install: npm install -g @google/gemini-cli)")
-
     # Codex CLI
     codex_path = shutil.which("codex")
     if codex_path:
@@ -1335,7 +1323,7 @@ def cli_main():
     init_parser = sub.add_parser("init", help="Initialize a new project")
     init_parser.add_argument("--name", help="Project name")
     init_parser.add_argument("--dir", default=".", help="Project directory")
-    init_parser.add_argument("--provider", default="codex", choices=["claude", "gemini", "codex"],
+    init_parser.add_argument("--provider", default="codex", choices=["claude", "codex"],
                              help="CLI provider")
 
     # doctor

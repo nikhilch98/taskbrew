@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# audit 11a F#16: /api/usage/* endpoints spawn Claude/Gemini CLIs via
+# audit 11a F#16: /api/usage/* endpoints spawn the Claude CLI via
 # pexpect in a 50-second interactive session. Two risks: (1) unauth
 # callers could drive host-CLI spawns (compounded by the fact that
 # shutil.which resolves PATH, which is hijackable); (2) concurrent
@@ -34,7 +34,7 @@ router = APIRouter()
 #
 # Mitigations wired up here:
 #   - _verify_admin_dep is injected by app.py via set_usage_auth_deps()
-#     and applied to the two CLI-spawning endpoints.
+#     and applied to the CLI-spawning endpoint.
 #   - _cli_spawn_lock serialises pexpect spawns so a burst of callers
 #     does not multiply into parallel interactive sessions.
 _verify_admin = None
@@ -272,206 +272,6 @@ async def _fetch_usage_via_cli() -> dict | None:
     except Exception as e:
         logger.error("Failed to run Claude /usage: %s", e)
         return _usage_cache
-
-
-# ------------------------------------------------------------------
-# Gemini /usage scraper
-# ------------------------------------------------------------------
-
-GEMINI_MODEL_DISPLAY_NAMES = {
-    "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
-    "gemini-3-flash-preview": "Gemini 3 Flash",
-    "gemini-2.5-pro": "Gemini 2.5 Pro",
-    "gemini-2.5-flash": "Gemini 2.5 Flash",
-    "gemini-2.0-flash": "Gemini 2.0 Flash",
-}
-
-GEMINI_MODEL_COLORS = {
-    "gemini-3.1-pro-preview": "#4285f4",
-    "gemini-3-flash-preview": "#34a853",
-    "gemini-2.5-pro": "#1a73e8",
-    "gemini-2.5-flash": "#0d652d",
-    "gemini-2.0-flash": "#137333",
-}
-
-_gemini_usage_cache: dict | None = None
-_gemini_usage_cache_ts: float = 0
-
-
-def _parse_gemini_usage_text(text: str) -> dict:
-    """Parse the cleaned Gemini CLI /usage output into structured data.
-
-    Gemini /usage output format:
-      Session Stats:  <N> requests, <time> duration
-      Performance:  avg <Nms> response time
-      Model Usage:
-        Model           Reqs  Usage remaining  Resets
-        gemini-xxx       N       XX%           in Xh Xm
-    """
-    result: dict = {"session": {}, "models": []}
-
-    # Session stats
-    sess_m = re.search(r"(\d+)\s*requests?,\s*([\d.]+\s*\w+)\s*duration", text)
-    if sess_m:
-        result["session"]["requests"] = int(sess_m.group(1))
-        result["session"]["duration"] = sess_m.group(2).strip()
-
-    # Performance
-    perf_m = re.search(r"avg\s*([\d.]+)\s*ms\s*response", text)
-    if perf_m:
-        result["session"]["avg_response_ms"] = float(perf_m.group(1))
-
-    # Model usage table rows
-    # Pattern: model_name  reqs  usage_remaining%  resets_info
-    model_re = re.compile(
-        r"(gemini[\w.-]+)\s+(\d+)\s+(\d+)%\s+(in\s+.+?)(?=gemini|\Z)",
-        re.IGNORECASE,
-    )
-    for m in model_re.finditer(text):
-        model_id = m.group(1).strip()
-        reqs = int(m.group(2))
-        remaining_pct = int(m.group(3))
-        resets = m.group(4).strip()
-        # Clean trailing whitespace/noise from resets
-        resets = re.sub(r"\s+", " ", resets).strip()
-        result["models"].append({
-            "model_id": model_id,
-            "display_name": GEMINI_MODEL_DISPLAY_NAMES.get(model_id, model_id),
-            "color": GEMINI_MODEL_COLORS.get(model_id, "#4285f4"),
-            "requests": reqs,
-            "remaining_pct": remaining_pct,
-            "used_pct": 100 - remaining_pct,
-            "resets": resets,
-        })
-
-    return result
-
-
-def _run_gemini_usage_cli_sync() -> dict | None:
-    """Synchronous helper that uses pexpect to run Gemini /usage."""
-    import shutil
-
-    try:
-        import pexpect
-    except ImportError:
-        logger.warning("pexpect not installed, cannot fetch Gemini /usage")
-        return None
-
-    gemini_bin = shutil.which("gemini") or "/opt/homebrew/bin/gemini"
-
-    env = dict(os.environ)
-
-    try:
-        child = pexpect.spawn(
-            gemini_bin, [],
-            env=env,
-            timeout=5,
-            dimensions=(50, 120),
-            encoding=None,
-        )
-
-        # Wait for initial UI
-        for _ in range(4):
-            try:
-                child.expect(r".+", timeout=3)
-            except (pexpect.TIMEOUT, pexpect.EOF):
-                pass
-
-        # Type /usage and wait
-        child.send("/usage")
-        _time.sleep(2)
-        try:
-            child.expect(r".+", timeout=3)
-        except (pexpect.TIMEOUT, pexpect.EOF):
-            pass
-
-        # Press Enter
-        child.send("\r")
-
-        # Collect output for ~15 seconds
-        output = b""
-        for _ in range(15):
-            try:
-                child.expect(r".+", timeout=1)
-                output += child.before + child.after
-            except pexpect.TIMEOUT:
-                pass
-            except pexpect.EOF:
-                break
-
-        # Exit
-        child.send("\x1b")
-        _time.sleep(0.5)
-        child.send("/exit\r")
-        try:
-            child.expect(pexpect.EOF, timeout=5)
-        except (pexpect.TIMEOUT, pexpect.EOF):
-            pass
-        child.close()
-
-        if not output:
-            return None
-
-        text = _strip_ansi(output)
-        parsed = _parse_gemini_usage_text(text)
-        return parsed if parsed.get("models") else None
-
-    except Exception as e:
-        logger.error("Failed to run Gemini /usage: %s", e)
-        return None
-
-
-async def _fetch_gemini_usage_via_cli() -> dict | None:
-    """Run interactive Gemini CLI with /usage and parse output.
-
-    Cached for 2 minutes.
-    """
-    global _gemini_usage_cache, _gemini_usage_cache_ts
-
-    now = _time.time()
-    if _gemini_usage_cache and now - _gemini_usage_cache_ts < _USAGE_CACHE_TTL:
-        return _gemini_usage_cache
-
-    try:
-        async with _cli_spawn_lock:
-            # Re-check under lock; another caller may have populated it.
-            if _gemini_usage_cache and _time.time() - _gemini_usage_cache_ts < _USAGE_CACHE_TTL:
-                return _gemini_usage_cache
-            loop = asyncio.get_event_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, _run_gemini_usage_cli_sync),
-                timeout=50,
-            )
-
-        if result:
-            _gemini_usage_cache = result
-            _gemini_usage_cache_ts = now
-            return result
-
-        return _gemini_usage_cache
-
-    except asyncio.TimeoutError:
-        logger.warning("Gemini /usage timed out")
-        return _gemini_usage_cache
-    except Exception as e:
-        logger.error("Failed to run Gemini /usage: %s", e)
-        return _gemini_usage_cache
-
-
-@router.get(
-    "/api/usage/gemini/summary",
-    dependencies=[Depends(_verify_admin_dep)],
-)
-async def get_gemini_usage_summary():
-    """Return Gemini CLI usage data for the dashboard.
-
-    Admin-only: this endpoint spawns the Gemini CLI via pexpect (50s).
-    """
-    usage = await _fetch_gemini_usage_via_cli()
-    return {
-        "available": usage is not None and bool(usage.get("models")),
-        "usage": usage,
-    }
 
 
 _profile_cache: dict = {}

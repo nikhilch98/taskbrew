@@ -64,7 +64,7 @@ class ChatManager:
         """Start or attach to a chat session for an agent.
 
         Chat execution uses the same provider abstraction as background agents,
-        so the selected role model determines Claude/Gemini/Codex behavior.
+        so the selected role model determines Claude/Codex behavior.
         """
         lock = await self._get_start_lock(agent_name)
         async with lock:

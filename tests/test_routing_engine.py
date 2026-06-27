@@ -252,11 +252,6 @@ class TestCLIProviderResolution:
         assert resolve_cli_provider("claude-sonnet-4-6") == "claude"
         assert resolve_cli_provider("claude-haiku-4-5") == "claude"
 
-    def test_gemini_models(self):
-        assert resolve_cli_provider("gemini-pro") == "gemini"
-        assert resolve_cli_provider("gemini-flash") == "gemini"
-        assert resolve_cli_provider("gemini-3.1-pro-preview") == "gemini"
-
     def test_unknown_model_uses_fallback(self):
         assert resolve_cli_provider("local-unknown-model", fallback="claude") == "claude"
         assert resolve_cli_provider("unknown-model") == "claude"
@@ -266,14 +261,12 @@ class TestCLIProviderResolution:
         assert resolve_cli_provider("gpt-5.5", fallback="claude") == "codex"
 
     def test_none_model_uses_fallback(self):
-        assert resolve_cli_provider(None, fallback="gemini") == "gemini"
         assert resolve_cli_provider(None) == "claude"
 
     def test_provider_registry_detect(self):
         registry = ProviderRegistry()
         registry.register_builtins()
         assert registry.detect("claude-opus-4-6") == "claude"
-        assert registry.detect("gemini-pro") == "gemini"
         assert registry.detect("gpt-5.5") == "codex"
         assert registry.detect("o3") == "codex"
         assert registry.detect("unknown") == "claude"
@@ -372,11 +365,6 @@ class TestPresetToPipelineIntegration:
         # 6. Verify CLI provider resolution
         provider = resolve_cli_provider(coder_preset["default_model"])
         assert provider == "claude"  # coder_be default_model is claude-sonnet-4-6
-
-    def test_gemini_preset_provider_resolution(self):
-        """A preset with a gemini model resolves to the gemini CLI."""
-        provider = resolve_cli_provider("gemini-pro")
-        assert provider == "gemini"
 
     def test_execution_config_integration(self, tmp_path):
         """ExecutionConfig integrates with TeamConfig loading."""
